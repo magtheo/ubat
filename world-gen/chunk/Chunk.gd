@@ -1,3 +1,4 @@
+#Chunk
 extends Node3D
 class_name Chunk
 
@@ -7,10 +8,10 @@ var x
 var z
 var chunk_size
 
-func _init(noise, x, z, chunk_size):
-	self.noise = noise
-	self.x = x
-	self.y = z
+func _init(noise_map, x_pos, z_pos, chunk_size):
+	self.noise = noise_map
+	self.x = x_pos
+	self.y = z_pos
 	self.chunk_size = chunk_size
 
 func _ready():

@@ -1,3 +1,4 @@
+# world.gd
 extends Node3D
 
 const chunk_size = 64
