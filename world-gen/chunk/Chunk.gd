@@ -7,6 +7,7 @@ var noise
 var x
 var z
 var chunk_size
+var should_remove
 
 func _init(noise_map, x_pos, z_pos, chunk_size):
 	self.noise = noise_map
