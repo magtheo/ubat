@@ -1,10 +1,32 @@
-[gd_scene load_steps=4 format=3 uid="uid://bu4gu0fg176ie"]
+[gd_scene load_steps=10 format=3 uid="uid://bu4gu0fg176ie"]
 
 [ext_resource type="Script" path="res://world-gen/world.gd" id="1_dka6f"]
 [ext_resource type="Script" path="res://camera/CameraController.gd" id="2_5vyog"]
+[ext_resource type="Script" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="3_a2xnn"]
+[ext_resource type="Script" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="4_6de52"]
+[ext_resource type="Script" path="res://addons/phantom_camera/scripts/resources/camera_3d_resource.gd" id="5_sav7j"]
+[ext_resource type="Script" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="6_ur08n"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_fvrop"]
 height = 1.98698
+
+[sub_resource type="Resource" id="Resource_q1slq"]
+script = ExtResource("4_6de52")
+duration = 1.0
+transition = 0
+ease = 2
+
+[sub_resource type="Resource" id="Resource_7qlr3"]
+script = ExtResource("5_sav7j")
+cull_mask = 1048575
+h_offset = 0.0
+v_offset = 0.0
+projection = 0
+fov = 75.0
+size = 1.0
+frustum_offset = Vector2(0, 0)
+near = 0.05
+far = 4000.0
 
 [node name="World" type="Node3D"]
 script = ExtResource("1_dka6f")
@@ -15,10 +37,22 @@ script = ExtResource("2_5vyog")
 
 [node name="rotationHelper" type="Node3D" parent="CameraController"]
 
-[node name="Camera3D" type="Camera3D" parent="CameraController/rotationHelper"]
-
 [node name="CollisionShape3D2" type="CollisionShape3D" parent="CameraController"]
 shape = SubResource("CapsuleShape3D_fvrop")
 
 [node name="CSGBox3D" type="CSGBox3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.674026, -4.35788)
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.40819, 0)
+
+[node name="PhantomCameraHost" type="Node" parent="Camera3D"]
+script = ExtResource("6_ur08n")
+
+[node name="PhantomCamera3D" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.40819, 0)
+script = ExtResource("3_a2xnn")
+priority = 1
+look_at_mode = 1
+tween_resource = SubResource("Resource_q1slq")
+camera_3d_resource = SubResource("Resource_7qlr3")

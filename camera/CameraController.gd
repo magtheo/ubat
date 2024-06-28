@@ -1,7 +1,7 @@
 extends CharacterBody3D
 
-var camera
-var rotation_helper
+@onready var camera = $rotationHelper/PhantomCamera3D
+@onready var rotation_helper = $rotationHelper
 
 var SPEED = 100
 var MOUSE_SENSITIVITY = 10
@@ -14,8 +14,8 @@ const UPWARD = Vector3(0,0,1)
 const DOWNWARD = Vector3(0,0,-1)
 
 func _ready():
-	camera = $rotationHelper/Camera3D
-	rotation_helper = $rotationHelper
+	await get_tree().physics_frame
+
 
 func _physics_process(delta):
 	# Movement
