@@ -10,7 +10,8 @@ var unready_chunks = {}
 var thread
 var loading_thread = false
 
-@onready var camera_controller = get_node("CameraController")
+#@onready var character = get_node("CameraController")
+@export var character = CharacterBody3D
 
 func _ready():
 	randomize()
@@ -29,18 +30,17 @@ func add_chunk(x,z):
 
 	if not loading_thread:
 		loading_thread = true
-		thread.start(self, "load_chunk", [x, z])
+		load_chunk(x,z)
+		#thread.start(self, "load_chunk", thread, [x, z])
+		#thread.start(load_chunk.bind(self, thread, [x, z]))
 		unready_chunks[key] = 1
 
-func load_chunk(arr):
-	var thread = arr[0]
-	var x = arr[1]
-	var z = arr[2]
-
+func load_chunk(x,z):
 	var chunk = Chunk.new(noise, x*chunk_size, z*chunk_size, chunk_size)
-	chunk.translation = Vector3(x*chunk_size, 0, z*chunk_size)
+	self.translate(Vector3(x*chunk_size, 0, z*chunk_size))
 
 	call_deferred("load_done", chunk, thread)
+
 
 func load_done(chunk, thread):
 	add_child(chunk)
@@ -62,7 +62,7 @@ func _process(delta):
 	reset_chunks()
 
 func update_chunks():
-	var player_translateion = camera_controller.position # update to retrive submarine prosition
+	var player_translateion = character.position # update to retrive submarine prosition
 	var p_x = int(player_translateion.x) / chunk_size
 	var p_z = int(player_translateion.z) / chunk_size
 

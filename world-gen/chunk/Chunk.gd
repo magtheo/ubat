@@ -12,7 +12,7 @@ var should_remove
 func _init(noise_map, x_pos, z_pos, chunk_size):
 	self.noise = noise_map
 	self.x = x_pos
-	self.y = z_pos
+	self.z = z_pos
 	self.chunk_size = chunk_size
 
 func _ready():
@@ -40,8 +40,8 @@ func generate_chunk():
 
 		data_tool.set_vertex(i, vertex)
 
-	for s in range(array_plane.get_surface_count()):
-		array_plane.surface_remove(s)
+	#for s in range(array_plane.get_surface_count()):
+		#array_plane.surface_remove(s) # ikke nødvendig i føge llama3
 
 	data_tool.commit_to_surface(array_plane)
 	surface_tool.begin(Mesh.PRIMITIVE_TRIANGLES)

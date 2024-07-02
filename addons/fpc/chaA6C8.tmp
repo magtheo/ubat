@@ -1,13 +1,8 @@
-[gd_scene load_steps=28 format=3 uid="uid://bu4gu0fg176ie"]
+[gd_scene load_steps=21 format=3 uid="uid://cc1m2a1obsyn4"]
 
-[ext_resource type="Script" path="res://world-gen/world.gd" id="1_dka6f"]
-[ext_resource type="Script" path="res://addons/fpc/character.gd" id="2_c6qne"]
-[ext_resource type="Script" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="3_a2xnn"]
-[ext_resource type="Script" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="4_6de52"]
-[ext_resource type="Script" path="res://addons/phantom_camera/scripts/resources/camera_3d_resource.gd" id="5_sav7j"]
-[ext_resource type="Script" path="res://addons/fpc/debug.gd" id="6_78enl"]
-[ext_resource type="Script" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="6_ur08n"]
-[ext_resource type="Script" path="res://addons/fpc/EditorModule.gd" id="7_5lmih"]
+[ext_resource type="Script" path="res://addons/fpc/character.gd" id="1_0t4e8"]
+[ext_resource type="Script" path="res://addons/fpc/EditorModule.gd" id="3_v3ckk"]
+[ext_resource type="Script" path="res://addons/fpc/debug.gd" id="3_x1wcc"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_kp17n"]
 albedo_color = Color(0.909804, 0.596078, 0, 1)
@@ -381,24 +376,6 @@ _data = {
 "land_right": SubResource("Animation_vsknp")
 }
 
-[sub_resource type="Resource" id="Resource_v54qe"]
-script = ExtResource("4_6de52")
-duration = 1.0
-transition = 0
-ease = 2
-
-[sub_resource type="Resource" id="Resource_coi7p"]
-script = ExtResource("5_sav7j")
-cull_mask = 1048575
-h_offset = 0.0
-v_offset = 0.0
-projection = 0
-fov = 75.0
-size = 1.0
-frustum_offset = Vector2(0, 0)
-near = 0.05
-far = 4000.0
-
 [sub_resource type="Theme" id="Theme_wdf0f"]
 MarginContainer/constants/margin_bottom = 10
 MarginContainer/constants/margin_left = 10
@@ -407,86 +384,50 @@ MarginContainer/constants/margin_top = 10
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_k4wwl"]
 
-[node name="World" type="Node3D" node_paths=PackedStringArray("character")]
-script = ExtResource("1_dka6f")
-character = NodePath("Character")
-
-[node name="Character" type="CharacterBody3D" parent="." node_paths=PackedStringArray("HEAD", "CAMERA", "HEADBOB_ANIMATION", "JUMP_ANIMATION", "CROUCH_ANIMATION", "COLLISION_MESH")]
-script = ExtResource("2_c6qne")
-base_speed = null
-sprint_speed = null
-crouch_speed = null
-acceleration = null
-jump_velocity = null
-mouse_sensitivity = null
-immobile = null
+[node name="Character" type="CharacterBody3D" node_paths=PackedStringArray("HEAD", "CAMERA", "HEADBOB_ANIMATION", "JUMP_ANIMATION", "CROUCH_ANIMATION", "COLLISION_MESH")]
+script = ExtResource("1_0t4e8")
 default_reticle = "res://addons/fpc/reticles/reticle_1.tscn"
-JUMP = null
-LEFT = null
-RIGHT = null
-FORWARD = null
-BACKWARD = null
-PAUSE = null
-CROUCH = "crouch"
-SPRINT = "sprint"
-MOVE_UP = null
-MOVE_DOWN = null
-jumping_enabled = null
-in_air_momentum = null
-motion_smoothing = null
-sprint_enabled = null
-crouch_enabled = null
-crouch_mode = null
-sprint_mode = null
-dynamic_fov = null
-continuous_jumping = null
-view_bobbing = null
-jump_animation = null
-pausing_enabled = null
-gravity_enabled = null
 HEAD = NodePath("Head")
-CAMERA = NodePath("../Camera3D")
+CAMERA = NodePath("Head/Camera")
 HEADBOB_ANIMATION = NodePath("Head/HeadbobAnimation")
 JUMP_ANIMATION = NodePath("Head/JumpAnimation")
 CROUCH_ANIMATION = NodePath("CrouchAnimation")
 COLLISION_MESH = NodePath("Collision")
+CROUCH = "crouch"
+SPRINT = "sprint"
 
-[node name="Mesh" type="MeshInstance3D" parent="Character"]
+[node name="Mesh" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 mesh = SubResource("CapsuleMesh_jw1de")
 
-[node name="Collision" type="CollisionShape3D" parent="Character"]
+[node name="Collision" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 shape = SubResource("CapsuleShape3D_uy03j")
 
-[node name="CrouchAnimation" type="AnimationPlayer" parent="Character"]
+[node name="CrouchAnimation" type="AnimationPlayer" parent="."]
 libraries = {
 "": SubResource("AnimationLibrary_5e5t5")
 }
 
-[node name="Head" type="Node3D" parent="Character"]
+[node name="Head" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 
-[node name="HeadbobAnimation" type="AnimationPlayer" parent="Character/Head"]
+[node name="Camera" type="Camera3D" parent="Head"]
+transform = Transform3D(1, 0, 0, 0, 0.999391, -0.0348995, 0, 0.0348995, 0.999391, 0, 0, 0)
+
+[node name="HeadbobAnimation" type="AnimationPlayer" parent="Head"]
 libraries = {
 "": SubResource("AnimationLibrary_o0unb")
 }
-blend_times = [&"RESET", &"RESET", 0.5, &"RESET", &"walk", 0.5, &"walk", &"RESET", 0.5]
+blend_times = [&"walk", &"RESET", 0.5, &"RESET", &"walk", 0.5, &"RESET", &"RESET", 0.5]
 
-[node name="JumpAnimation" type="AnimationPlayer" parent="Character/Head"]
+[node name="JumpAnimation" type="AnimationPlayer" parent="Head"]
 libraries = {
 "": SubResource("AnimationLibrary_qeg5r")
 }
 speed_scale = 4.0
 
-[node name="PhantomCamera3D" type="Node3D" parent="Character/Head"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.156068, -0.488289)
-script = ExtResource("3_a2xnn")
-priority = 1
-tween_resource = SubResource("Resource_v54qe")
-camera_3d_resource = SubResource("Resource_coi7p")
-
-[node name="UserInterface" type="Control" parent="Character"]
+[node name="UserInterface" type="Control" parent="."]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -495,7 +436,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
 
-[node name="DebugPanel" type="PanelContainer" parent="Character/UserInterface"]
+[node name="DebugPanel" type="PanelContainer" parent="UserInterface"]
 visible = false
 layout_mode = 0
 offset_left = 10.0
@@ -503,30 +444,18 @@ offset_top = 10.0
 offset_right = 453.0
 offset_bottom = 50.0
 theme = SubResource("Theme_wdf0f")
-script = ExtResource("6_78enl")
+script = ExtResource("3_x1wcc")
 
-[node name="MarginContainer" type="MarginContainer" parent="Character/UserInterface/DebugPanel"]
+[node name="MarginContainer" type="MarginContainer" parent="UserInterface/DebugPanel"]
 layout_mode = 2
 
-[node name="VBoxContainer" type="VBoxContainer" parent="Character/UserInterface/DebugPanel/MarginContainer"]
+[node name="VBoxContainer" type="VBoxContainer" parent="UserInterface/DebugPanel/MarginContainer"]
 layout_mode = 2
 
-[node name="CrouchCeilingDetection" type="ShapeCast3D" parent="Character"]
+[node name="CrouchCeilingDetection" type="ShapeCast3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 shape = SubResource("SphereShape3D_k4wwl")
 target_position = Vector3(0, 0.5, 0)
 
-[node name="EditorModule" type="Node" parent="Character"]
-script = ExtResource("7_5lmih")
-
-[node name="CSGBox3D" type="CSGBox3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.674026, -4.35788)
-
-[node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.65607, -0.488289)
-
-[node name="PhantomCameraHost" type="Node" parent="Camera3D"]
-script = ExtResource("6_ur08n")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.171688, 0.985151, 0, -0.985151, 0.171688, 0, 6.15348, -1.38425)
+[node name="EditorModule" type="Node" parent="."]
+script = ExtResource("3_v3ckk")
