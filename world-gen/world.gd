@@ -1,7 +1,8 @@
 # world.gd
-extends Node3D
+extends Node3D 
 
-const chunk_size = 64
+
+const chunk_size = 128
 const chunk_amount = 16
 
 var noise
@@ -9,22 +10,32 @@ var chunks = {}
 var unready_chunks = {}
 var thread
 var loading_thread = false
-
+@export var frequency : int
+@export var fractal_octaves : int
+@export var fractal_lacunarity : int
 #@onready var character = get_node("CameraController")
 @export var character = CharacterBody3D
+
+@onready var sprite_3d = $Sprite3D
+
 
 func _ready():
 	randomize()
 	#noise = OpenSimplexNoise.new()
 	noise = FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_PERLIN
 	noise.seed = randi()
-	noise.fractal_octaves = 6.0
-	#noise.period = 80.0
-
+	noise.fractal_octaves = 6
+	noise.frequency = frequency
+	noise.fractal_lacunarity = fractal_lacunarity
+	noise.fractal_type = 0 # Try different fractal types
+	print("noise:",noise)
+	
 	thread = Thread.new()
 
 func add_chunk(x,z):
 	var key = str(x) + "," + str(z)
+	#print("Adding chunk: ", key)  # Debugging statement
 	if chunks.has(key) or unready_chunks.has(key):
 		return
 
@@ -35,12 +46,13 @@ func add_chunk(x,z):
 		#thread.start(load_chunk.bind(self, thread, [x, z]))
 		unready_chunks[key] = 1
 
-func load_chunk(x,z):
+func load_chunk(x,z): # generate chunk
+	print("Loading chunk: ", x, z)  # Debugging statement
+
 	var chunk = Chunk.new(noise, x*chunk_size, z*chunk_size, chunk_size)
 	self.translate(Vector3(x*chunk_size, 0, z*chunk_size))
-
+	#print_debug("chunk loaded")
 	call_deferred("load_done", chunk, thread)
-
 
 func load_done(chunk, thread):
 	add_child(chunk)
@@ -66,6 +78,8 @@ func update_chunks():
 	var p_x = int(player_translateion.x) / chunk_size
 	var p_z = int(player_translateion.z) / chunk_size
 
+	#print_debug(p_x, p_z)
+	
 	for x in range(p_x - chunk_amount * 0.5, p_x + chunk_amount * 0.5):
 		for z in range(p_z - chunk_amount * 0.5, p_z + chunk_amount * 0.5):
 			add_chunk(x, z)

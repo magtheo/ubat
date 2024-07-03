@@ -158,13 +158,12 @@ func _physics_process(delta):
 	#gravity = ProjectSettings.get_setting("physics/3d/default_gravity") # If the gravity changes during your game, uncomment this code
 	#if not is_on_floor() and gravity and gravity_enabled:
 		#velocity.y -= gravity * delta
-	#
-	#handle_jumping()
-	#
+	
+	handle_jumping()
+	
 	var input_dir = Vector3.ZERO
 	if !immobile: # Immobility works by interrupting user input, so other forces can still be applied to the player
 		input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
-		input_dir += Input.get_vector("move_up", "move_down", "null", "null")
 	handle_movement(delta, input_dir)
 	
 	# The player is not able to stand up if the ceiling is too low
@@ -191,12 +190,12 @@ func _physics_process(delta):
 func handle_jumping():
 	if jumping_enabled:
 		if continuous_jumping: # Hold down the jump button
-			if Input.is_action_pressed(JUMP) and is_on_floor() and !low_ceiling:
+			if Input.is_action_pressed("move_up") and is_on_floor() and !low_ceiling:
 				if jump_animation:
 					JUMP_ANIMATION.play("jump", 0.25)
 				velocity.y += jump_velocity # Adding instead of setting so jumping on slopes works properly
 		else:
-			if Input.is_action_just_pressed(JUMP) and is_on_floor() and !low_ceiling:
+			if Input.is_action_just_pressed("move_up") and is_on_floor() and !low_ceiling:
 				if jump_animation:
 					JUMP_ANIMATION.play("jump", 0.25)
 				velocity.y += jump_velocity
@@ -266,12 +265,6 @@ func handle_state(moving):
 						if !$CrouchCeilingDetection.is_colliding():
 							enter_normal_state()
 							
-	elif state == "normal":
-		if Input.is_action_pressed(UP) and moving:  # New code
-			direction.z -= 1.0  # Move up
-		elif Input.is_action_pressed(DOWN) and moving:  # New code
-			direction.z += 1.0  # Move down
-
 # Any enter state function should only be called once when you want to enter that state, not every frame.
 
 func enter_normal_state():

@@ -1,4 +1,4 @@
-#Chunk
+# Chunk.gd
 extends Node3D
 class_name Chunk
 
@@ -8,6 +8,9 @@ var x
 var z
 var chunk_size
 var should_remove
+
+# materials
+var standard_mat = preload("res://world-gen/chunk/materials/Rock050.png")
 
 func _init(noise_map, x_pos, z_pos, chunk_size):
 	self.noise = noise_map
@@ -20,11 +23,12 @@ func _ready():
 	
 	
 func generate_chunk():
+	print("Generating chunk: ", " x:",x, " z:",z)  # Debugging statement
 	var plane_mesh = PlaneMesh.new()
 	plane_mesh.size = Vector2(chunk_size,chunk_size)
 	plane_mesh.subdivide_depth = chunk_size * 0.5
 	plane_mesh.subdivide_width = chunk_size * 0.5
-
+	plane_mesh.surface_set_material(0,standard_mat)
 	# TODO give it a material
 
 	var surface_tool = SurfaceTool.new()
@@ -36,8 +40,8 @@ func generate_chunk():
 	for i in range(data_tool.get_vertex_count()):
 		var vertex = data_tool.get_vertex(i)
 
-		vertex.y = noise.get_noise_3d(vertex.x + x, vertex.y, vertex.z + z) * 80
-
+		vertex.y = noise.get_noise_3d(vertex.x + x, vertex.y, vertex.z + z)# * 80
+		print("vertex height:", vertex.y)
 		data_tool.set_vertex(i, vertex)
 
 	#for s in range(array_plane.get_surface_count()):
