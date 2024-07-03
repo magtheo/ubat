@@ -1,0 +1,31 @@
+[gd_scene load_steps=5 format=3 uid="uid://u0736hx5b16k"]
+
+[ext_resource type="PackedScene" uid="uid://dvm3mo58qgvst" path="res://Functionality/Door/Door.tscn" id="1_7tvct"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_0q7up"]
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_8ef0q"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_ukct1"]
+
+[node name="DoorAndLever" type="Node3D"]
+
+[node name="Door" parent="." instance=ExtResource("1_7tvct")]
+
+[node name="InteractionV2" parent="Door/Door" index="3"]
+visible = false
+
+[node name="CollisionShape3D" parent="Door/Door/InteractionV2" index="0"]
+transform = Transform3D(1000, 0, 0, 0, 100, 0, 0, 0, 2000, 0, 0, 0)
+shape = SubResource("BoxShape3D_0q7up")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.152104, 0, 0, 0, 0.439721, 0, 0, 0, 0.12807, 2.47908, 0, 0)
+mesh = SubResource("CylinderMesh_8ef0q")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="MeshInstance3D"]
+transform = Transform3D(1.61423, 0, 0, 0, 0.39571, 0, 0, 0, 3.72757, 0, -0.945, 0)
+mesh = SubResource("BoxMesh_ukct1")
+
+[editable path="Door"]
+[editable path="Door/Door"]

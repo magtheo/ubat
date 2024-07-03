@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://dav4tguvspwea"]
+
+[ext_resource type="Script" path="res://Functionality/Door/mouseRotation.gd" id="1_dhidy"]
+
+[node name="MouseRotation" type="Node3D"]
+script = ExtResource("1_dhidy")

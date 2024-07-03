@@ -1,0 +1,49 @@
+[gd_scene load_steps=2 format=3 uid="uid://bj6ufoycs8yiy"]
+
+[sub_resource type="GDScript" id="GDScript_6qu13"]
+script/source = "extends Area3D
+
+@onready var _label = \"\" 
+@onready var _callable = []
+@onready var can_interact = false 
+@onready var interact_trigger = [\"\"]
+@onready var interact_state = -1
+@onready var interact_label = $Interact_label
+
+
+
+func _process(delta): 
+	
+	if(can_interact and interact_state>=0): 
+		_callable[interact_state].call()
+		
+	if((Input.is_action_just_pressed(interact_trigger[interact_state]))):
+		interact_state+=1
+		interact_label.text= _label[interact_state+1]
+		if (interact_state>=interact_trigger.size()):  
+			interact_state = -1
+		
+func enter(b): 
+	if(b.is_in_group(\"player\")):
+		can_interact = true
+		interact_label.visible = true
+		interact_label.text = _label[0]
+func exit(b): 
+	if(b.is_in_group(\"player\")):
+		can_interact = false
+		interact_label.visible = false
+		interact_state = -1
+		interact_label.text= _label[0]
+func assign_and_connect(label_in,callable_in, trigger_in): 
+	_label = label_in
+	_callable = callable_in
+	interact_trigger = trigger_in
+	
+	connect(\"body_entered\",Callable(self,\"enter\"))
+	connect(\"body_exited\", Callable(self,\"exit\"))
+
+
+"
+
+[node name="InteractionV2" type="Area3D"]
+script = SubResource("GDScript_6qu13")
