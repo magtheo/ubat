@@ -5,7 +5,6 @@ var speed = 0.5
 var sensitivity = 2
 
 @onready var rotator = $rotator
-@onready var character_body_3d = $"."
 @onready var camera_3d = $rotator/Camera3D
 
 func _physics_process(delta):
@@ -27,6 +26,7 @@ func _physics_process(delta):
 		velocity_up -= self.transform.basis[1] * speed
 	
 	self.translate(velocity + velocity_up)
+	Debug.log("player position", self.position)
 
 func _unhandled_input(event):
 	if event is InputEventMouseButton: 

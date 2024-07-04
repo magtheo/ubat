@@ -19,6 +19,7 @@ config/icon="res://icon.svg"
 
 PhantomCameraManager="*res://addons/phantom_camera/scripts/managers/phantom_camera_manager.gd"
 Debug="*res://addons/awesome_debug_log/autoloads/debug.tscn"
+Heightmap="*res://world-gen/heightmap/heightmap.gd"
 
 [editor]
 
@@ -65,3 +66,22 @@ move_down={
 [rendering]
 
 environment/defaults/default_clear_color=Color(0.227241, 0.324012, 0.296078, 1)
+
+[shader_globals]
+
+heightmap={
+"type": "sampler2D",
+"value": "res://world-gen/chunk/materials/Rock050_2K-JPG_Displacement.jpg"
+}
+normalmap={
+"type": "sampler2D",
+"value": "res://world-gen/chunk/materials/Rock050_2K-JPG_NormalDX.jpg"
+}
+amplitude={
+"type": "float",
+"value": 8.0
+}
+heightmap2={
+"type": "sampler2D",
+"value": ""
+}

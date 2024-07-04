@@ -1,0 +1,24 @@
+[gd_scene load_steps=4 format=3 uid="uid://0p18gsq2fpnm"]
+
+[ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
+[ext_resource type="PackedScene" uid="uid://bu4gu0fg176ie" path="res://world-gen/world.tscn" id="2_4oyhd"]
+[ext_resource type="PackedScene" uid="uid://deea6eg3f3cpc" path="res://world-gen/clipmap/clipmap.tscn" id="3_eware"]
+
+[node name="main" type="Node3D"]
+
+[node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.93042, 0.826952, -1.69054)
+
+[node name="WorldChunk system" parent="." node_paths=PackedStringArray("character") instance=ExtResource("2_4oyhd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.00724, -0.461187, -0.00478971)
+visible = false
+character = NodePath("../CameraController")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)
+size = Vector3(2.9292, 1.16064, 1)
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="clipmap" parent="World" node_paths=PackedStringArray("player") instance=ExtResource("3_eware")]
+player = NodePath("../../CameraController")

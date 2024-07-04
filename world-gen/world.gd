@@ -16,22 +16,31 @@ var loading_thread = false
 #@onready var character = get_node("CameraController")
 @export var character = CharacterBody3D
 
-@onready var sprite_3d = $Sprite3D
+# Noise meathod 2
+@export var noise_2 : NoiseTexture2D
+@onready var noise_val = noise_2.noise
+
 
 
 func _ready():
-	randomize()
+	
+	# OLD noise meathod
+	#randomize()
 	#noise = OpenSimplexNoise.new()
-	noise = FastNoiseLite.new()
-	noise.noise_type = FastNoiseLite.TYPE_PERLIN
-	noise.seed = randi()
-	noise.fractal_octaves = 6
-	noise.frequency = frequency
-	noise.fractal_lacunarity = fractal_lacunarity
-	noise.fractal_type = 0 # Try different fractal types
-	print("noise:",noise)
+	#noise = FastNoiseLite.new()
+	#noise.noise_type = FastNoiseLite.TYPE_PERLIN
+	#noise.seed = randi()
+	#noise.fractal_octaves = 6
+	#noise.frequency = frequency
+	#noise.fractal_lacunarity = fractal_lacunarity
+	#noise.fractal_type = 0 # Try different fractal types
+	#print("noise:",noise)
 	
 	thread = Thread.new()
+
+func _physics_process(delta):
+	global_position = character.global_position.round() * Vector3(1,0,1)
+
 
 func add_chunk(x,z):
 	var key = str(x) + "," + str(z)
@@ -41,20 +50,28 @@ func add_chunk(x,z):
 
 	if not loading_thread:
 		loading_thread = true
-		load_chunk(x,z)
+		#load_chunk(x,z)
 		#thread.start(self, "load_chunk", thread, [x, z])
-		#thread.start(load_chunk.bind(self, thread, [x, z]))
+		thread.start(load_chunk.bind(self, x, z))
+		
 		unready_chunks[key] = 1
 
 func load_chunk(x,z): # generate chunk
 	print("Loading chunk: ", x, z)  # Debugging statement
-
-	var chunk = Chunk.new(noise, x*chunk_size, z*chunk_size, chunk_size)
+	
+	# old noise method use variable:noise
+	type_convert(x,TYPE_INT)
+	type_convert(z,TYPE_INT)
+	type_convert(chunk_size,TYPE_INT)
+	
+	var chunk = Chunk.new(noise_val, x*chunk_size, z*chunk_size, chunk_size) # line 54
 	self.translate(Vector3(x*chunk_size, 0, z*chunk_size))
+	print(self.position)
 	#print_debug("chunk loaded")
 	call_deferred("load_done", chunk, thread)
 
 func load_done(chunk, thread):
+	print("load done")
 	add_child(chunk)
 	var key = str(chunk.x / chunk_size) + "," + str(chunk.z/ chunk_size)
 	chunks[key] = chunk
@@ -93,6 +110,7 @@ func clean_up_chunks():
 		if chunk.should_remove:
 			chunk.queue_free()
 			chunks.erase(key)
+			
 
 func reset_chunks():
 	for key in chunks:
