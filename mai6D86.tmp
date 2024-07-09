@@ -1,28 +1,19 @@
-[gd_scene load_steps=16 format=3 uid="uid://0p18gsq2fpnm"]
+[gd_scene load_steps=11 format=3 uid="uid://0p18gsq2fpnm"]
 
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
 [ext_resource type="PackedScene" uid="uid://o3o4ldk77w6e" path="res://world-gen/world.tscn" id="2_4oyhd"]
-[ext_resource type="PackedScene" uid="uid://ca8jgh0g5nda0" path="res://world-gen/secondWorld/sectionOne/sandBiome/sand_biome.tscn" id="5_255m2"]
-[ext_resource type="PackedScene" uid="uid://cx1phq3o1qkdv" path="res://world-gen/secondWorld/sectionOne/corralBiome/corral_biome.tscn" id="6_v5lkw"]
+[ext_resource type="PackedScene" uid="uid://ca8jgh0g5nda0" path="res://world-gen/secondWorld/temp/sand_biome.tscn" id="5_255m2"]
+[ext_resource type="PackedScene" uid="uid://cx1phq3o1qkdv" path="res://world-gen/secondWorld/temp/corral_biome.tscn" id="6_v5lkw"]
 [ext_resource type="Script" path="res://world-gen/secondWorld/biomeGenerator.gd" id="7_wfa0v"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/noiseGenerator.gd" id="8_86fyu"]
 [ext_resource type="FastNoiseLite" uid="uid://cvg5466dmjiel" path="res://world-gen/secondWorld/biomeDefiner.tres" id="8_dl4d1"]
-[ext_resource type="FastNoiseLite" uid="uid://dhi7d23lfdgyo" path="res://world-gen/secondWorld/sectionOne/sandBiome/sandNoise.tres" id="8_k4hi2"]
 [ext_resource type="Script" path="res://world-gen/secondWorld/biomeDefiner.gd" id="9_653ay"]
-[ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/sandBiome/sandBiomeTexture.gd" id="9_bytrf"]
-[ext_resource type="FastNoiseLite" uid="uid://b1pvnyfqfwcbo" path="res://world-gen/secondWorld/sectionOne/corralBiome/corralNoise.tres" id="10_domik"]
-[ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/corralBiome/corralBiomeTexture.gd" id="11_8pqyb"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
 albedo_color = Color(0.129412, 0.0196078, 1, 1)
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_5ytth"]
 noise = ExtResource("8_dl4d1")
-
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_oa33o"]
-noise = ExtResource("8_k4hi2")
-
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_18mod"]
-noise = ExtResource("10_domik")
 
 [node name="main" type="Node3D"]
 
@@ -43,7 +34,7 @@ material = SubResource("StandardMaterial3D_g1ljx")
 
 [node name="Section1" type="StaticBody3D" parent="seconWorld"]
 
-[node name="biomeNoiseTextureGenerator" type="TextureRect" parent="seconWorld/Section1"]
+[node name="noiseTextureGenerator" type="TextureRect" parent="seconWorld/Section1"]
 offset_left = -554.0
 offset_top = 486.0
 offset_right = 984.0
@@ -58,14 +49,5 @@ script = ExtResource("9_653ay")
 [node name="biomeGenerator" type="Node3D" parent="seconWorld/Section1"]
 script = ExtResource("7_wfa0v")
 
-[node name="sandBiomeTexture" type="TextureRect" parent="seconWorld/Section1"]
-offset_right = 40.0
-offset_bottom = 40.0
-texture = SubResource("NoiseTexture2D_oa33o")
-script = ExtResource("9_bytrf")
-
-[node name="corralBiomeTexture" type="TextureRect" parent="seconWorld/Section1"]
-offset_right = 40.0
-offset_bottom = 40.0
-texture = SubResource("NoiseTexture2D_18mod")
-script = ExtResource("11_8pqyb")
+[node name="noiseGenerator" type="Node3D" parent="seconWorld/Section1"]
+script = ExtResource("8_86fyu")

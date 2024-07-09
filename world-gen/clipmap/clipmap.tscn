@@ -1,39 +1,32 @@
-[gd_scene load_steps=9 format=3 uid="uid://deea6eg3f3cpc"]
+[gd_scene load_steps=8 format=3 uid="uid://deea6eg3f3cpc"]
 
 [ext_resource type="Script" path="res://world-gen/clipmap/clipmap.gd" id="1_2hmtw"]
 [ext_resource type="Shader" path="res://world-gen/clipmap/clipmap.gdshader" id="1_ofxca"]
 [ext_resource type="FastNoiseLite" uid="uid://dnowyonrmedjk" path="res://world-gen/clipmap/fast_noise_lite_mainWorld.tres" id="3_5lrq2"]
 
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_qbi7p"]
+seamless = true
+noise = ExtResource("3_5lrq2")
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_ti51v"]
+seamless = true
+as_normal_map = true
+noise = ExtResource("3_5lrq2")
+
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_hjuv2"]
 render_priority = 0
 shader = ExtResource("1_ofxca")
+shader_parameter/heightmap = SubResource("NoiseTexture2D_qbi7p")
+shader_parameter/normalmap = SubResource("NoiseTexture2D_ti51v")
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_atfdr"]
 size = Vector2(512, 512)
-subdivide_width = 511
-subdivide_depth = 511
-
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_msi6k"]
-noise = ExtResource("3_5lrq2")
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_rh5or"]
-render_priority = 0
-shader = ExtResource("1_ofxca")
-shader_parameter/heightmap3 = SubResource("NoiseTexture2D_msi6k")
-
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_yhvyb"]
-noise = ExtResource("3_5lrq2")
+subdivide_width = 2044
+subdivide_depth = 2044
 
 [node name="clipmap" type="Node3D"]
 script = ExtResource("1_2hmtw")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.44729, -5.06292, 1.01831)
 material_override = SubResource("ShaderMaterial_hjuv2")
 mesh = SubResource("PlaneMesh_atfdr")
-skeleton = NodePath("../..")
-surface_material_override/0 = SubResource("ShaderMaterial_rh5or")
-
-[node name="Sprite2D" type="Sprite2D" parent="."]
-unique_name_in_owner = true
-texture = SubResource("NoiseTexture2D_yhvyb")

@@ -1,0 +1,59 @@
+[gd_scene load_steps=10 format=3 uid="uid://0p18gsq2fpnm"]
+
+[ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
+[ext_resource type="PackedScene" uid="uid://bu4gu0fg176ie" path="res://world-gen/world.tscn" id="2_4oyhd"]
+[ext_resource type="PackedScene" uid="uid://deea6eg3f3cpc" path="res://world-gen/clipmap/clipmap.tscn" id="3_eware"]
+[ext_resource type="PackedScene" uid="uid://cpg0ukr7b5xir" path="res://world-gen/collisionmap/collisionmap.tscn" id="4_wlyju"]
+[ext_resource type="FastNoiseLite" uid="uid://dnowyonrmedjk" path="res://world-gen/clipmap/fast_noise_lite_mainWorld.tres" id="5_rb36w"]
+[ext_resource type="Script" path="res://world-gen/clipmap/NoiseGen_HeightRect.gd" id="6_ahv8u"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
+albedo_color = Color(0.129412, 0.0196078, 1, 1)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ay3n3"]
+size = Vector2(8, 8)
+subdivide_width = 7
+subdivide_depth = 7
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_fbx1d"]
+seamless = true
+noise = ExtResource("5_rb36w")
+
+[node name="main" type="Node3D"]
+
+[node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.93042, 4.05449, 6.219)
+
+[node name="WorldChunk system" parent="." node_paths=PackedStringArray("character") instance=ExtResource("2_4oyhd")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.00724, -0.461187, -0.00478971)
+visible = false
+character = NodePath("../CameraController")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)
+size = Vector3(2.9292, 1.16064, 1)
+material = SubResource("StandardMaterial3D_g1ljx")
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="Terrain" type="StaticBody3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -8.23336, 0)
+
+[node name="Collisionmap" parent="World/Terrain" node_paths=PackedStringArray("character") instance=ExtResource("4_wlyju")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0330009, -0.0678177, -0.0256462)
+character = NodePath("../../../CameraController")
+template_mesh = SubResource("PlaneMesh_ay3n3")
+
+[node name="Clipmap" parent="World/Terrain" node_paths=PackedStringArray("player") instance=ExtResource("3_eware")]
+player = NodePath("../../../CameraController")
+
+[node name="HeightRect" type="TextureRect" parent="World/Terrain"]
+offset_left = 1086.0
+offset_top = 579.0
+offset_right = 1598.0
+offset_bottom = 1091.0
+texture = SubResource("NoiseTexture2D_fbx1d")
+script = ExtResource("6_ahv8u")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="World"]
+transform = Transform3D(1, 0.000214334, -0.000435985, -7.7413e-05, 0.956253, 0.292542, 0.000479614, -0.292542, 0.956253, 0, 9.04064, 134.062)
