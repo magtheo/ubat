@@ -1,0 +1,82 @@
+[gd_scene load_steps=15 format=3 uid="uid://0p18gsq2fpnm"]
+
+[ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
+[ext_resource type="FastNoiseLite" uid="uid://cvg5466dmjiel" path="res://world-gen/secondWorld/biomeDefiner.tres" id="8_dl4d1"]
+[ext_resource type="FastNoiseLite" uid="uid://dhi7d23lfdgyo" path="res://world-gen/secondWorld/sectionOne/sandBiome/sandNoise.tres" id="8_k4hi2"]
+[ext_resource type="Material" uid="uid://d1psn2ps8uw27" path="res://world-gen/secondWorld/sectionOne/shadermaterial1.tres" id="8_l650k"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/biomeDefiner.gd" id="9_653ay"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/sandBiome/sandBiomeTexture.gd" id="9_bytrf"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/BiomeMapGenerator.gd" id="9_gy7pa"]
+[ext_resource type="FastNoiseLite" uid="uid://b1pvnyfqfwcbo" path="res://world-gen/secondWorld/sectionOne/corralBiome/corralNoise.tres" id="10_domik"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/corralBiome/corralBiomeTexture.gd" id="11_8pqyb"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
+albedo_color = Color(0.129412, 0.0196078, 1, 1)
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_5ytth"]
+seamless_blend_skirt = 0.0
+noise = ExtResource("8_dl4d1")
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_oa33o"]
+width = 1000
+height = 1000
+noise = ExtResource("8_k4hi2")
+
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_18mod"]
+noise = ExtResource("10_domik")
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_5xuxl"]
+size = Vector2(2000, 2000)
+subdivide_width = 200
+subdivide_depth = 200
+
+[node name="main" type="Node3D"]
+
+[node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.93042, 4.05449, 6.219)
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)
+size = Vector3(2.9292, 1.16064, 1)
+material = SubResource("StandardMaterial3D_g1ljx")
+
+[node name="seconWorld" type="Node3D" parent="."]
+
+[node name="Section1" type="StaticBody3D" parent="seconWorld"]
+
+[node name="biomeNoiseTextureGenerator" type="TextureRect" parent="seconWorld/Section1"]
+offset_left = -612.0
+offset_top = -593.0
+offset_right = -17.0
+offset_bottom = 2.0
+texture = SubResource("NoiseTexture2D_5ytth")
+script = ExtResource("9_653ay")
+
+[node name="sandBiomeTexture" type="TextureRect" parent="seconWorld/Section1"]
+offset_left = 401.0
+offset_top = -432.0
+offset_right = 913.0
+offset_bottom = 80.0
+texture = SubResource("NoiseTexture2D_oa33o")
+script = ExtResource("9_bytrf")
+
+[node name="corralBiomeTexture" type="TextureRect" parent="seconWorld/Section1"]
+offset_left = 1061.0
+offset_top = -406.0
+offset_right = 1573.0
+offset_bottom = 106.0
+texture = SubResource("NoiseTexture2D_18mod")
+script = ExtResource("11_8pqyb")
+
+[node name="clipmap" type="Node3D" parent="seconWorld/Section1"]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="seconWorld/Section1/clipmap"]
+material_override = ExtResource("8_l650k")
+mesh = SubResource("PlaneMesh_5xuxl")
+skeleton = NodePath("../..")
+
+[node name="BiomeMapGenerator" type="Node3D" parent="seconWorld/Section1"]
+script = ExtResource("9_gy7pa")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="seconWorld"]
+transform = Transform3D(0.0458107, 0.0107204, -0.998893, 0.411422, 0.910995, 0.0286455, 0.910293, -0.412279, 0.0373227, -905.235, 340.605, 56.8324)

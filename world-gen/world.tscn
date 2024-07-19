@@ -45,6 +45,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0330009, -0.0678177, -0.02
 template_mesh = SubResource("PlaneMesh_ay3n3")
 
 [node name="Clipmap" parent="Terrain1" instance=ExtResource("2_xh7b7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.37564, 0, 21.4037)
 
 [node name="HeightRect" type="TextureRect" parent="Terrain1"]
 offset_left = 1086.0
@@ -63,6 +64,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0330009, -0.0678177, -0.02
 template_mesh = SubResource("PlaneMesh_ay3n3")
 
 [node name="Clipmap" parent="Terrain2" instance=ExtResource("2_xh7b7")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -8.37717)
 
 [node name="MeshInstance3D" parent="Terrain2/Clipmap" index="0"]
 material_override = SubResource("ShaderMaterial_wox0x")

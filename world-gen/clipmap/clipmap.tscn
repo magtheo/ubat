@@ -1,6 +1,6 @@
 [gd_scene load_steps=8 format=3 uid="uid://deea6eg3f3cpc"]
 
-[ext_resource type="Script" path="res://world-gen/clipmap/clipmap.gd" id="1_2hmtw"]
+[ext_resource type="Script" path="res://world-gen/clipmap/clipmapOLD.gd" id="1_2hmtw"]
 [ext_resource type="Shader" path="res://world-gen/clipmap/clipmap.gdshader" id="1_ofxca"]
 [ext_resource type="FastNoiseLite" uid="uid://dnowyonrmedjk" path="res://world-gen/clipmap/fast_noise_lite_mainWorld.tres" id="3_5lrq2"]
 
@@ -20,9 +20,9 @@ shader_parameter/heightmap = SubResource("NoiseTexture2D_qbi7p")
 shader_parameter/normalmap = SubResource("NoiseTexture2D_ti51v")
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_atfdr"]
-size = Vector2(512, 512)
-subdivide_width = 2044
-subdivide_depth = 2044
+size = Vector2(1024, 512)
+subdivide_width = 1000
+subdivide_depth = 1000
 
 [node name="clipmap" type="Node3D"]
 script = ExtResource("1_2hmtw")

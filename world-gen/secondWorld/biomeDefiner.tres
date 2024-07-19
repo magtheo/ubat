@@ -1,7 +1,9 @@
 [gd_resource type="FastNoiseLite" format=3 uid="uid://cvg5466dmjiel"]
 
 [resource]
-noise_type = 0
-fractal_weighted_strength = 1.0
-fractal_ping_pong_strength = -3.0
-domain_warp_enabled = true
+seed = 4
+frequency = 0.0038
+fractal_type = 2
+fractal_octaves = 9
+fractal_weighted_strength = 0.46
+domain_warp_type = 1

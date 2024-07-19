@@ -30,6 +30,10 @@ version_control/autoload_on_startup=true
 
 enabled=PackedStringArray("res://addons/awesome_debug_log/plugin.cfg", "res://addons/phantom_camera/plugin.cfg")
 
+[filesystem]
+
+import/fbx/enabled=false
+
 [input]
 
 move_forward={
@@ -80,4 +84,8 @@ normalmap={
 heightmap={
 "type": "sampler2D",
 "value": "res://world-gen/chunk/materials/Rock050_2K-JPG_Displacement.jpg"
+}
+ocean_pos={
+"type": "vec3",
+"value": Vector3(0, 0, 1)
 }

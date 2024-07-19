@@ -8,11 +8,12 @@ const corral_biome = preload("res://world-gen/secondWorld/sectionOne/corralBiome
 
 # Called when the node enters the scene tree for the first time.
 func _ready():
-	var noise_texture = noise_texture_generator.get_texture()
-	await noise_texture.changed
-	var noise_image = noise_texture.get_image()
-	
-	analyse_biome(noise_image)
+	#var noise_texture = noise_texture_generator.get_texture()
+	#await noise_texture.changed
+	#var noise_image = noise_texture.get_image()
+	#
+	#analyse_biome(noise_image)
+	pass
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
