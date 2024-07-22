@@ -18,6 +18,9 @@ uniform sampler2D heightmapCorral;
 uniform sampler2D normalmapCorral;
 uniform sampler2D textureCorral;
 
+uniform vec3 vertex_positions[1000]; // verteces pr area, Adjust size as needed
+uniform int areas[3]; // Adjust size as needed
+
 // Varying variable to hold the UV coordinates of each vertex in texture space.
 varying vec2 texture_position;
 

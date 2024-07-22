@@ -1,47 +1,165 @@
-// This shader type is used for materials that affect geometry in 3D space.
 shader_type spatial;
 
-// Uniform variable to control the amplitude of the height scaling factor. It's a hint that this value should range between 0.1 and 8.0.
-uniform float amplitude;  
+uniform float geraralAmplitude;
+uniform float corralAmplitude;
+uniform float sandAmplitude;
+uniform float rockAmplitude;
+uniform float kelpAmplitude;
+uniform float lavaStoneAmplitude;
+uniform float biomeStrengthAmplifyer;
+uniform float height_difference_amp;
 
 uniform sampler2D biomeNoise;
+uniform sampler2D heightChanger;
 
-
-// Uniform sampler2D variables for texture maps: one is for height values (hinted as albedo) and another for normal vectors.
-uniform sampler2D heightmapSand;  
-uniform sampler2D normalmapSand; 
+uniform sampler2D heightmapSand;
+uniform sampler2D normalmapSand;
+uniform sampler2D textureSand;
 
 uniform sampler2D heightmapCorral;
 uniform sampler2D normalmapCorral;
+uniform sampler2D textureCorral;
 
-// Varying variable to hold the UV coordinates of each vertex in texture space.
-varying vec2 texture_position; 
+uniform sampler2D heightmapRock;
+uniform sampler2D normalmapRock;
+uniform sampler2D textureRock;
+
+uniform sampler2D heightmapKelp;
+uniform sampler2D normalmapKelp;
+uniform sampler2D textureKelp;
+
+uniform sampler2D heightmapLavaStone;
+uniform sampler2D normalmapLavaStone;
+uniform sampler2D textureLavaStone;
+
+uniform vec3 vertex_positions[9000]; // Adjust size as needed
+uniform int vertex_areas[9000]; // Adjust size as needed
+
+varying vec2 texture_position;
+
+uniform float corralCutof;
+uniform float sandCutof;
+uniform float rockCutof;
+uniform float kelpCutof;
+uniform float lavaStoneCutof;
+
+float smooth_step(float edge0, float edge1, float x) {
+    float t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
 
 void vertex() {
-    // This function is called for every vertex the material is visible on.
-    
-    // Calculate the world position of the current vertex by adding it with model matrix's translation part.
-    vec3 world_vertex = VERTEX + MODEL_MATRIX[3].xyz; 
-    
-    // Convert the vertex coordinates to texture space and normalize them, so they range from -1 to 1 in x and z directions.
-    // Then multiply by 0.5 for a better visibility of height map on the surface.
-    texture_position = (world_vertex.xz * 0.5) / float(textureSize(biomeNoise, 0).x);  
-    
-	vec4 color = texture(biomeNoise, texture_position);
-    if (color == vec4(1.0)) { // white pixels will be mapped to heightmap2
-        VERTEX.y = texture(heightmapSand, texture_position).r * amplitude; 
-    } else {                 // black pixels will be mapped to heightmap1
-        VERTEX.y = texture(heightmapCorral, texture_position).r * amplitude; 
+    vec3 world_vertex = VERTEX + MODEL_MATRIX[3].xyz;
+    texture_position = (world_vertex.xz * 0.5) / float(textureSize(biomeNoise, 0).x);
+
+    float biomeStrength = texture(biomeNoise, texture_position).r * biomeStrengthAmplifyer;
+    float height_amplefier = texture(heightChanger, texture_position).r;
+
+    int area_id = 0;
+    for (int i = 0; i < 9000; ++i) {
+        if (vertex_positions[i] == world_vertex) {
+            area_id = vertex_areas[i];
+            break;
+        }
     }
+
+    float sandWeight = 0.0;
+    float corralWeight = 0.0;
+    float rockWeight = 0.0;
+    float kelpWeight = 0.0;
+    float lavaStoneWeight = 0.0;
+
+    if (area_id == 1) {
+        sandWeight = smooth_step(sandCutof - 0.1, sandCutof + 0.1, biomeStrength);
+        corralWeight = smooth_step(corralCutof - 0.1, corralCutof + 0.1, biomeStrength);
+    } else if (area_id == 2) {
+        rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
+        kelpWeight = smooth_step(kelpCutof - 0.1, kelpCutof + 0.1, biomeStrength);
+    } else if (area_id == 3) {
+        rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
+        lavaStoneWeight = smooth_step(lavaStoneCutof - 0.1, lavaStoneCutof + 0.1, biomeStrength);
+    }
+
+    float transitionWeight = 1.0 - sandWeight - corralWeight - rockWeight - kelpWeight - lavaStoneWeight;
+
+    float sandHeight = texture(heightmapSand, texture_position).r * sandAmplitude;
+    float corralHeight = texture(heightmapCorral, texture_position).r * corralAmplitude;
+    float rockHeight = texture(heightmapRock, texture_position).r * rockAmplitude;
+    float kelpHeight = texture(heightmapKelp, texture_position).r * kelpAmplitude;
+    float lavaStoneHeight = texture(heightmapLavaStone, texture_position).r * lavaStoneAmplitude;
+
+    VERTEX.y = (
+        sandHeight * sandWeight +
+        corralHeight * corralWeight +
+        rockHeight * rockWeight +
+        kelpHeight * kelpWeight +
+        lavaStoneHeight * lavaStoneWeight +
+        sandHeight * transitionWeight
+    ) * geraralAmplitude * (height_amplefier * height_difference_amp);
 }
 
 void fragment() {
-    // This function is called for every pixel on the surface of the material.
-    vec4 color = texture(biomeNoise, texture_position);
-    if (color == vec4(1.0)) { // white pixels will be mapped to heightmap2
-		NORMAL_MAP = texture(normalmapSand, texture_position).rgb; 
-    } else {                    // black pixels will be mapped to heightmap1
-		NORMAL_MAP = texture(normalmapCorral, texture_position).rgb; 
+    float biomeStrength = texture(biomeNoise, texture_position).r;
+
+    int area_id = 0;
+    for (int i = 0; i < 9000; ++i) {
+        if (vertex_positions[i] == VERTEX + MODEL_MATRIX[3].xyz) {
+            area_id = vertex_areas[i];
+            break;
+        }
     }
-    // Sample the normalmap texture at the current UV coordinates and use its RGB values as the normal vector of the vertex.
+
+    float sandWeight = 0.0;
+    float corralWeight = 0.0;
+    float rockWeight = 0.0;
+    float kelpWeight = 0.0;
+    float lavaStoneWeight = 0.0;
+
+    if (area_id == 1) {
+        sandWeight = smooth_step(sandCutof - 0.1, sandCutof + 0.1, biomeStrength);
+        corralWeight = smooth_step(corralCutof - 0.1, corralCutof + 0.1, biomeStrength);
+    } else if (area_id == 2) {
+        rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
+        kelpWeight = smooth_step(kelpCutof - 0.1, kelpCutof + 0.1, biomeStrength);
+    } else if (area_id == 3) {
+        rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
+        lavaStoneWeight = smooth_step(lavaStoneCutof - 0.1, lavaStoneCutof + 0.1, biomeStrength);
+    }
+
+    float transitionWeight = 1.0 - sandWeight - corralWeight - rockWeight - kelpWeight - lavaStoneWeight;
+
+    vec3 sandNormal = texture(normalmapSand, texture_position).rgb * sandAmplitude;
+    vec3 corralNormal = texture(normalmapCorral, texture_position).rgb * corralAmplitude;
+    vec3 rockNormal = texture(normalmapRock, texture_position).rgb * rockAmplitude;
+    vec3 kelpNormal = texture(normalmapKelp, texture_position).rgb * kelpAmplitude;
+    vec3 lavaStoneNormal = texture(normalmapLavaStone, texture_position).rgb * lavaStoneAmplitude;
+
+    NORMAL_MAP = normalize(
+        sandNormal * sandWeight +
+        corralNormal * corralWeight +
+        rockNormal * rockWeight +
+        kelpNormal * kelpWeight +
+        lavaStoneNormal * lavaStoneWeight +
+        sandNormal * transitionWeight
+    );
+
+    vec4 sandTexture = texture(textureSand, texture_position);
+    vec4 corralTexture = texture(textureCorral, texture_position);
+    vec4 rockTexture = texture(textureRock, texture_position);
+    vec4 kelpTexture = texture(textureKelp, texture_position);
+    vec4 lavaStoneTexture = texture(textureLavaStone, texture_position);
+
+    vec4 blendedTexture = (
+        sandTexture * sandWeight +
+        corralTexture * corralWeight +
+        rockTexture * rockWeight +
+        kelpTexture * kelpWeight +
+        lavaStoneTexture * lavaStoneWeight +
+        sandTexture * transitionWeight
+    );
+
+    ALBEDO = blendedTexture.rgb;
+
+    vec3 biomeColor = vec3(sandWeight, corralWeight, 0.0);
+    //ALBEDO = biomeColor;
 }

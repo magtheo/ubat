@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3 uid="uid://cx1phq3o1qkdv"]
+[gd_scene load_steps=4 format=3 uid="uid://bufkhyglwioix"]
 
 [ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/corralBiome/coral_biome.gd" id="1_d66t8"]
 [ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/corralBiome/coral_generator.gd" id="2_qlwrw"]
