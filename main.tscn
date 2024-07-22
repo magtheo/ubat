@@ -1,24 +1,27 @@
-[gd_scene load_steps=22 format=3 uid="uid://0p18gsq2fpnm"]
+[gd_scene load_steps=25 format=3 uid="uid://0p18gsq2fpnm"]
 
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
 [ext_resource type="Script" path="res://world-gen/clipmap/clipmap.gd" id="2_7bnx7"]
 [ext_resource type="Material" uid="uid://cmaibe5gvhg04" path="res://world-gen/secondWorld/shaders/shadermaterial1.tres" id="3_0wqi7"]
 [ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
 [ext_resource type="ArrayMesh" uid="uid://btxc0jr7t5wv8" path="res://world-gen/thirdWorld/ground_mesh.obj" id="4_qh8t0"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/sectionBOX1.gd" id="5_ix5sb"]
 [ext_resource type="PackedScene" uid="uid://nytuhig2bebg" path="res://world-gen/secondWorld/water/scenes/OceanMap.tscn" id="5_jj2nc"]
 [ext_resource type="PackedScene" uid="uid://ya1mgvr6cdeg" path="res://world-gen/secondWorld/water/scenes/WaterPlane.tscn" id="6_lc8rr"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/sectionTwo/SectionBOX2.gd" id="6_wirkx"]
 [ext_resource type="Shader" path="res://world-gen/secondWorld/water/shader/Water.gdshader" id="7_1sh1e"]
+[ext_resource type="Script" path="res://world-gen/secondWorld/sectionThree/SectionBOX3.gd" id="7_km0b2"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
 albedo_color = Color(0.129412, 0.0196078, 1, 1)
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_tosu2"]
-size = Vector2(1000, 1000)
-subdivide_width = 100
-subdivide_depth = 100
+size = Vector2(1500, 1000)
+subdivide_width = 500
+subdivide_depth = 500
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_2ug7c"]
-size = Vector3(500, 50, 500)
+size = Vector3(500, 500, 1022.49)
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_rnbjh"]
 noise_type = 3
@@ -125,17 +128,26 @@ material_override = ExtResource("3_0wqi7")
 mesh = ExtResource("4_qh8t0")
 skeleton = NodePath("../../..")
 
-[node name="Section 1" type="CollisionShape3D" parent="seconWorld/clipmap"]
-transform = Transform3D(0.468, 0, 0, 0, 26.221, 0, 0, 0, 2.039, 387.94, 12.0653, 0)
-shape = SubResource("BoxShape3D_2ug7c")
+[node name="Section1" type="Area3D" parent="seconWorld/clipmap"]
+collision_layer = 2
 
-[node name="Section 2" type="CollisionShape3D" parent="seconWorld/clipmap"]
-transform = Transform3D(1.004, 0, 0, 0, 75.952, 0, 0, 0, 2.013, 0, 0, 0)
+[node name="Section 1" type="CollisionShape3D" parent="seconWorld/clipmap/Section1"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 522.245, 0, 0)
 shape = SubResource("BoxShape3D_2ug7c")
+script = ExtResource("5_ix5sb")
 
-[node name="Section 3" type="CollisionShape3D" parent="seconWorld/clipmap"]
-transform = Transform3D(0.82, 0, 0, 0, 60, 0, 0, 0, 2.03, -476.85, 0, 0)
+[node name="Section2" type="Area3D" parent="seconWorld/clipmap"]
+
+[node name="Section 2" type="CollisionShape3D" parent="seconWorld/clipmap/Section2"]
 shape = SubResource("BoxShape3D_2ug7c")
+script = ExtResource("6_wirkx")
+
+[node name="Section3" type="Area3D" parent="seconWorld/clipmap"]
+
+[node name="Section 3" type="CollisionShape3D" parent="seconWorld/clipmap/Section3"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -476.85, 0, 0)
+shape = SubResource("BoxShape3D_2ug7c")
+script = ExtResource("7_km0b2")
 
 [node name="water" type="Node3D" parent="."]
 visible = false

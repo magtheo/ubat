@@ -1,10 +1,11 @@
 extends Node3D
 
-var section1_shader = load("res://world-gen/secondWorld/sectionOne/Shader/Section1biomeShader3.gdshader")
-var section2_shader = load("res://world-gen/secondWorld/sectionOne/Shader/Section2biomeShader.gdshader")
-var section3_shader = load("res://world-gen/secondWorld/sectionOne/Shader/Section3.gdshader")
+@onready var section_1 = $"Section 1"
+@onready var section_2 = $"Section 2"
+@onready var section_3 = $"Section 3"
 
-@onready var mesh = $mainMesh
+@onready var meshInstance = $mainMesh
+@onready var mesh = meshInstance.mesh
 
 func _physics_process(delta):
 	if not mesh:
@@ -12,14 +13,18 @@ func _physics_process(delta):
 		
 	for body in mesh.get_overlapping_bodies():
 		var collision_shape = body.get_collision_shape()
-		if collision_shape and collision_shape.has_method("get_biome"):  # Assuming each biome shape has a function to get its biome
-			var shader: ShaderMaterial
+		if collision_shape:  # Assuming each biome shape has a function to get its biome
+			var coordinates = []  # Initialize an array to store the coordinates
 			
-			match collision_shape.call("get_biome"):  # Get the biome from the collision shape
-				"section1":
-					shader = section1_shader
-				"section2":
-					shader = section2_shader
-				"section3":
-					shader = section3_shader
-			mesh.surface_set_material(0, shader)  # Replace with the correct surface index if needed
+			# Get the vertices of the collision shape and calculate their world positions
+			for vertex in collision_shape.get_vertices():
+				var world_vertex = mesh.to_local(vertex)  # Convert local vertex to world space
+				var x = world_vertex.x
+				var y = world_vertex.y
+				var z = world_vertex.z
+				coordinates.append([x, y, z])  # Store the coordinates in the array
+			
+			# Now you can use these coordinates in your shader to determine which noise to use for terrain generation
+			# For example:
+			#var noise_index = get_noise_index(coordinates)  # Replace with your own implementation
+			# ...
