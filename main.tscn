@@ -15,8 +15,8 @@ albedo_color = Color(0.129412, 0.0196078, 1, 1)
 [sub_resource type="PlaneMesh" id="PlaneMesh_tosu2"]
 material = ExtResource("3_0wqi7")
 size = Vector2(1500, 1000)
-subdivide_width = 500
-subdivide_depth = 500
+subdivide_width = 200
+subdivide_depth = 200
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_2ug7c"]
 size = Vector3(500, 500, 1022.49)
