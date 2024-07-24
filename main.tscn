@@ -1,25 +1,24 @@
 [gd_scene load_steps=22 format=3 uid="uid://0p18gsq2fpnm"]
 
+[ext_resource type="Script" path="res://world-gen/world/world.gd" id="1_b2q2r"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
-[ext_resource type="Script" path="res://world-gen/clipmap/clipmap.gd" id="2_7bnx7"]
 [ext_resource type="Material" uid="uid://cmaibe5gvhg04" path="res://world-gen/secondWorld/shaders/shadermaterial1.tres" id="3_0wqi7"]
 [ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
-[ext_resource type="ArrayMesh" uid="uid://btxc0jr7t5wv8" path="res://world-gen/thirdWorld/ground_mesh.obj" id="4_qh8t0"]
+[ext_resource type="Script" path="res://world-gen/world/AreaColoring.gd" id="3_m8wpf"]
 [ext_resource type="PackedScene" uid="uid://nytuhig2bebg" path="res://world-gen/secondWorld/water/scenes/OceanMap.tscn" id="5_jj2nc"]
 [ext_resource type="PackedScene" uid="uid://ya1mgvr6cdeg" path="res://world-gen/secondWorld/water/scenes/WaterPlane.tscn" id="6_lc8rr"]
 [ext_resource type="Shader" path="res://world-gen/secondWorld/water/shader/Water.gdshader" id="7_1sh1e"]
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
-albedo_color = Color(0.129412, 0.0196078, 1, 1)
-
 [sub_resource type="PlaneMesh" id="PlaneMesh_tosu2"]
-material = ExtResource("3_0wqi7")
-size = Vector2(1500, 1000)
+size = Vector2(1500, 500)
 subdivide_width = 200
 subdivide_depth = 200
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_2ug7c"]
 size = Vector3(500, 500, 1022.49)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
+albedo_color = Color(0.129412, 0.0196078, 1, 1)
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_rnbjh"]
 noise_type = 3
@@ -101,6 +100,43 @@ size = Vector2(500, 500)
 
 [node name="main" type="Node3D"]
 
+[node name="thirdWorld" type="Node3D" parent="."]
+
+[node name="world" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("areas")]
+script = ExtResource("1_b2q2r")
+areas = [NodePath("Section1"), NodePath("Section2"), NodePath("Section3")]
+
+[node name="mainMesh" type="MeshInstance3D" parent="thirdWorld/world"]
+material_override = ExtResource("3_0wqi7")
+mesh = SubResource("PlaneMesh_tosu2")
+
+[node name="Section1" type="Area3D" parent="thirdWorld/world"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 529.916, 0, 0)
+
+[node name="Section 1" type="CollisionShape3D" parent="thirdWorld/world/Section1"]
+shape = SubResource("BoxShape3D_2ug7c")
+
+[node name="Section2" type="Area3D" parent="thirdWorld/world"]
+
+[node name="Section 2" type="CollisionShape3D" parent="thirdWorld/world/Section2"]
+shape = SubResource("BoxShape3D_2ug7c")
+
+[node name="Section3" type="Area3D" parent="thirdWorld/world"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -541.629, 0, 0)
+
+[node name="Section 3" type="CollisionShape3D" parent="thirdWorld/world/Section3"]
+shape = SubResource("BoxShape3D_2ug7c")
+
+[node name="ubatMesh" type="MeshInstance3D" parent="thirdWorld/world"]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="thirdWorld"]
+transform = Transform3D(0.392704, 0.831504, -0.392919, 0.130958, 0.372328, 0.918816, 0.910293, -0.412278, 0.0373226, -905.235, 340.605, 56.8324)
+
+[node name="AreaColoring" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("mesh_instance", "areas")]
+script = ExtResource("3_m8wpf")
+mesh_instance = NodePath("../world/mainMesh")
+areas = [NodePath("../world/Section1"), NodePath("../world/Section2"), NodePath("../world/Section3")]
+
 [node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.93042, 4.05449, 6.219)
 
@@ -108,41 +144,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.93042, 4.05449, 6.219)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)
 size = Vector3(2.9292, 1.16064, 1)
 material = SubResource("StandardMaterial3D_g1ljx")
-
-[node name="seconWorld" type="Node3D" parent="."]
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="seconWorld"]
-transform = Transform3D(0.392704, 0.831504, -0.392919, 0.130958, 0.372328, 0.918815, 0.910293, -0.412278, 0.0373227, -905.235, 340.605, 56.8324)
-
-[node name="clipmap" type="Node3D" parent="seconWorld" node_paths=PackedStringArray("areas")]
-script = ExtResource("2_7bnx7")
-areas = [NodePath("Section1"), NodePath("Section2"), NodePath("Section3")]
-
-[node name="mainMesh" type="MeshInstance3D" parent="seconWorld/clipmap"]
-mesh = SubResource("PlaneMesh_tosu2")
-
-[node name="GroundMesh" type="MeshInstance3D" parent="seconWorld/clipmap"]
-material_override = ExtResource("3_0wqi7")
-mesh = ExtResource("4_qh8t0")
-skeleton = NodePath("../../..")
-
-[node name="Section1" type="Area3D" parent="seconWorld/clipmap"]
-collision_layer = 3
-
-[node name="Section 1" type="CollisionShape3D" parent="seconWorld/clipmap/Section1"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 522.245, 0, 0)
-shape = SubResource("BoxShape3D_2ug7c")
-
-[node name="Section2" type="Area3D" parent="seconWorld/clipmap"]
-
-[node name="Section 2" type="CollisionShape3D" parent="seconWorld/clipmap/Section2"]
-shape = SubResource("BoxShape3D_2ug7c")
-
-[node name="Section3" type="Area3D" parent="seconWorld/clipmap"]
-
-[node name="Section 3" type="CollisionShape3D" parent="seconWorld/clipmap/Section3"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -476.85, 0, 0)
-shape = SubResource("BoxShape3D_2ug7c")
 
 [node name="water" type="Node3D" parent="."]
 visible = false

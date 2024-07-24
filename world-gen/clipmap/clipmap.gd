@@ -39,11 +39,11 @@ func find_colliding_vertices():
 	for area in areas:
 		result[area] = []
 		for vertex in vertices:
-			var global_vertex = vertex - mesh_instance.global_transform.origin
+			var global_vertex = vertex - mesh_instance.global_transform.origin # is this line correct?
 			if is_point_in_area(global_vertex, area):
 				result[area].append(global_vertex)
 
-	return result	
+	return result
 
 
 func _ready():
@@ -62,16 +62,22 @@ func _ready():
 	
 	# Prepare data for shader
 	var vertex_positions = []
-	var vertex_areas = []
+	var vertex_areas = {}
 	var area_id = 1
-	
+
 	for area in areas:
-		if area in colliding_vertices:
-			for vertex in colliding_vertices[area]:
-				vertex_positions.append(vertex)
-				vertex_areas.append(area_id)
+		if not colliding_vertices.has(area): continue
+
+		for vertex in colliding_vertices[area]:
+			vertex_positions.append(vertex)
+			vertex_areas[str(vertex)] = area_id
 		area_id += 1
 	
+	# Convert dictionary to flat array
+	var flat_vertex_areas = []
+	for vertex in vertex_positions:
+		flat_vertex_areas.append(vertex_areas[str(vertex)])
+
 	# Send data to shader
 	shader_material.set_shader_parameter("vertex_positions", vertex_positions)
-	shader_material.set_shader_parameter("areas", areas)
+	shader_material.set_shader_parameter("vertex_areas", flat_vertex_areas)

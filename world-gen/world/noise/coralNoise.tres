@@ -1,0 +1,7 @@
+[gd_resource type="FastNoiseLite" format=3 uid="uid://bj0uorp6ls8b3"]
+
+[resource]
+noise_type = 4
+frequency = 0.024
+fractal_type = 3
+cellular_distance_function = 2

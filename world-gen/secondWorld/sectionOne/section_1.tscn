@@ -1,10 +1,10 @@
 [gd_scene load_steps=15 format=3 uid="uid://i1ajhbir7evt"]
 
-[ext_resource type="FastNoiseLite" uid="uid://cvg5466dmjiel" path="res://world-gen/secondWorld/biomeDefiner.tres" id="1_e106d"]
+[ext_resource type="FastNoiseLite" uid="uid://c6aifvg6h4dvj" path="res://world-gen/world/noise/biomeDefiner.tres" id="1_kkls1"]
 [ext_resource type="Script" path="res://world-gen/secondWorld/biomeDefiner.gd" id="2_i3die"]
-[ext_resource type="FastNoiseLite" uid="uid://dhi7d23lfdgyo" path="res://world-gen/secondWorld/sectionOne/sandBiome/sandNoise.tres" id="3_fog5t"]
+[ext_resource type="FastNoiseLite" uid="uid://yy22jx36olpj" path="res://world-gen/world/noise/sandNoise.tres" id="3_y3na1"]
 [ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/sandBiome/sandBiomeTexture.gd" id="4_4mx7t"]
-[ext_resource type="FastNoiseLite" path="res://world-gen/secondWorld/sectionOne/corralBiome/coralNoise.tres" id="5_fennm"]
+[ext_resource type="FastNoiseLite" uid="uid://bj0uorp6ls8b3" path="res://world-gen/world/noise/coralNoise.tres" id="5_u1yrh"]
 [ext_resource type="Script" path="res://world-gen/secondWorld/sectionOne/corralBiome/coralBiomeTexture.gd" id="6_4pepk"]
 [ext_resource type="Script" path="res://world-gen/clipmap/clipmapOLD.gd" id="7_bst5k"]
 [ext_resource type="ArrayMesh" uid="uid://btxc0jr7t5wv8" path="res://world-gen/thirdWorld/ground_mesh.obj" id="7_ht7sj"]
@@ -13,13 +13,13 @@
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_5ytth"]
 seamless_blend_skirt = 0.0
-noise = ExtResource("1_e106d")
+noise = ExtResource("1_kkls1")
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_oa33o"]
-noise = ExtResource("3_fog5t")
+noise = ExtResource("3_y3na1")
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_18mod"]
-noise = ExtResource("5_fennm")
+noise = ExtResource("5_u1yrh")
 
 [sub_resource type="MultiMesh" id="MultiMesh_cu8h4"]
 mesh = ExtResource("7_ht7sj")

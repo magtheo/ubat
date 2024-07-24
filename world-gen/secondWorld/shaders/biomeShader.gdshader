@@ -1,6 +1,6 @@
 shader_type spatial;
 
-uniform float geraralAmplitude;
+uniform float generalAmplitude;
 uniform float corralAmplitude;
 uniform float sandAmplitude;
 uniform float rockAmplitude;
@@ -32,9 +32,6 @@ uniform sampler2D heightmapLavaStone;
 uniform sampler2D normalmapLavaStone;
 uniform sampler2D textureLavaStone;
 
-uniform vec3 vertex_positions[9000]; // Adjust size as needed
-uniform int vertex_areas[9000]; // Adjust size as needed
-
 varying vec2 texture_position;
 
 uniform float corralCutof;
@@ -55,27 +52,20 @@ void vertex() {
     float biomeStrength = texture(biomeNoise, texture_position).r * biomeStrengthAmplifyer;
     float height_amplefier = texture(heightChanger, texture_position).r;
 
-    int area_id = 0;
-    for (int i = 0; i < 9000; ++i) {
-        if (vertex_positions[i] == world_vertex) {
-            area_id = vertex_areas[i];
-            break;
-        }
-    }
-
     float sandWeight = 0.0;
     float corralWeight = 0.0;
     float rockWeight = 0.0;
     float kelpWeight = 0.0;
     float lavaStoneWeight = 0.0;
 
-    if (area_id == 1) {
+    // Determine area based on vertex color
+    if (COLOR.r > 0.0) {
         sandWeight = smooth_step(sandCutof - 0.1, sandCutof + 0.1, biomeStrength);
         corralWeight = smooth_step(corralCutof - 0.1, corralCutof + 0.1, biomeStrength);
-    } else if (area_id == 2) {
+    } else if (COLOR.g > 0.0) {
         rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
         kelpWeight = smooth_step(kelpCutof - 0.1, kelpCutof + 0.1, biomeStrength);
-    } else if (area_id == 3) {
+    } else if (COLOR.b > 0.0) {
         rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
         lavaStoneWeight = smooth_step(lavaStoneCutof - 0.1, lavaStoneCutof + 0.1, biomeStrength);
     }
@@ -95,19 +85,10 @@ void vertex() {
         kelpHeight * kelpWeight +
         lavaStoneHeight * lavaStoneWeight +
         sandHeight * transitionWeight
-    ) * geraralAmplitude * (height_amplefier * height_difference_amp);
+    ) * generalAmplitude * (height_amplefier * height_difference_amp);
 }
-
 void fragment() {
     float biomeStrength = texture(biomeNoise, texture_position).r;
-
-    int area_id = 0;
-    for (int i = 0; i < 9000; ++i) {
-        if (vertex_positions[i] == VERTEX + MODEL_MATRIX[3].xyz) {
-            area_id = vertex_areas[i];
-            break;
-        }
-    }
 
     float sandWeight = 0.0;
     float corralWeight = 0.0;
@@ -115,13 +96,13 @@ void fragment() {
     float kelpWeight = 0.0;
     float lavaStoneWeight = 0.0;
 
-    if (area_id == 1) {
+    if (COLOR.r > 0.5) {
         sandWeight = smooth_step(sandCutof - 0.1, sandCutof + 0.1, biomeStrength);
         corralWeight = smooth_step(corralCutof - 0.1, corralCutof + 0.1, biomeStrength);
-    } else if (area_id == 2) {
+    } else if (COLOR.g > 0.5) {
         rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
         kelpWeight = smooth_step(kelpCutof - 0.1, kelpCutof + 0.1, biomeStrength);
-    } else if (area_id == 3) {
+    } else if (COLOR.b > 0.5) {
         rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
         lavaStoneWeight = smooth_step(lavaStoneCutof - 0.1, lavaStoneCutof + 0.1, biomeStrength);
     }
@@ -159,7 +140,4 @@ void fragment() {
     );
 
     ALBEDO = blendedTexture.rgb;
-
-    vec3 biomeColor = vec3(sandWeight, corralWeight, 0.0);
-    //ALBEDO = biomeColor;
 }
