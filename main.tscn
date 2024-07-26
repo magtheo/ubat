@@ -102,11 +102,21 @@ size = Vector2(500, 500)
 
 [node name="thirdWorld" type="Node3D" parent="."]
 
+[node name="AreaColoring" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("areas")]
+script = ExtResource("3_m8wpf")
+areas = [NodePath("../world/Section1"), NodePath("../world/Section2"), NodePath("../world/Section3")]
+
+[node name="mainMesh2" type="MeshInstance3D" parent="thirdWorld/AreaColoring"]
+visible = false
+mesh = SubResource("PlaneMesh_tosu2")
+skeleton = NodePath("../../world")
+
 [node name="world" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("areas")]
 script = ExtResource("1_b2q2r")
 areas = [NodePath("Section1"), NodePath("Section2"), NodePath("Section3")]
 
 [node name="mainMesh" type="MeshInstance3D" parent="thirdWorld/world"]
+visible = false
 material_override = ExtResource("3_0wqi7")
 mesh = SubResource("PlaneMesh_tosu2")
 
@@ -127,18 +137,10 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -541.629, 0, 0)
 [node name="Section 3" type="CollisionShape3D" parent="thirdWorld/world/Section3"]
 shape = SubResource("BoxShape3D_2ug7c")
 
-[node name="ubatMesh" type="MeshInstance3D" parent="thirdWorld/world"]
-
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="thirdWorld"]
 transform = Transform3D(0.392704, 0.831504, -0.392919, 0.130958, 0.372328, 0.918816, 0.910293, -0.412278, 0.0373226, -905.235, 340.605, 56.8324)
 
-[node name="AreaColoring" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("mesh_instance", "areas")]
-script = ExtResource("3_m8wpf")
-mesh_instance = NodePath("../world/mainMesh")
-areas = [NodePath("../world/Section1"), NodePath("../world/Section2"), NodePath("../world/Section3")]
-
 [node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.93042, 4.05449, 6.219)
 
 [node name="CSGBox3D" type="CSGBox3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)

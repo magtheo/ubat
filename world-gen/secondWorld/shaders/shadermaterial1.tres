@@ -1,4 +1,4 @@
-[gd_resource type="ShaderMaterial" load_steps=32 format=3 uid="uid://cmaibe5gvhg04"]
+[gd_resource type="ShaderMaterial" load_steps=23 format=3 uid="uid://cmaibe5gvhg04"]
 
 [ext_resource type="Shader" path="res://world-gen/secondWorld/shaders/biomeShader.gdshader" id="1_tq5sf"]
 [ext_resource type="FastNoiseLite" uid="uid://c6aifvg6h4dvj" path="res://world-gen/world/noise/biomeDefiner.tres" id="2_ljmny"]
@@ -8,6 +8,8 @@
 [ext_resource type="FastNoiseLite" uid="uid://bwfle857gb7n4" path="res://world-gen/world/noise/lavaRockNoise.tres" id="6_54a8j"]
 [ext_resource type="FastNoiseLite" uid="uid://bpb2sftv8ys56" path="res://world-gen/world/noise/rockNoise.tres" id="7_gh4b8"]
 [ext_resource type="FastNoiseLite" uid="uid://yy22jx36olpj" path="res://world-gen/world/noise/sandNoise.tres" id="8_58kls"]
+[ext_resource type="Texture2D" uid="uid://2hc4ep25nr1f" path="res://textures/sandSmall.png" id="8_xq77h"]
+[ext_resource type="Texture2D" uid="uid://s0lbvdddx3t1" path="res://textures/coral.png" id="9_4pkbf"]
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_5xe8x"]
 seamless = true
@@ -18,9 +20,8 @@ noise = ExtResource("2_ljmny")
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_y6kfv"]
 noise = ExtResource("3_kcttc")
 
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_a0wrh"]
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_kj1m5"]
 seamless = true
-seamless_blend_skirt = 0.381
 noise = ExtResource("4_bhclq")
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_sdubn"]
@@ -35,19 +36,13 @@ noise = ExtResource("6_54a8j")
 seamless = true
 noise = ExtResource("7_gh4b8")
 
-[sub_resource type="Gradient" id="Gradient_7rmuv"]
-
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_vg6dc"]
 seamless = true
-seamless_blend_skirt = 0.751
-color_ramp = SubResource("Gradient_7rmuv")
 noise = ExtResource("8_58kls")
 
-[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_d24e3"]
+[sub_resource type="NoiseTexture2D" id="NoiseTexture2D_1y46s"]
 seamless = true
-seamless_blend_skirt = 0.478
 as_normal_map = true
-bump_strength = 32.0
 noise = ExtResource("4_bhclq")
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_81xhq"]
@@ -67,60 +62,21 @@ noise = ExtResource("7_gh4b8")
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_7a6qr"]
 seamless = true
-seamless_blend_skirt = 0.706
 as_normal_map = true
 noise = ExtResource("8_58kls")
-
-[sub_resource type="Curve" id="Curve_plerv"]
-_data = [Vector2(0.424719, 0.0300722), 0.0, 0.0, 0, 0]
-point_count = 1
-
-[sub_resource type="CurveXYZTexture" id="CurveXYZTexture_5gm8e"]
-curve_x = SubResource("Curve_plerv")
-
-[sub_resource type="Curve" id="Curve_mbtmr"]
-_data = [Vector2(0.422993, 0.0690414), 0.0, 0.0, 0, 0]
-point_count = 1
-
-[sub_resource type="Curve" id="Curve_xreel"]
-_data = [Vector2(0.494577, 0.0475577), 0.0, 0.0, 0, 0]
-point_count = 1
-
-[sub_resource type="CurveXYZTexture" id="CurveXYZTexture_y27ly"]
-curve_x = SubResource("Curve_mbtmr")
-curve_y = SubResource("Curve_xreel")
-
-[sub_resource type="Curve" id="Curve_xikgw"]
-_data = [Vector2(0.414317, 0.0451707), 0.0, 0.0, 0, 0]
-point_count = 1
-
-[sub_resource type="Curve" id="Curve_iahsd"]
-_data = [Vector2(0.388286, 0.100073), 0.0, 0.0, 0, 0]
-point_count = 1
-
-[sub_resource type="CurveXYZTexture" id="CurveXYZTexture_jb62s"]
-curve_x = SubResource("Curve_xikgw")
-curve_z = SubResource("Curve_iahsd")
-
-[sub_resource type="Curve" id="Curve_f34sq"]
-_data = [Vector2(0.498915, 0.057106), 0.0, 0.0, 0, 0]
-point_count = 1
-
-[sub_resource type="CurveXYZTexture" id="CurveXYZTexture_qgf5u"]
-curve_y = SubResource("Curve_f34sq")
 
 [resource]
 render_priority = 0
 shader = ExtResource("1_tq5sf")
 shader_parameter/generalAmplitude = 10.0
-shader_parameter/corralAmplitude = 4.385
+shader_parameter/coralAmplitude = 3.57
 shader_parameter/sandAmplitude = 1.075
 shader_parameter/rockAmplitude = 2.54
 shader_parameter/kelpAmplitude = 1.005
 shader_parameter/lavaStoneAmplitude = 1.11
 shader_parameter/biomeStrengthAmplifyer = 0.785
 shader_parameter/height_difference_amp = 1.875
-shader_parameter/corralCutof = 0.605
+shader_parameter/CoralCutof = 0.525
 shader_parameter/sandCutof = 1.075
 shader_parameter/rockCutof = 0.795
 shader_parameter/kelpCutof = 0.765
@@ -129,15 +85,16 @@ shader_parameter/biomeNoise = SubResource("NoiseTexture2D_5xe8x")
 shader_parameter/heightChanger = SubResource("NoiseTexture2D_y6kfv")
 shader_parameter/heightmapSand = SubResource("NoiseTexture2D_vg6dc")
 shader_parameter/normalmapSand = SubResource("NoiseTexture2D_7a6qr")
-shader_parameter/heightmapCorral = SubResource("NoiseTexture2D_a0wrh")
-shader_parameter/normalmapCorral = SubResource("NoiseTexture2D_d24e3")
-shader_parameter/textureCorral = SubResource("CurveXYZTexture_5gm8e")
+shader_parameter/textureSand = ExtResource("8_xq77h")
+shader_parameter/heightmapCoral = SubResource("NoiseTexture2D_kj1m5")
+shader_parameter/normalmapCoral = SubResource("NoiseTexture2D_1y46s")
+shader_parameter/textureCoral = ExtResource("9_4pkbf")
 shader_parameter/heightmapRock = SubResource("NoiseTexture2D_2jnwv")
 shader_parameter/normalmapRock = SubResource("NoiseTexture2D_2gv7r")
-shader_parameter/textureRock = SubResource("CurveXYZTexture_qgf5u")
+shader_parameter/textureRock = ExtResource("9_4pkbf")
 shader_parameter/heightmapKelp = SubResource("NoiseTexture2D_sdubn")
 shader_parameter/normalmapKelp = SubResource("NoiseTexture2D_81xhq")
-shader_parameter/textureKelp = SubResource("CurveXYZTexture_y27ly")
+shader_parameter/textureKelp = ExtResource("8_xq77h")
 shader_parameter/heightmapLavaStone = SubResource("NoiseTexture2D_mlgdn")
 shader_parameter/normalmapLavaStone = SubResource("NoiseTexture2D_aj0rx")
-shader_parameter/textureLavaStone = SubResource("CurveXYZTexture_jb62s")
+shader_parameter/textureLavaStone = ExtResource("8_xq77h")

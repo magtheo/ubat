@@ -1,7 +1,7 @@
 shader_type spatial;
 
 uniform float generalAmplitude;
-uniform float corralAmplitude;
+uniform float coralAmplitude;
 uniform float sandAmplitude;
 uniform float rockAmplitude;
 uniform float kelpAmplitude;
@@ -16,9 +16,9 @@ uniform sampler2D heightmapSand;
 uniform sampler2D normalmapSand;
 uniform sampler2D textureSand;
 
-uniform sampler2D heightmapCorral;
-uniform sampler2D normalmapCorral;
-uniform sampler2D textureCorral;
+uniform sampler2D heightmapCoral;
+uniform sampler2D normalmapCoral;
+uniform sampler2D textureCoral;
 
 uniform sampler2D heightmapRock;
 uniform sampler2D normalmapRock;
@@ -34,7 +34,7 @@ uniform sampler2D textureLavaStone;
 
 varying vec2 texture_position;
 
-uniform float corralCutof;
+uniform float CoralCutof;
 uniform float sandCutof;
 uniform float rockCutof;
 uniform float kelpCutof;
@@ -53,7 +53,7 @@ void vertex() {
     float height_amplefier = texture(heightChanger, texture_position).r;
 
     float sandWeight = 0.0;
-    float corralWeight = 0.0;
+    float CoralWeight = 0.0;
     float rockWeight = 0.0;
     float kelpWeight = 0.0;
     float lavaStoneWeight = 0.0;
@@ -61,7 +61,7 @@ void vertex() {
     // Determine area based on vertex color
     if (COLOR.r > 0.0) {
         sandWeight = smooth_step(sandCutof - 0.1, sandCutof + 0.1, biomeStrength);
-        corralWeight = smooth_step(corralCutof - 0.1, corralCutof + 0.1, biomeStrength);
+        CoralWeight = smooth_step(CoralCutof - 0.1, CoralCutof + 0.1, biomeStrength);
     } else if (COLOR.g > 0.0) {
         rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
         kelpWeight = smooth_step(kelpCutof - 0.1, kelpCutof + 0.1, biomeStrength);
@@ -70,35 +70,36 @@ void vertex() {
         lavaStoneWeight = smooth_step(lavaStoneCutof - 0.1, lavaStoneCutof + 0.1, biomeStrength);
     }
 
-    float transitionWeight = 1.0 - sandWeight - corralWeight - rockWeight - kelpWeight - lavaStoneWeight;
+    float transitionWeight = 1.0 - sandWeight - CoralWeight - rockWeight - kelpWeight - lavaStoneWeight;
 
     float sandHeight = texture(heightmapSand, texture_position).r * sandAmplitude;
-    float corralHeight = texture(heightmapCorral, texture_position).r * corralAmplitude;
+    float CoralHeight = texture(heightmapCoral, texture_position).r * coralAmplitude;
     float rockHeight = texture(heightmapRock, texture_position).r * rockAmplitude;
     float kelpHeight = texture(heightmapKelp, texture_position).r * kelpAmplitude;
     float lavaStoneHeight = texture(heightmapLavaStone, texture_position).r * lavaStoneAmplitude;
 
     VERTEX.y = (
         sandHeight * sandWeight +
-        corralHeight * corralWeight +
+        CoralHeight * CoralWeight +
         rockHeight * rockWeight +
         kelpHeight * kelpWeight +
         lavaStoneHeight * lavaStoneWeight +
         sandHeight * transitionWeight
     ) * generalAmplitude * (height_amplefier * height_difference_amp);
 }
+
 void fragment() {
     float biomeStrength = texture(biomeNoise, texture_position).r;
 
     float sandWeight = 0.0;
-    float corralWeight = 0.0;
+    float CoralWeight = 0.0;
     float rockWeight = 0.0;
     float kelpWeight = 0.0;
     float lavaStoneWeight = 0.0;
 
     if (COLOR.r > 0.5) {
         sandWeight = smooth_step(sandCutof - 0.1, sandCutof + 0.1, biomeStrength);
-        corralWeight = smooth_step(corralCutof - 0.1, corralCutof + 0.1, biomeStrength);
+        CoralWeight = smooth_step(CoralCutof - 0.1, CoralCutof + 0.1, biomeStrength);
     } else if (COLOR.g > 0.5) {
         rockWeight = smooth_step(rockCutof - 0.1, rockCutof + 0.1, biomeStrength);
         kelpWeight = smooth_step(kelpCutof - 0.1, kelpCutof + 0.1, biomeStrength);
@@ -107,17 +108,17 @@ void fragment() {
         lavaStoneWeight = smooth_step(lavaStoneCutof - 0.1, lavaStoneCutof + 0.1, biomeStrength);
     }
 
-    float transitionWeight = 1.0 - sandWeight - corralWeight - rockWeight - kelpWeight - lavaStoneWeight;
+    float transitionWeight = 1.0 - sandWeight - CoralWeight - rockWeight - kelpWeight - lavaStoneWeight;
 
     vec3 sandNormal = texture(normalmapSand, texture_position).rgb * sandAmplitude;
-    vec3 corralNormal = texture(normalmapCorral, texture_position).rgb * corralAmplitude;
+    vec3 CoralNormal = texture(normalmapCoral, texture_position).rgb * coralAmplitude;
     vec3 rockNormal = texture(normalmapRock, texture_position).rgb * rockAmplitude;
     vec3 kelpNormal = texture(normalmapKelp, texture_position).rgb * kelpAmplitude;
     vec3 lavaStoneNormal = texture(normalmapLavaStone, texture_position).rgb * lavaStoneAmplitude;
 
     NORMAL_MAP = normalize(
         sandNormal * sandWeight +
-        corralNormal * corralWeight +
+        CoralNormal * CoralWeight +
         rockNormal * rockWeight +
         kelpNormal * kelpWeight +
         lavaStoneNormal * lavaStoneWeight +
@@ -125,14 +126,14 @@ void fragment() {
     );
 
     vec4 sandTexture = texture(textureSand, texture_position);
-    vec4 corralTexture = texture(textureCorral, texture_position);
+    vec4 CoralTexture = texture(textureCoral, texture_position);
     vec4 rockTexture = texture(textureRock, texture_position);
     vec4 kelpTexture = texture(textureKelp, texture_position);
     vec4 lavaStoneTexture = texture(textureLavaStone, texture_position);
 
     vec4 blendedTexture = (
         sandTexture * sandWeight +
-        corralTexture * corralWeight +
+        CoralTexture * CoralWeight +
         rockTexture * rockWeight +
         kelpTexture * kelpWeight +
         lavaStoneTexture * lavaStoneWeight +

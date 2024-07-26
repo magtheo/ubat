@@ -1,7 +1,7 @@
 extends CharacterBody3D
 
 # Speed variables, adjust as needed
-var speed = 0.5
+var speed = 2
 var sensitivity = 2
 
 @onready var rotator = $rotator

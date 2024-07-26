@@ -1,6 +1,8 @@
 extends Node3D
 
-@export var mesh_instance: MeshInstance3D
+@onready var mesh_instance = $mainMesh2
+
+@export var mesh_instance1: MeshInstance3D
 @export var areas: Array[Area3D]
 
 # Dictionary to store the color associated with each area
@@ -59,11 +61,14 @@ func get_area_color(area):
 	# Define your own logic to get the color for the specific area
 	# Example: Assign different colors based on area names or any other property
 	match area.name:
-		"Area1":
+		"Section1":
+			print("COLOR: Section1 found")
 			return Color(1, 0, 0) # RED
-		"Area2":
+		"Section2":
+			print("COLOR: Section2 found")
 			return Color(0, 1, 0) # GREEN
-		"Area3":
+		"Section3":
+			print("COLOR: Section3 found")
 			return Color(0, 0, 1) # BLUE
 		_:
 			return Color(1, 1, 1)  # Default white color for undefined areas
