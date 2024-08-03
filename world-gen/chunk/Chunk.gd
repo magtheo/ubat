@@ -1,3 +1,4 @@
+# chunk.gd
 extends Node3D
 class_name Chunk
 
@@ -85,7 +86,7 @@ func _ready():
 	generate_chunk()
 
 func generate_chunk():
-	print("Generating chunk: ", " x:", x, " z:", z)  # Debugging statement
+	print("loading chunk: ", " x:", x, " z:", z)  # Debugging statement
 
 	# Create the plane mesh
 	var plane_mesh = PlaneMesh.new()
@@ -119,7 +120,7 @@ func generate_chunk():
 	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	add_child(mesh_instance)
-	print("Chunk generated with global position: ", global_position)  # Debugging statement
+	print("Chunk loaded with global position: ", global_position)  # Debugging statement
 
 func determine_section(point: Vector3) -> String:
 	var space_state = get_world_3d().direct_space_state
