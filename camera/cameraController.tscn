@@ -2,3 +2,5 @@
 
 [node name="CameraController" type="CharacterBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.987792, 0)
+
+[node name="Node3D" type="Node3D" parent="."]
