@@ -68,7 +68,7 @@ noise = ExtResource("8_58kls")
 [resource]
 render_priority = 0
 shader = ExtResource("1_tq5sf")
-shader_parameter/generalAmplitude = 10.0
+shader_parameter/generalAmplitude = 9.945
 shader_parameter/coralAmplitude = 3.57
 shader_parameter/sandAmplitude = 1.075
 shader_parameter/rockAmplitude = 2.54

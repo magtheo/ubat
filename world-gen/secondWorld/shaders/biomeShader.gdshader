@@ -9,6 +9,7 @@ uniform float lavaStoneAmplitude;
 uniform float biomeStrengthAmplifyer;
 uniform float height_difference_amp;
 
+
 uniform sampler2D biomeNoise;
 uniform sampler2D heightChanger;
 

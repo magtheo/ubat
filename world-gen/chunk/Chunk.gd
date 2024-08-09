@@ -44,14 +44,7 @@ var textureLavaStone
 func _init(
 	shader, x_pos, z_pos, chunk_size,
 	areas,  # Pass the areas to the chunk
-	loaded,
-	biomeNoise, heightChanger,
-	heightmapSand, heightmapCoral,
-	heightmapRock, heightmapKelp, heightmapLavaStone, generalAmplitude,
-	sandAmplitude, coralAmplitude, rockAmplitude, kelpAmplitude, lavaStoneAmplitude,
-	biomeStrengthAmplifyer, height_difference_amp,
-	sandCutof, coralCutof, rockCutof, kelpCutof, lavaStoneCutof,
-	textureSand, textureCoral, textureRock, textureKelp, textureLavaStone
+	loaded
 ):
 	self.shader_material = shader
 	self.x = x_pos
@@ -59,32 +52,7 @@ func _init(
 	self.chunk_size = chunk_size
 	self.areas = areas
 	self.loaded = loaded
-	self.biomeNoise = biomeNoise
-	self.heightChanger = heightChanger
-	self.heightmapSand = heightmapSand
-	self.heightmapCoral = heightmapCoral
-	self.heightmapRock = heightmapRock
-	self.heightmapKelp = heightmapKelp
-	self.heightmapLavaStone = heightmapLavaStone
-	self.generalAmplitude = generalAmplitude
-	self.sandAmplitude = sandAmplitude
-	self.coralAmplitude = coralAmplitude
-	self.rockAmplitude = rockAmplitude
-	self.kelpAmplitude = kelpAmplitude
-	self.lavaStoneAmplitude = lavaStoneAmplitude
-	self.biomeStrengthAmplifyer = biomeStrengthAmplifyer
-	self.height_difference_amp = height_difference_amp
-	self.sandCutof = sandCutof
-	self.coralCutof = coralCutof
-	self.rockCutof = rockCutof
-	self.kelpCutof = kelpCutof
-	self.lavaStoneCutof = lavaStoneCutof
-	self.textureSand = textureSand
-	self.textureCoral = textureCoral
-	self.textureRock = textureRock
-	self.textureKelp = textureKelp
-	self.textureLavaStone = textureLavaStone
-
+	
 func _ready():
 	generate_chunk()
 

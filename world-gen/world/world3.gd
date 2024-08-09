@@ -1,4 +1,4 @@
-#world2.gd
+#world3.gd
 # chunkgeneration at the start, then load during player movment
 extends Node3D
 
@@ -25,10 +25,10 @@ func _ready():
 	mesh_shader = main_mesh.get_active_material(0) # Assuming the material index is 0
 	if mesh_shader and mesh_shader is ShaderMaterial:
 		print("Mesh shader valid:", mesh_shader)
-		generate_chunks()
+		call_deferred("set_shader_parameters")
+		call_deferred("generate_chunks")
 	else:
 		print("No valid shader found")
-		
 
 func _process(delta):
 	update_chunks()
@@ -51,35 +51,58 @@ func generate_chunk(x, z, key):
 		x * chunk_size, z * chunk_size, chunk_size,
 		areas, # Pass the areas directly to the chunk
 		false, # loaded
-		mesh_shader.get_shader_parameter("biomeNoise"),
-		mesh_shader.get_shader_parameter("heightChanger"),
-		mesh_shader.get_shader_parameter("heightmapSand"),
-		mesh_shader.get_shader_parameter("heightmapCoral"),
-		mesh_shader.get_shader_parameter("heightmapRock"),
-		mesh_shader.get_shader_parameter("heightmapKelp"),
-		mesh_shader.get_shader_parameter("heightmapLavaStone"),
-		mesh_shader.get_shader_parameter("generalAmplitude"),
-		mesh_shader.get_shader_parameter("sandAmplitude"),
-		mesh_shader.get_shader_parameter("coralAmplitude"),
-		mesh_shader.get_shader_parameter("rockAmplitude"),
-		mesh_shader.get_shader_parameter("kelpAmplitude"),
-		mesh_shader.get_shader_parameter("lavaStoneAmplitude"),
-		mesh_shader.get_shader_parameter("biomeStrengthAmplifyer"),
-		mesh_shader.get_shader_parameter("height_difference_amp"),
-		mesh_shader.get_shader_parameter("sandCutof"),
-		mesh_shader.get_shader_parameter("coralCutof"),
-		mesh_shader.get_shader_parameter("rockCutof"),
-		mesh_shader.get_shader_parameter("kelpCutof"),
-		mesh_shader.get_shader_parameter("lavaStoneCutof"),
-		mesh_shader.get_shader_parameter("textureSand"),
-		mesh_shader.get_shader_parameter("textureCoral"),
-		mesh_shader.get_shader_parameter("textureKelp"),
-		mesh_shader.get_shader_parameter("textureRock"),
-		mesh_shader.get_shader_parameter("textureLavaStone")
 	)
 	chunk.position = Vector3(x*chunk_size, 0, z*chunk_size)
-	chunk.loaded = false
 	chunks[key] = chunk
+	
+func set_shader_parameters():
+	if mesh_shader:
+		# Amplitude parameters
+		mesh_shader.set_shader_parameter("generalAmplitude", 1.0)  # Adjust value as needed
+		mesh_shader.set_shader_parameter("coralAmplitude", 0.5)
+		mesh_shader.set_shader_parameter("sandAmplitude", 0.3)
+		mesh_shader.set_shader_parameter("rockAmplitude", 0.7)
+		mesh_shader.set_shader_parameter("kelpAmplitude", 0.4)
+		mesh_shader.set_shader_parameter("lavaStoneAmplitude", 0.6)
+
+		# Other float parameters
+		mesh_shader.set_shader_parameter("biomeStrengthAmplifyer", 2.0)
+		mesh_shader.set_shader_parameter("height_difference_amp", 1.5)
+
+		# Cutoff parameters
+		mesh_shader.set_shader_parameter("CoralCutof", 0.3)
+		mesh_shader.set_shader_parameter("sandCutof", 0.2)
+		mesh_shader.set_shader_parameter("rockCutof", 0.5)
+		mesh_shader.set_shader_parameter("kelpCutof", 0.4)
+		mesh_shader.set_shader_parameter("lavaStoneCutof", 0.6)
+
+		# Texture parameters
+		mesh_shader.set_shader_parameter("biomeNoise", load("res://path/to/biome_noise_texture.tres"))
+		mesh_shader.set_shader_parameter("heightChanger", load("res://path/to/height_changer_texture.tres"))
+
+		mesh_shader.set_shader_parameter("heightmapSand", load("res://path/to/heightmap_sand.tres"))
+		mesh_shader.set_shader_parameter("normalmapSand", load("res://path/to/normalmap_sand.tres"))
+		mesh_shader.set_shader_parameter("textureSand", load("res://path/to/texture_sand.tres"))
+
+		mesh_shader.set_shader_parameter("heightmapCoral", load("res://path/to/heightmap_coral.tres"))
+		mesh_shader.set_shader_parameter("normalmapCoral", load("res://path/to/normalmap_coral.tres"))
+		mesh_shader.set_shader_parameter("textureCoral", load("res://path/to/texture_coral.tres"))
+
+		mesh_shader.set_shader_parameter("heightmapRock", load("res://path/to/heightmap_rock.tres"))
+		mesh_shader.set_shader_parameter("normalmapRock", load("res://path/to/normalmap_rock.tres"))
+		mesh_shader.set_shader_parameter("textureRock", load("res://path/to/texture_rock.tres"))
+
+		mesh_shader.set_shader_parameter("heightmapKelp", load("res://path/to/heightmap_kelp.tres"))
+		mesh_shader.set_shader_parameter("normalmapKelp", load("res://path/to/normalmap_kelp.tres"))
+		mesh_shader.set_shader_parameter("textureKelp", load("res://path/to/texture_kelp.tres"))
+
+		mesh_shader.set_shader_parameter("heightmapLavaStone", load("res://path/to/heightmap_lava_stone.tres"))
+		mesh_shader.set_shader_parameter("normalmapLavaStone", load("res://path/to/normalmap_lava_stone.tres"))
+		mesh_shader.set_shader_parameter("textureLavaStone", load("res://path/to/texture_lava_stone.tres"))
+
+		print("Shader parameters set successfully")
+	else:
+		print("Shader not ready yet")
 
 	
 func start_thread(chunk):
