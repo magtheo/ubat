@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://cpkljrmjcfpbk"]
+
+[ext_resource type="Script" path="res://world-gen/chunk/Chunk.gd" id="1_jauvf"]
+
+[node name="Chunk" type="Node3D"]
+script = ExtResource("1_jauvf")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]

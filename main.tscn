@@ -1,7 +1,7 @@
 [gd_scene load_steps=14 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
-[ext_resource type="Script" path="res://world-gen/world/world3.gd" id="2_s0ndg"]
+[ext_resource type="Script" path="res://world-gen2/scripts/world3.gd" id="2_s0ndg"]
 [ext_resource type="Material" uid="uid://cmaibe5gvhg04" path="res://world-gen/secondWorld/shaders/shadermaterial1.tres" id="3_0wqi7"]
 [ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
 [ext_resource type="Script" path="res://world-gen/world/AreaColoring.gd" id="3_m8wpf"]
@@ -23,6 +23,23 @@ albedo_color = Color(0.129412, 0.0196078, 1, 1)
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_hmy17"]
 render_priority = 1
 shader = ExtResource("7_1sh1e")
+shader_parameter/albedo = Color(0, 0.32, 0.43, 1)
+shader_parameter/albedo2 = Color(0, 0.47, 0.76, 1)
+shader_parameter/metallic = 0.0
+shader_parameter/roughness = 0.02
+shader_parameter/wave_direction = Vector2(0.5, -0.2)
+shader_parameter/wave_direction2 = Vector2(-0.5, 0.5)
+shader_parameter/time_scale = 0.1
+shader_parameter/noise_scale = 20.0
+shader_parameter/height_scale = 2.0
+shader_parameter/color_deep = Color(0.11, 0.29, 0.33, 1)
+shader_parameter/color_shallow = Color(0, 0.47, 0.76, 1)
+shader_parameter/beers_law = 2.0
+shader_parameter/depth_offset = 1.5
+shader_parameter/edge_scale = 0.3
+shader_parameter/near = 1.0
+shader_parameter/far = 100.0
+shader_parameter/edge_color = Color(1, 1, 1, 1)
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_1k66a"]
 resource_local_to_scene = true

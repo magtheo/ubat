@@ -77,10 +77,10 @@ func set_shader_parameters():
 		mesh_shader.set_shader_parameter("lavaStoneCutof", 0.6)
 
 		# Texture parameters
-		mesh_shader.set_shader_parameter("biomeNoise", load("res://path/to/biome_noise_texture.tres"))
-		mesh_shader.set_shader_parameter("heightChanger", load("res://path/to/height_changer_texture.tres"))
+		mesh_shader.set_shader_parameter("biomeNoise", load("res://world-gen/world/noise/biomeDefiner.tres"))
+		mesh_shader.set_shader_parameter("heightChanger", load("res://world-gen/world/noise/height_changer.tres"))
 
-		mesh_shader.set_shader_parameter("heightmapSand", load("res://path/to/heightmap_sand.tres"))
+		mesh_shader.set_shader_parameter("heightmapSand", load("res://world-gen/world/noise/sandNoise.tres"))
 		mesh_shader.set_shader_parameter("normalmapSand", load("res://path/to/normalmap_sand.tres"))
 		mesh_shader.set_shader_parameter("textureSand", load("res://path/to/texture_sand.tres"))
 
