@@ -8,15 +8,16 @@ extends Node3D
 @export var areas: Array[Area3D]
 
 const chunk_size = 64
-const chunk_amount = 8
+const chunk_generation_radius = 8
+const load_radius = 4
 
 var player_translation 
 
-var chunk_dictionary = {}
+var chunks = {}
 var loaded_chunks = {}
-var unready_chunks = {}
 var key
 var thread
+var thread_pool = []
 var mesh_shader
 
 func _ready():
@@ -28,11 +29,18 @@ func _ready():
 	else:
 		print("No valid shader found")
 		
+
+func _process(delta):
+	update_chunks()
+	clean_up_chunks()
+
+
 func generate_chunks():
-	for x in range(-chunk_amount * chunk_size / 2, chunk_amount * chunk_size / 2):
-		for z in range(-chunk_amount * chunk_size / 2, chunk_amount * chunk_size / 2):
-			key = str(x) + "," + str(z)
+	for x in range(-chunk_generation_radius * chunk_size / 2, chunk_generation_radius * chunk_size / 2):
+		for z in range(-chunk_generation_radius * chunk_size / 2, chunk_generation_radius * chunk_size / 2):
+			#key = str(x) + "," + str(z)
 			#key = str(x / chunk_size) + "," + str(z / chunk_size)
+			key = get_chunk_key(x * chunk_size, z * chunk_size)
 			generate_chunk(x, z, key)
 
 
@@ -42,6 +50,7 @@ func generate_chunk(x, z, key):
 		mesh_shader,
 		x * chunk_size, z * chunk_size, chunk_size,
 		areas, # Pass the areas directly to the chunk
+		false, # loaded
 		mesh_shader.get_shader_parameter("biomeNoise"),
 		mesh_shader.get_shader_parameter("heightChanger"),
 		mesh_shader.get_shader_parameter("heightmapSand"),
@@ -68,50 +77,37 @@ func generate_chunk(x, z, key):
 		mesh_shader.get_shader_parameter("textureRock"),
 		mesh_shader.get_shader_parameter("textureLavaStone")
 	)
-	chunk.position = Vector3(x * chunk_size, 0, z * chunk_size )
-	chunk_dictionary[key] = chunk
+	chunk.position = Vector3(x*chunk_size, 0, z*chunk_size)
+	chunk.loaded = false
+	chunks[key] = chunk
 
 	
-func start_thread(key):
+func start_thread(chunk):
 	thread = Thread.new()
-	var callable = Callable(self, "load_chunk").bind(key)
-	thread.start(callable)
+	thread.start(Callable(self, "load_chunk").bind(chunk))
+	thread_pool.append(thread)
 
-func load_chunk(key):
-	#player_translation = camera_controller.global_position
-	#print("player_translation: ", player_translation)
+func load_chunk(chunk):
+	#thread.wait_to_finish()  # Wait for any previous load to finish
+	chunk.loaded = true 
+	if not chunk.is_connected("block_updated", Callable(self, "on_block_updated")):
+		chunk.connect("block_updated", Callable(self, "on_block_updated"))
+	call_deferred("add_child", chunk)
+	print("chunk loaded: ", chunk)
 
-	if not loaded_chunks.has(key):  # Check if the chunk is already loaded
-		if unready_chunks.has(key):
-			thread.wait_to_finish()  # Wait for any previous load to finish
-			unready_chunks.erase(key)
-
-	else:
-		var chunk = loaded_chunks.get(key)
-		if not chunk.is_connected("block_updated", self, "on_block_updated"):
-			chunk.connect("block_updated", self, "on_block_updated")
-
-	# Load the chunk and notify the main thread when it's done
-	await start_thread # error line
-	chunk_finished(key)
-
-func chunk_finished(key):
-	print("Chunk finished loading: ", key)
-	var chunk = loaded_chunks.get(key)
-	add_child(chunk, true)  # Add the loaded chunk to the scene
-	loaded_chunks.erase(key)
-	unready_chunks.erase(key)
-
+func _exit_tree():
+	for thread in thread_pool:
+		thread.wait_to_finish()
 
 func get_chunk(key):
-	if loaded_chunks.has(key):
-		return loaded_chunks.get(key)
-	return null
+	if chunks.has(key):
+		return chunks.get(key)
+	else:
+		print("chunk ", key, " not found in chunks")
 
-func _process(delta):
-	update_chunks()
-	clean_up_chunks()
-	reset_chunks()
+func get_chunk_key(x: float, z: float) -> String:
+	return "%d,%d" % [int(x / chunk_size), int(z / chunk_size)]
+
 
 func update_chunks():
 	player_translation = camera_controller.global_position # Update to retrieve submarine position
@@ -119,28 +115,23 @@ func update_chunks():
 	var p_x = int(player_translation.x) / chunk_size
 	var p_z = int(player_translation.z) / chunk_size
 
-	for x in range(p_x - chunk_amount * 0.5, p_x + chunk_amount * 0.5):
-		for z in range(p_z - chunk_amount * 0.5, p_z + chunk_amount * 0.5):
+	for x in range(p_x - load_radius * 0.5, p_x + load_radius * 0.5):
+		for z in range(p_z - load_radius * 0.5, p_z + load_radius * 0.5):
 			#print("add chunk()", x, z)
-			key = str(x) + "," + str(z)
+			#key = str(x) + "," + str(z)
 			#key = str(x / chunk_size) + "," + str(z / chunk_size)
-			if loaded_chunks.has(key):
-				return
-			
-			else:
-				start_thread(key)
-				var chunk = get_chunk(key) # potesial problem with getting chunk
+			key = get_chunk_key(x * chunk_size, z * chunk_size)
+			var chunk = get_chunk(key) 
+			if chunk.loaded == false:
+				start_thread(chunk)
 				#print("chunk: ", chunk)
 				if chunk != null:
 					chunk.should_remove = false
 
 func clean_up_chunks():
-	for key in loaded_chunks:
-		var chunk = loaded_chunks[key]
+	for i in chunks:
+		var chunk = chunks[i]
 		if chunk.should_remove:
 			chunk.queue_free()
-			loaded_chunks.erase(key)
+			chunk.loaded = false
 
-func reset_chunks():
-	for key in loaded_chunks:
-		loaded_chunks[key].should_remove = true

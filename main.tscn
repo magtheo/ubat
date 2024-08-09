@@ -1,7 +1,7 @@
-[gd_scene load_steps=22 format=3 uid="uid://0p18gsq2fpnm"]
+[gd_scene load_steps=22 format=3 uid="uid://ic4p5chm0btg"]
 
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
-[ext_resource type="Script" path="res://world-gen/world/world2.gd" id="2_wltg0"]
+[ext_resource type="Script" path="res://world-gen/world/world3.gd" id="2_s0ndg"]
 [ext_resource type="Material" uid="uid://cmaibe5gvhg04" path="res://world-gen/secondWorld/shaders/shadermaterial1.tres" id="3_0wqi7"]
 [ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
 [ext_resource type="Script" path="res://world-gen/world/AreaColoring.gd" id="3_m8wpf"]
@@ -112,7 +112,7 @@ mesh = SubResource("PlaneMesh_tosu2")
 skeleton = NodePath("../../world")
 
 [node name="world" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("areas")]
-script = ExtResource("2_wltg0")
+script = ExtResource("2_s0ndg")
 areas = [NodePath("Section1"), NodePath("Section2"), NodePath("Section3")]
 
 [node name="mainMesh" type="MeshInstance3D" parent="thirdWorld/world"]

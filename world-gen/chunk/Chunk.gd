@@ -8,6 +8,7 @@ var x
 var z
 var chunk_size
 var should_remove
+var loaded
 
 var areas: Array[Area3D]  # Areas representing different sections
 
@@ -43,6 +44,7 @@ var textureLavaStone
 func _init(
 	shader, x_pos, z_pos, chunk_size,
 	areas,  # Pass the areas to the chunk
+	loaded,
 	biomeNoise, heightChanger,
 	heightmapSand, heightmapCoral,
 	heightmapRock, heightmapKelp, heightmapLavaStone, generalAmplitude,
@@ -56,6 +58,7 @@ func _init(
 	self.z = z_pos
 	self.chunk_size = chunk_size
 	self.areas = areas
+	self.loaded = loaded
 	self.biomeNoise = biomeNoise
 	self.heightChanger = heightChanger
 	self.heightmapSand = heightmapSand
