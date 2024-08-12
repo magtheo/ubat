@@ -1,21 +1,12 @@
-[gd_scene load_steps=14 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=11 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
-[ext_resource type="Script" path="res://world-gen2/scripts/world3.gd" id="2_s0ndg"]
-[ext_resource type="Material" uid="uid://cmaibe5gvhg04" path="res://world-gen/secondWorld/shaders/shadermaterial1.tres" id="3_0wqi7"]
-[ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
-[ext_resource type="Script" path="res://world-gen/world/AreaColoring.gd" id="3_m8wpf"]
-[ext_resource type="PackedScene" uid="uid://nytuhig2bebg" path="res://world-gen/secondWorld/water/scenes/OceanMap.tscn" id="5_jj2nc"]
-[ext_resource type="PackedScene" uid="uid://ya1mgvr6cdeg" path="res://world-gen/secondWorld/water/scenes/WaterPlane.tscn" id="6_lc8rr"]
-[ext_resource type="Shader" path="res://world-gen/secondWorld/water/shader/Water.gdshader" id="7_1sh1e"]
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_tosu2"]
-size = Vector2(1500, 500)
-subdivide_width = 200
-subdivide_depth = 200
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_2ug7c"]
-size = Vector3(500, 500, 1022.49)
+[ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://OLD-files/world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
+[ext_resource type="PackedScene" uid="uid://nytuhig2bebg" path="res://OLD-files/world-gen/secondWorld/water/scenes/OceanMap.tscn" id="5_jj2nc"]
+[ext_resource type="PackedScene" uid="uid://ya1mgvr6cdeg" path="res://OLD-files/world-gen/secondWorld/water/scenes/WaterPlane.tscn" id="6_lc8rr"]
+[ext_resource type="Script" path="res://terrainGeneration/TerrainManager.gd" id="6_o1tyw"]
+[ext_resource type="Shader" path="res://OLD-files/world-gen/secondWorld/water/shader/Water.gdshader" id="7_1sh1e"]
+[ext_resource type="Script" path="res://terrainGeneration/chunk/ChunkManager.gd" id="7_84o1b"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
 albedo_color = Color(0.129412, 0.0196078, 1, 1)
@@ -48,48 +39,6 @@ size = Vector2(500, 500)
 
 [node name="main" type="Node3D"]
 
-[node name="thirdWorld" type="Node3D" parent="."]
-
-[node name="AreaColoring" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("areas")]
-script = ExtResource("3_m8wpf")
-areas = [NodePath("../world/Section1"), NodePath("../world/Section2"), NodePath("../world/Section3")]
-
-[node name="mainMesh2" type="MeshInstance3D" parent="thirdWorld/AreaColoring"]
-visible = false
-mesh = SubResource("PlaneMesh_tosu2")
-skeleton = NodePath("../../world")
-
-[node name="world" type="Node3D" parent="thirdWorld" node_paths=PackedStringArray("areas")]
-script = ExtResource("2_s0ndg")
-areas = [NodePath("Section1"), NodePath("Section2"), NodePath("Section3")]
-
-[node name="mainMesh" type="MeshInstance3D" parent="thirdWorld/world"]
-visible = false
-material_override = ExtResource("3_0wqi7")
-mesh = SubResource("PlaneMesh_tosu2")
-
-[node name="Section1" type="Area3D" parent="thirdWorld/world"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 529.916, 0, 0)
-
-[node name="Section 1" type="CollisionShape3D" parent="thirdWorld/world/Section1"]
-shape = SubResource("BoxShape3D_2ug7c")
-
-[node name="Section2" type="Area3D" parent="thirdWorld/world"]
-
-[node name="Section 2" type="CollisionShape3D" parent="thirdWorld/world/Section2"]
-shape = SubResource("BoxShape3D_2ug7c")
-
-[node name="Section3" type="Area3D" parent="thirdWorld/world"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -541.629, 0, 0)
-
-[node name="Section 3" type="CollisionShape3D" parent="thirdWorld/world/Section3"]
-shape = SubResource("BoxShape3D_2ug7c")
-
-[node name="Test" type="Node3D" parent="thirdWorld/world"]
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="thirdWorld"]
-transform = Transform3D(0.392704, 0.831504, -0.392919, 0.130958, 0.372328, 0.918816, 0.910293, -0.412278, 0.0373226, -905.235, 340.605, 56.8324)
-
 [node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
 
 [node name="CSGBox3D" type="CSGBox3D" parent="."]
@@ -107,3 +56,11 @@ visible = false
 [node name="WaterPlane" parent="water" instance=ExtResource("6_lc8rr")]
 visible = false
 mesh = SubResource("PlaneMesh_1k66a")
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="TerrainManager" type="Node3D" parent="World"]
+script = ExtResource("6_o1tyw")
+
+[node name="ChunkManager" type="Node3D" parent="World"]
+script = ExtResource("7_84o1b")
