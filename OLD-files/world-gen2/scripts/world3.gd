@@ -132,4 +132,3 @@ func clean_up_chunks():
 		if chunk.should_remove:
 			chunk.queue_free()
 			chunk.loaded = false
-

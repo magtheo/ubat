@@ -1,66 +1,56 @@
-[gd_scene load_steps=11 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=17 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/cameraController.tscn" id="1_y8jln"]
-[ext_resource type="PackedScene" uid="uid://cra6hso1ey241" path="res://OLD-files/world-gen/secondWorld/water/scenes/3Dpawn.tscn" id="3_7lr5o"]
-[ext_resource type="PackedScene" uid="uid://nytuhig2bebg" path="res://OLD-files/world-gen/secondWorld/water/scenes/OceanMap.tscn" id="5_jj2nc"]
-[ext_resource type="PackedScene" uid="uid://ya1mgvr6cdeg" path="res://OLD-files/world-gen/secondWorld/water/scenes/WaterPlane.tscn" id="6_lc8rr"]
+[ext_resource type="Shader" path="res://terrainGeneration/shaders/terrainShader.gdshader" id="3_24li7"]
+[ext_resource type="Texture2D" uid="uid://s0lbvdddx3t1" path="res://textures/coral.png" id="4_1ifew"]
+[ext_resource type="Texture2D" uid="uid://gx23wrwkryok" path="res://textures/sand.png" id="5_rjp0q"]
+[ext_resource type="Texture2D" uid="uid://pe7a4weirj2g" path="res://textures/dark.png" id="6_ef0et"]
 [ext_resource type="Script" path="res://terrainGeneration/TerrainManager.gd" id="6_o1tyw"]
-[ext_resource type="Shader" path="res://OLD-files/world-gen/secondWorld/water/shader/Water.gdshader" id="7_1sh1e"]
 [ext_resource type="Script" path="res://terrainGeneration/chunk/ChunkManager.gd" id="7_84o1b"]
+[ext_resource type="Texture2D" uid="uid://cxjxvqmf4boxq" path="res://textures/green.png" id="7_ov7tx"]
+[ext_resource type="Texture2D" uid="uid://dsv4jm4vydflb" path="res://textures/orange.png" id="8_hllmh"]
+[ext_resource type="FastNoiseLite" uid="uid://dm6u5cw0rmbyi" path="res://terrainGeneration/noise2/coralNoise.tres" id="9_6vk8o"]
+[ext_resource type="FastNoiseLite" uid="uid://boe3rykf405u0" path="res://terrainGeneration/noise2/sandNoise.tres" id="10_4aohj"]
+[ext_resource type="FastNoiseLite" uid="uid://dttcoxenjvbl" path="res://terrainGeneration/noise2/rockNoise.tres" id="11_y2whw"]
+[ext_resource type="FastNoiseLite" uid="uid://lrm5nuytxsuo" path="res://terrainGeneration/noise2/kelpNoise.tres" id="12_tba1m"]
+[ext_resource type="FastNoiseLite" uid="uid://djc0kdmwercsu" path="res://terrainGeneration/noise2/lavaRockNoise.tres" id="13_5qn28"]
+[ext_resource type="Script" path="res://camera/player.gd" id="15_srj17"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
 albedo_color = Color(0.129412, 0.0196078, 1, 1)
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_hmy17"]
-render_priority = 1
-shader = ExtResource("7_1sh1e")
-shader_parameter/albedo = Color(0, 0.32, 0.43, 1)
-shader_parameter/albedo2 = Color(0, 0.47, 0.76, 1)
-shader_parameter/metallic = 0.0
-shader_parameter/roughness = 0.02
-shader_parameter/wave_direction = Vector2(0.5, -0.2)
-shader_parameter/wave_direction2 = Vector2(-0.5, 0.5)
-shader_parameter/time_scale = 0.1
-shader_parameter/noise_scale = 20.0
-shader_parameter/height_scale = 2.0
-shader_parameter/color_deep = Color(0.11, 0.29, 0.33, 1)
-shader_parameter/color_shallow = Color(0, 0.47, 0.76, 1)
-shader_parameter/beers_law = 2.0
-shader_parameter/depth_offset = 1.5
-shader_parameter/edge_scale = 0.3
-shader_parameter/near = 1.0
-shader_parameter/far = 100.0
-shader_parameter/edge_color = Color(1, 1, 1, 1)
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_1k66a"]
-resource_local_to_scene = true
-material = SubResource("ShaderMaterial_hmy17")
-size = Vector2(500, 500)
-
 [node name="main" type="Node3D"]
-
-[node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
 
 [node name="CSGBox3D" type="CSGBox3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)
 size = Vector3(2.9292, 1.16064, 1)
 material = SubResource("StandardMaterial3D_g1ljx")
 
-[node name="water" type="Node3D" parent="."]
-visible = false
-
-[node name="3Dpawn" parent="water" instance=ExtResource("3_7lr5o")]
-
-[node name="OceanMap" parent="water" instance=ExtResource("5_jj2nc")]
-
-[node name="WaterPlane" parent="water" instance=ExtResource("6_lc8rr")]
-visible = false
-mesh = SubResource("PlaneMesh_1k66a")
-
 [node name="World" type="Node3D" parent="."]
 
 [node name="TerrainManager" type="Node3D" parent="World"]
 script = ExtResource("6_o1tyw")
+terrain_shader = ExtResource("3_24li7")
+coral_texture = ExtResource("4_1ifew")
+sand_texture = ExtResource("5_rjp0q")
+rock_texture = ExtResource("6_ef0et")
+kelp_texture = ExtResource("7_ov7tx")
+lavarock_texture = ExtResource("8_hllmh")
+coral_noise = ExtResource("9_6vk8o")
+sand_noise = ExtResource("10_4aohj")
+rock_noise = ExtResource("11_y2whw")
+kelp_noise = ExtResource("12_tba1m")
+volcanic_noise = ExtResource("13_5qn28")
+coral_weight = ExtResource("9_6vk8o")
+sand_weight = ExtResource("10_4aohj")
+rock_weight = ExtResource("11_y2whw")
+kelp_weight = ExtResource("12_tba1m")
+volcanic_weight = ExtResource("13_5qn28")
+player_path = NodePath("../../CameraController")
 
 [node name="ChunkManager" type="Node3D" parent="World"]
 script = ExtResource("7_84o1b")
+
+[node name="CameraController" parent="." instance=ExtResource("1_y8jln")]
+script = ExtResource("15_srj17")
+speed = 1

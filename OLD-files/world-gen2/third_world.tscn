@@ -16,7 +16,7 @@ size = Vector3(500, 500, 1022.49)
 
 [node name="AreaColoring" type="Node3D" parent="." node_paths=PackedStringArray("areas")]
 script = ExtResource("1_k3hp0")
-areas = [NodePath(""), NodePath(""), NodePath("")]
+areas = [null, null, null]
 
 [node name="mainMesh2" type="MeshInstance3D" parent="AreaColoring"]
 mesh = SubResource("PlaneMesh_tosu2")
@@ -24,7 +24,7 @@ skeleton = NodePath("../../world")
 
 [node name="world" type="Node3D" parent="." node_paths=PackedStringArray("areas")]
 script = ExtResource("2_0gc8e")
-areas = [NodePath(""), NodePath(""), NodePath("")]
+areas = [null, null, null]
 
 [node name="mainMesh" type="MeshInstance3D" parent="world"]
 visible = false

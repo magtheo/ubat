@@ -1,4 +1,16 @@
-[gd_scene format=3 uid="uid://dvo6agmpd78u7"]
+[gd_scene load_steps=3 format=3 uid="uid://dvo6agmpd78u7"]
+
+[ext_resource type="Script" path="res://camera/CameraController.gd" id="1_eelj4"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_6egyo"]
 
 [node name="CameraController" type="CharacterBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.987792, 0)
+script = ExtResource("1_eelj4")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_6egyo")
+
+[node name="rotator" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="rotator"]
