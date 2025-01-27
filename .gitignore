@@ -1,2 +1,53 @@
 # Godot 4+ specific ignores
 .godot/
+# Godot-specific files
+.import/
+*.import
+*.godot
+.editor_settings-*
+.editor_settings
+
+# Exported projects
+*.exe
+*.apk
+*.ipa
+*.pck
+*.zip
+*.tar.gz
+*.dmg
+*.x86*
+*.webm
+
+# Mono-specific files (if using Godot Mono version)
+.mono/
+*.csproj
+*.sln
+*.userprefs
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Other backup files
+*.bak
+*.old
+*.swp
+
+# Ignore binaries or built assets (optional, depends on your workflow)
+*.obj
+*.bin
+*.cache
+*.imported
+
+# IDE-specific files
+.idea/
+.vscode/
+*.code-workspace
+
+# Godot cache files (optional)
+.cache/
