@@ -1,0 +1,54 @@
+[gd_scene load_steps=6 format=3 uid="uid://cvgj4vh1r6qda"]
+
+[ext_resource type="Script" path="res://OLD-files/world-gen/world/AreaColoring.gd" id="1_k3hp0"]
+[ext_resource type="Script" path="res://OLD-files/world-gen2/scripts/world3.gd" id="2_0gc8e"]
+[ext_resource type="Material" uid="uid://cmaibe5gvhg04" path="res://OLD-files/world-gen/secondWorld/shaders/shadermaterial1.tres" id="3_tm8tu"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_tosu2"]
+size = Vector2(1500, 500)
+subdivide_width = 200
+subdivide_depth = 200
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_2ug7c"]
+size = Vector3(500, 500, 1022.49)
+
+[node name="thirdWorld" type="Node3D"]
+
+[node name="AreaColoring" type="Node3D" parent="." node_paths=PackedStringArray("areas")]
+script = ExtResource("1_k3hp0")
+areas = [null, null, null]
+
+[node name="mainMesh2" type="MeshInstance3D" parent="AreaColoring"]
+mesh = SubResource("PlaneMesh_tosu2")
+skeleton = NodePath("../../world")
+
+[node name="world" type="Node3D" parent="." node_paths=PackedStringArray("areas")]
+script = ExtResource("2_0gc8e")
+areas = [null, null, null]
+
+[node name="mainMesh" type="MeshInstance3D" parent="world"]
+visible = false
+material_override = ExtResource("3_tm8tu")
+mesh = SubResource("PlaneMesh_tosu2")
+
+[node name="Section1" type="Area3D" parent="world"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 529.916, 0, 0)
+
+[node name="Section 1" type="CollisionShape3D" parent="world/Section1"]
+shape = SubResource("BoxShape3D_2ug7c")
+
+[node name="Section2" type="Area3D" parent="world"]
+
+[node name="Section 2" type="CollisionShape3D" parent="world/Section2"]
+shape = SubResource("BoxShape3D_2ug7c")
+
+[node name="Section3" type="Area3D" parent="world"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -541.629, 0, 0)
+
+[node name="Section 3" type="CollisionShape3D" parent="world/Section3"]
+shape = SubResource("BoxShape3D_2ug7c")
+
+[node name="Test" type="Node3D" parent="world"]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.392704, 0.831504, -0.392919, 0.130958, 0.372328, 0.918816, 0.910293, -0.412278, 0.0373226, -905.235, 340.605, 56.8324)

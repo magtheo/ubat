@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://nytuhig2bebg"]
+
+[ext_resource type="PackedScene" uid="uid://bfaebpk7js1t7" path="res://OLD-files/world-gen/secondWorld/water/scenes/Ocean.tscn" id="1_y4m1l"]
+
+[node name="OceanMap" type="Node3D"]
+
+[node name="Ocean" parent="." instance=ExtResource("1_y4m1l")]
+
+[editable path="Ocean"]

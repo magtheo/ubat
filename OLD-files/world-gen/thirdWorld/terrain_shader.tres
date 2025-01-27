@@ -1,0 +1,247 @@
+[gd_resource type="VisualShader" load_steps=23 format=3 uid="uid://b1wtdlc2wi3wv"]
+
+[sub_resource type="VisualShaderNodeTexture2DParameter" id="VisualShaderNodeTexture2DParameter_6ic1r"]
+parameter_name = "Texture"
+texture_repeat = 1
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_lqps6"]
+source = 5
+
+[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_ebm6f"]
+output_port_for_preview = 0
+input_name = "uv"
+
+[sub_resource type="VisualShaderNodeFloatParameter" id="VisualShaderNodeFloatParameter_xm4mw"]
+parameter_name = "uvy"
+hint = 2
+min = -100.0
+max = 100.0
+step = 0.001
+default_value_enabled = true
+
+[sub_resource type="VisualShaderNodeFloatParameter" id="VisualShaderNodeFloatParameter_n6d2u"]
+parameter_name = "uvx"
+hint = 2
+min = -100.0
+max = 100.0
+step = 0.001
+default_value_enabled = true
+
+[sub_resource type="VisualShaderNodeVectorCompose" id="VisualShaderNodeVectorCompose_n3034"]
+
+[sub_resource type="VisualShaderNodeVectorDecompose" id="VisualShaderNodeVectorDecompose_jr7ti"]
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_og28e"]
+source = 5
+
+[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_pa7os"]
+operator = 2
+
+[sub_resource type="VisualShaderNodeTexture2DParameter" id="VisualShaderNodeTexture2DParameter_hbp7j"]
+parameter_name = "Heightmap"
+texture_repeat = 1
+
+[sub_resource type="VisualShaderNodeVectorOp" id="VisualShaderNodeVectorOp_qtw4q"]
+output_port_for_preview = 0
+
+[sub_resource type="VisualShaderNodeFloatParameter" id="VisualShaderNodeFloatParameter_6d2fx"]
+parameter_name = "Height_multiplier"
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_7pc0m"]
+source = 5
+
+[sub_resource type="VisualShaderNodeTexture2DParameter" id="VisualShaderNodeTexture2DParameter_n0w7t"]
+parameter_name = "sandBiome"
+texture_repeat = 1
+
+[sub_resource type="VisualShaderNodeSmoothStep" id="VisualShaderNodeSmoothStep_jbtcu"]
+default_input_values = [0, Vector3(0, 0, 0), 1, Vector3(1, 1, 1), 2, Vector3(0.5, 0.5, 0.5)]
+op_type = 3
+
+[sub_resource type="VisualShaderNodeIf" id="VisualShaderNodeIf_6mbv6"]
+default_input_values = [0, 0.0, 1, 0.0, 2, 0.0, 3, Vector3(0, 0, 0), 4, Vector3(0, 0, 0), 5, Vector3(0, 0, 0)]
+
+[sub_resource type="VisualShaderNodeTexture2DParameter" id="VisualShaderNodeTexture2DParameter_pgpt2"]
+parameter_name = "coralBiome"
+texture_repeat = 1
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_0gxms"]
+source = 5
+
+[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_ges51"]
+output_port_for_preview = 0
+input_name = "vertex"
+
+[sub_resource type="VisualShaderNodeVectorCompose" id="VisualShaderNodeVectorCompose_h3hva"]
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_m7spk"]
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_wm7gx"]
+
+[resource]
+code = "shader_type spatial;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_lambert, specular_schlick_ggx;
+
+uniform float uvx : hint_range(-100, 100, 0.0010000000475) = 0;
+uniform float uvy : hint_range(-100, 100, 0.0010000000475) = 0;
+uniform sampler2D Heightmap : repeat_enable;
+uniform float Height_multiplier;
+uniform sampler2D sandBiome : repeat_enable;
+uniform sampler2D coralBiome : repeat_enable;
+uniform sampler2D Texture : repeat_enable;
+
+
+
+void vertex() {
+// Input:10
+	vec2 n_out10p0 = UV;
+
+
+// VectorDecompose:15
+	float n_out15p0 = vec3(n_out10p0, 0.0).x;
+	float n_out15p1 = vec3(n_out10p0, 0.0).y;
+	float n_out15p2 = vec3(n_out10p0, 0.0).z;
+
+
+// FloatParameter:12
+	float n_out12p0 = uvx;
+
+
+// FloatOp:8
+	float n_out8p0 = n_out15p0 + n_out12p0;
+
+
+// FloatParameter:11
+	float n_out11p0 = uvy;
+
+
+// FloatOp:9
+	float n_out9p0 = n_out15p1 + n_out11p0;
+
+
+// VectorCompose:7
+	float n_in7p2 = 0.00000;
+	vec3 n_out7p0 = vec3(n_out8p0, n_out9p0, n_in7p2);
+
+
+	vec4 n_out16p0;
+// Texture2D:16
+	n_out16p0 = texture(Heightmap, vec2(n_out7p0.xy));
+
+
+// FloatParameter:20
+	float n_out20p0 = Height_multiplier;
+
+
+// VectorCompose:14
+	float n_in14p0 = 0.00000;
+	float n_in14p2 = 0.00000;
+	vec3 n_out14p0 = vec3(n_in14p0, n_out20p0, n_in14p2);
+
+
+// VectorOp:17
+	vec3 n_out17p0 = vec3(n_out16p0.xyz) * n_out14p0;
+
+
+// Input:3
+	vec3 n_out3p0 = VERTEX;
+
+
+// VectorOp:2
+	vec3 n_out2p0 = n_out17p0 + n_out3p0;
+
+
+	vec4 n_out21p0;
+// Texture2D:21
+	n_out21p0 = texture(sandBiome, UV);
+
+
+	vec4 n_out26p0;
+// Texture2D:26
+	n_out26p0 = texture(coralBiome, UV);
+
+
+	vec3 n_out24p0;
+// If:24
+	float n_in24p2 = 0.00000;
+	vec3 n_in24p3 = vec3(0.00000, 0.00000, 0.00000);
+	if(abs(n_out2p0.x - n_out2p0.x) < n_in24p2)
+	{
+		n_out24p0 = n_in24p3;
+	}
+	else if(n_out2p0.x < n_out2p0.x)
+	{
+		n_out24p0 = vec3(n_out26p0.xyz);
+	}
+	else
+	{
+		n_out24p0 = vec3(n_out21p0.xyz);
+	}
+
+
+// Output:0
+	VERTEX = n_out24p0;
+
+
+}
+
+void fragment() {
+	vec4 n_out3p0;
+// Texture2D:3
+	n_out3p0 = texture(Texture, UV);
+
+
+// Output:0
+	ALBEDO = vec3(n_out3p0.xyz);
+
+
+}
+"
+nodes/vertex/0/position = Vector2(560, 260)
+nodes/vertex/2/node = SubResource("VisualShaderNodeVectorOp_qtw4q")
+nodes/vertex/2/position = Vector2(-600, 260)
+nodes/vertex/3/node = SubResource("VisualShaderNodeInput_ges51")
+nodes/vertex/3/position = Vector2(-1480, 540)
+nodes/vertex/7/node = SubResource("VisualShaderNodeVectorCompose_h3hva")
+nodes/vertex/7/position = Vector2(-3080, 340)
+nodes/vertex/8/node = SubResource("VisualShaderNodeFloatOp_m7spk")
+nodes/vertex/8/position = Vector2(-3800, 360)
+nodes/vertex/9/node = SubResource("VisualShaderNodeFloatOp_wm7gx")
+nodes/vertex/9/position = Vector2(-3760, 680)
+nodes/vertex/10/node = SubResource("VisualShaderNodeInput_ebm6f")
+nodes/vertex/10/position = Vector2(-5120, 580)
+nodes/vertex/11/node = SubResource("VisualShaderNodeFloatParameter_xm4mw")
+nodes/vertex/11/position = Vector2(-4640, 1220)
+nodes/vertex/12/node = SubResource("VisualShaderNodeFloatParameter_n6d2u")
+nodes/vertex/12/position = Vector2(-4860, -160)
+nodes/vertex/14/node = SubResource("VisualShaderNodeVectorCompose_n3034")
+nodes/vertex/14/position = Vector2(-2120, 520)
+nodes/vertex/15/node = SubResource("VisualShaderNodeVectorDecompose_jr7ti")
+nodes/vertex/15/position = Vector2(-4360, 560)
+nodes/vertex/16/node = SubResource("VisualShaderNodeTexture_og28e")
+nodes/vertex/16/position = Vector2(-2420, -280)
+nodes/vertex/17/node = SubResource("VisualShaderNodeVectorOp_pa7os")
+nodes/vertex/17/position = Vector2(-1450.53, -159.823)
+nodes/vertex/19/node = SubResource("VisualShaderNodeTexture2DParameter_hbp7j")
+nodes/vertex/19/position = Vector2(-3680, -600)
+nodes/vertex/20/node = SubResource("VisualShaderNodeFloatParameter_6d2fx")
+nodes/vertex/20/position = Vector2(-2660, 1020)
+nodes/vertex/21/node = SubResource("VisualShaderNodeTexture_7pc0m")
+nodes/vertex/21/position = Vector2(-280, -1020)
+nodes/vertex/22/node = SubResource("VisualShaderNodeTexture2DParameter_n0w7t")
+nodes/vertex/22/position = Vector2(-940, -1360)
+nodes/vertex/23/node = SubResource("VisualShaderNodeSmoothStep_jbtcu")
+nodes/vertex/23/position = Vector2(880, -760)
+nodes/vertex/24/node = SubResource("VisualShaderNodeIf_6mbv6")
+nodes/vertex/24/position = Vector2(240, -260)
+nodes/vertex/25/node = SubResource("VisualShaderNodeTexture2DParameter_pgpt2")
+nodes/vertex/25/position = Vector2(-1240, -740)
+nodes/vertex/26/node = SubResource("VisualShaderNodeTexture_0gxms")
+nodes/vertex/26/position = Vector2(-460, -480)
+nodes/vertex/connections = PackedInt32Array(8, 0, 7, 0, 9, 0, 7, 1, 15, 0, 8, 0, 15, 1, 9, 0, 11, 0, 9, 1, 12, 0, 8, 1, 10, 0, 15, 0, 16, 0, 17, 0, 19, 0, 16, 2, 7, 0, 16, 0, 14, 0, 17, 1, 17, 0, 2, 0, 20, 0, 14, 1, 3, 0, 2, 1, 22, 0, 21, 2, 2, 0, 24, 1, 2, 0, 24, 0, 21, 0, 24, 4, 25, 0, 26, 2, 26, 0, 24, 5, 24, 0, 0, 0)
+nodes/fragment/0/position = Vector2(400, 160)
+nodes/fragment/2/node = SubResource("VisualShaderNodeTexture2DParameter_6ic1r")
+nodes/fragment/2/position = Vector2(-1980, 280)
+nodes/fragment/3/node = SubResource("VisualShaderNodeTexture_lqps6")
+nodes/fragment/3/position = Vector2(-949.76, 376.963)
+nodes/fragment/connections = PackedInt32Array(2, 0, 3, 2, 3, 0, 0, 0)

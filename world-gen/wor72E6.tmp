@@ -1,9 +1,0 @@
-[gd_scene load_steps=3 format=3 uid="uid://bu4gu0fg176ie"]
-
-[ext_resource type="Script" path="res://world-gen/world.gd" id="1_dka6f"]
-[ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://camera/god_camera.tscn" id="2_dal0t"]
-
-[node name="World" type="Node3D"]
-script = ExtResource("1_dka6f")
-
-[node name="GodCamera" parent="." instance=ExtResource("2_dal0t")]
