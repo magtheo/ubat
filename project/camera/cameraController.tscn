@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://dvo6agmpd78u7"]
 
-[ext_resource type="Script" path="res://camera/CameraController.gd" id="1_eelj4"]
+[ext_resource type="Script" path="res://project/camera/CameraController.gd" id="1_eelj4"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_6egyo"]
 

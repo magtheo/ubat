@@ -1,0 +1,24 @@
+[gd_scene load_steps=5 format=3 uid="uid://qjul30hhfbyk"]
+
+[ext_resource type="Script" path="res://project/terrainManager/terrainGenerator.gd" id="1_i788q"]
+[ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
+[ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_g1ljx"]
+albedo_color = Color(0.129412, 0.0196078, 1, 1)
+
+[node name="main" type="Node3D"]
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.61239, 0.51298, -7.81086)
+size = Vector3(2.9292, 1.16064, 1)
+material = SubResource("StandardMaterial3D_g1ljx")
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="TerrainGenerator" type="Node3D" parent="World"]
+script = ExtResource("1_i788q")
+
+[node name="CameraController" parent="." instance=ExtResource("14_idsun")]
+script = ExtResource("15_nngca")
+speed = 1

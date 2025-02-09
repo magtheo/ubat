@@ -1,0 +1,10 @@
+[configuration]
+entry_symbol = "terrain_generator"
+compatible_godot_version = "4.0"
+
+[libraries]
+linux.debug = "bin/libterrain_generator.so"
+linux.release = "bin/libterrain_generator.so"
+windows.debug = "bin/terrain_generator.dll"
+windows.release = "bin/terrain_generator.dll"
+
