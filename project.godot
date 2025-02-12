@@ -19,7 +19,6 @@ config/icon="res://icon.svg"
 
 PhantomCameraManager="*res://addons/phantom_camera/scripts/managers/phantom_camera_manager.gd"
 Debug="*res://addons/awesome_debug_log/autoloads/debug.tscn"
-Heightmap="res://OLD-files/world-gen/heightmap/heightmap.gd"
 
 [editor]
 
@@ -28,7 +27,7 @@ version_control/autoload_on_startup=true
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/phantom_camera/plugin.cfg")
+enabled=PackedStringArray("res://addons/awesome_debug_log/plugin.cfg", "res://addons/phantom_camera/plugin.cfg")
 
 [filesystem]
 
@@ -74,22 +73,3 @@ move_down={
 [rendering]
 
 environment/defaults/default_clear_color=Color(0.227241, 0.324012, 0.296078, 1)
-
-[shader_globals]
-
-amplitude={
-"type": "float",
-"value": 40.0
-}
-normalmap={
-"type": "sampler2D",
-"value": "res://world-gen/chunk/materials/Rock050_2K-JPG_NormalDX.jpg"
-}
-heightmap={
-"type": "sampler2D",
-"value": "res://world-gen/chunk/materials/Rock050_2K-JPG_Displacement.jpg"
-}
-ocean_pos={
-"type": "vec3",
-"value": Vector3(0, 0, 1)
-}

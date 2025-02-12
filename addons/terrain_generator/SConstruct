@@ -1,0 +1,43 @@
+import os
+from SCons.Script import *
+
+print("Running SConstruct in:", Dir(".").abspath)
+
+# Create the build environment.
+env = Environment(tools=["default"])
+env.Append(CPPFLAGS=["-std=c++17"])
+
+# Append include directories.
+env.Append(CPPPATH=[
+    os.path.join("..", "..", "godot-cpp", "gdextension"),
+    os.path.join("..", "..", "godot-cpp", "include"),
+    os.path.join("..", "..", "godot-cpp", "gen", "include")
+])
+
+
+# Append library path and libraries.
+env.Append(LIBPATH=["../../godot-cpp/bin"])
+env.Append(LIBS=["godot-cpp.linux.template_release.x86_64"])
+
+# Debug: print out the CPPPATH.
+print("CPPPATH list after append:", env["CPPPATH"])
+print("Substituted CPPPATH:", env.subst("$CPPPATH"))
+
+# Determine platform; you can also use sys.platform if needed.
+platform = ARGUMENTS.get("platform", "linux")
+if platform == "linux":
+    target = "bin/libterrain_generator.so"
+elif platform == "windows":
+    target = "bin/terrain_generator.dll"
+else:
+    target = "bin/libterrain_generator.so"  # Default to Linux naming
+
+# Ensure the bin directory exists.
+if not os.path.exists("bin"):
+    os.makedirs("bin")
+
+# Gather source files.
+sources = Glob("src/*.cpp")
+
+# Build the shared library.
+env.SharedLibrary(target, sources)

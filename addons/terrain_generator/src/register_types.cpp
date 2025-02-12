@@ -1,8 +1,9 @@
-#include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/core/godot.hpp>
+#include <../godot_cpp/core/class_db.hpp>
+#include <../godot_cpp/core/godot.hpp>
 #include "terrain_generator.cpp"
 
 using namespace godot;
+using namespace terrain_generator;
 
 void initialize_terrain_generator_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {

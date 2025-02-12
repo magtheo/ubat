@@ -5,6 +5,7 @@
 
 using namespace godot;
 
+namespace TerrainGenerator { 
 class TerrainGenerator : public Object {
     GDCLASS(TerrainGenerator, Object);
 
@@ -73,3 +74,4 @@ public:
         return mesh;
     }
 };
+}

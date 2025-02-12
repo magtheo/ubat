@@ -1,6 +1,11 @@
 [configuration]
-entry_symbol = "terrain_generator"
-compatible_godot_version = "4.0"
+entry_symbol = "terrain_generator_library_init"
+compatible_godot_version = "4.2"
+compatibility_minimum = "4.2"
+reloadable=true
+
+[files]
+libterrain_generator = "res://addons/terrain_generator/bin/libterrain_generator.so"
 
 [libraries]
 linux.debug = "bin/libterrain_generator.so"

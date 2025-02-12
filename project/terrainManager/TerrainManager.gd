@@ -19,6 +19,7 @@ signal chunk_generation_failed(chunk_coord, error_message)
 @export var rock_noise: FastNoiseLite
 @export var kelp_noise: FastNoiseLite
 @export var blending_noise: FastNoiseLite
+@export var lavaRock_noise: FastNoiseLite
 
 
 # Data structures
@@ -130,7 +131,7 @@ func _on_chunk_generated(chunk_coord: Vector2) -> void:
 	var box_mesh: BoxMesh = BoxMesh.new()
 	box_mesh.size = Vector3(chunk_size, 1, chunk_size)
 	chunk_node.mesh = box_mesh
-	chunk_node.translation = Vector3(chunk_coord.x * chunk_size, 0, chunk_coord.y * chunk_size)
+	chunk_node.translate(Vector3(chunk_coord.x * chunk_size, 0, chunk_coord.y * chunk_size))
 	add_child(chunk_node)
 	
 	loaded_chunks[chunk_coord] = chunk_node

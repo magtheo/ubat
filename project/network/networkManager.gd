@@ -18,5 +18,5 @@ func _ready() -> void:
 		"kelp": 56789,
 		"blending": 67890
 	}
-	emit_signal("noise_seeds_received", seeds)
-	print("NetworkManager: Noise seeds received from server:", seeds)
+	#emit_signal("noise_seeds_received", seeds)
+	#print("NetworkManager: Noise seeds received from server:", seeds)
