@@ -1,9 +1,0 @@
-[gd_resource type="Resource" load_steps=2 format=3 uid="uid://bwfr0qn7eiicc"]
-
-[ext_resource type="Script" path="res://OLD-files/world-gen/secondWorld/water/resources/GridSpawnInfo.gd" id="1_daflk"]
-
-[resource]
-script = ExtResource("1_daflk")
-spawnPoints = Array[Vector2]([Vector2(0, 0), Vector2(-1, -1), Vector2(-1, 0), Vector2(-1, 1), Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(1, -1), Vector2(0, -1), Vector2(-3, -3), Vector2(-3, 0), Vector2(-3, 3), Vector2(0, 3), Vector2(3, 3), Vector2(3, 0), Vector2(3, -3), Vector2(0, -3)])
-subdivision = Array[int]([199, 99, 99, 99, 99, 99, 99, 99, 99, 0, 0, 0, 0, 0, 0, 0, 0])
-scale = Array[int]([1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3])
