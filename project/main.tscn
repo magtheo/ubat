@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=6 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="Script" path="res://project/terrainManager/TerrainManager.gd" id="1_c00og"]
+[ext_resource type="Script" path="res://project/network/networkManager.gd" id="4_4e5t6"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
 [ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
 
@@ -22,3 +23,6 @@ script = ExtResource("1_c00og")
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")
 speed = 1
+
+[node name="NetworkManager" type="Node" parent="."]
+script = ExtResource("4_4e5t6")
