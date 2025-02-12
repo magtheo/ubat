@@ -1,6 +1,6 @@
 [gd_scene load_steps=5 format=3 uid="uid://qjul30hhfbyk"]
 
-[ext_resource type="Script" path="res://project/terrainManager/terrainGenerator.gd" id="1_i788q"]
+[ext_resource type="Script" path="res://project/terrainManager/TerrainManager.gd" id="1_c00og"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
 [ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
 
@@ -16,9 +16,9 @@ material = SubResource("StandardMaterial3D_g1ljx")
 
 [node name="World" type="Node3D" parent="."]
 
-[node name="TerrainGenerator" type="Node3D" parent="World"]
-script = ExtResource("1_i788q")
+[node name="TerrainManager" type="Node3D" parent="World"]
+script = ExtResource("1_c00og")
 
-[node name="CameraController" parent="." instance=ExtResource("14_idsun")]
+[node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")
 speed = 1

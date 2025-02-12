@@ -34,6 +34,10 @@ enabled=PackedStringArray("res://addons/phantom_camera/plugin.cfg")
 
 import/fbx/enabled=false
 
+[global_group]
+
+CameraController="main player CameraController"
+
 [input]
 
 move_forward={
