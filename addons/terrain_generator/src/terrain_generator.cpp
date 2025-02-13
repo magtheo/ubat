@@ -1,8 +1,7 @@
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/surface_tool.hpp>
-#include <godot_cpp/classes/opensimplex_noise.hpp>
+#include "noiseGen/FastNoiseLiteWrapper.hpp"
 #include <godot_cpp/godot.hpp>
-
 using namespace godot;
 
 namespace TerrainGenerator { 
