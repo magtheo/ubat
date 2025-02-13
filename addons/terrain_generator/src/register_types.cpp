@@ -1,6 +1,6 @@
-#include <../godot_cpp/core/class_db.hpp>
-#include <../godot_cpp/core/godot.hpp>
-#include "terrain_generator.cpp"
+#include "godot_cpp/godot.hpp"
+#include "godot_cpp/core/class_db.hpp"
+#include "terrain_generator.hpp"
 
 using namespace godot;
 using namespace terrain_generator;
