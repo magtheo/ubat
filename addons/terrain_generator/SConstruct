@@ -9,9 +9,11 @@ env.Append(CPPFLAGS=["-std=c++17"])
 
 # Append include directories.
 env.Append(CPPPATH=[
-    os.path.join("..", "..", "godot-cpp", "gdextension"),
-    os.path.join("..", "..", "godot-cpp", "include"),
-    os.path.join("..", "..", "godot-cpp", "gen", "include")
+    "../../godot-cpp/gdextension",
+    "../../godot-cpp/include",
+    "../../godot-cpp/gen/include",
+    "src/thirdparty",
+    "thirdparty"
 ])
 
 
