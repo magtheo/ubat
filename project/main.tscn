@@ -18,6 +18,10 @@
 
 [node name="TerrainManager" type="Node3D" parent="World"]
 script = ExtResource("1_c00og")
+chunk_size = null
+loading_radius = null
+unloading_radius = null
+max_active_chunks = null
 global_noise = ExtResource("2_8ugwp")
 corral_noise = ExtResource("3_exq1v")
 sand_noise = ExtResource("4_ovj6e")
