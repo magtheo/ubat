@@ -1,12 +1,13 @@
 #include "chunk_gen.h"
 #include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/noise_texture2d.hpp>
-#include <godot_cpp/classes/fast_noise_lite.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <cstdlib> // for srand, rand
+#include <./thirdparty/FastNoiseLite.h>
 
 using namespace godot;
+
 
 void ChunkGenerator::_bind_methods() {
     ClassDB::bind_method(D_METHOD("initialize",
