@@ -1,33 +1,9 @@
-#include "godot_cpp/godot.hpp"
-#include "godot_cpp/core/class_db.hpp"
-#include "terrain_generator.hpp"
+#include <godot.hpp>
+#include "chunkGen/chunk_generator.hpp"
 
 using namespace godot;
-using namespace terrain_generator;
 
-void initialize_terrain_generator_module(ModuleInitializationLevel p_level) {
-    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-        return;
-    }
-    ClassDB::register_class<TerrainGenerator>();
-}
-
-void uninitialize_terrain_generator_module(ModuleInitializationLevel p_level) {
-    if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
-        return;
-    }
-}
-
-extern "C" {
-    GDExtensionBool GDE_EXPORT terrain_generator_library_init(
-        GDExtensionInterfaceGetProcAddress p_get_proc_address,
-        GDExtensionClassLibraryPtr p_library,
-        GDExtensionInitialization *r_initialization
-    ) {
-        godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
-        init_obj.register_initializer(initialize_terrain_generator_module);
-        init_obj.register_terminator(uninitialize_terrain_generator_module);
-        init_obj.set_minimum_library_initialization_level(MODULE_INITIALIZATION_LEVEL_SCENE);
-        return init_obj.init();
-    }
+extern "C" void GDN_EXPORT godot_nativescript_init(void *handle) {
+    Godot::nativescript_init(handle);
+    register_class<ChunkGenerator>();
 }

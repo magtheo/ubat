@@ -1,33 +1,58 @@
 #ifndef FAST_NOISE_LITE_WRAPPER_HPP
 #define FAST_NOISE_LITE_WRAPPER_HPP
 
-#include <godot_cpp/classes/object.hpp>
-#include <godot_cpp/core/class_db.hpp>
-#include "../thirdParty/FastNoiseLite.h"  // Adjust the path as needed
+#include <cmath>
+#include <string>
+#include <map>
 
-using namespace godot;
-
-class FastNoiseLiteWrapper : public Object {
-    GDCLASS(FastNoiseLiteWrapper, Object);
-
+// A stub class representing a noise generator. In your actual project,
+// this would wrap FastNoiseLite functionality.
+class FastNoiseLite {
+public:
+    FastNoiseLite() : m_seed(0) {}
+    void setSeed(int seed) { m_seed = seed; }
+    // Dummy noise function – replace with FastNoiseLite noise generation.
+    float getNoise(float x, float y) {
+        // Simple pseudo-noise example. In practice, use FastNoiseLite's API.
+        return static_cast<float>(sin(x * 0.1 + m_seed) * cos(y * 0.1 + m_seed));
+    }
 private:
-    // Instance of FastNoiseLite
-    FastNoiseLite noise;
+    int m_seed;
+};
 
-protected:
-    static void _bind_methods();
-
+//
+// FastNoiseLiteWrapper manages multiple noise instances – one per biome,
+// one for blending noise, and one for boss noise.
+//
+class FastNoiseLiteWrapper {
 public:
     FastNoiseLiteWrapper();
-    ~FastNoiseLiteWrapper();
 
-    // Set the seed for the noise generator.
+    // Set a global seed (if needed)
     void set_seed(int seed);
 
-    // Example: Get 2D noise at coordinates (x, y).
-    float get_noise_2d(float x, float y);
+    // Randomize seeds for all noise instances.
+    void randomize_seeds(int seed);
 
-    // You can add more methods as needed to expose additional functionality.
+    // Get noise value for a given biome.
+    float get_noise_2d(const std::string &biome, float x, float y);
+
+    // Get the blending noise value.
+    float get_blending_noise(float x, float y);
+
+    // Get the boss area noise value.
+    float get_boss_noise(float x, float y);
+
+private:
+    // Store noise generators for each biome.
+    std::map<std::string, FastNoiseLite> m_biomeNoises;
+    // Separate noise generator for biome blending.
+    FastNoiseLite m_blendNoise;
+    // Separate noise generator for boss area.
+    FastNoiseLite m_bossNoise;
+
+    // Helper to initialize biome noise generators.
+    void initialize_biomes();
 };
 
 #endif // FAST_NOISE_LITE_WRAPPER_HPP

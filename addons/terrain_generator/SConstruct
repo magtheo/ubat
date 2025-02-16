@@ -26,11 +26,11 @@ env.Append(CPPFLAGS=["-std=c++17"])
 env.Append(CPPPATH=[
     "../../godot-cpp/gdextension",
     "../../godot-cpp/include",
+    "../../godot-cpp/include/godot_cpp",
     "../../godot-cpp/gen/include",
     "src/thirdparty",
     "thirdparty"
 ])
-
 
 # Hook into the build process to generate compile_commands.json
 env.AddPostAction('.', generate_compile_commands)
@@ -46,17 +46,17 @@ print("Substituted CPPPATH:", env.subst("$CPPPATH"))
 # Determine platform; you can also use sys.platform if needed.
 platform = ARGUMENTS.get("platform", "linux")
 if platform == "linux":
-    target = "bin/libterrain_generator.so"
+    target = "bin/libchunk_generator.so"
 elif platform == "windows":
-    target = "bin/terrain_generator.dll"
+    target = "bin/chunk_generator.dll"
 else:
-    target = "bin/libterrain_generator.so"  # Default to Linux naming
+    target = "bin/libchunk_generator.so"  # Default to Linux naming
 
 # Ensure the bin directory exists.
 if not os.path.exists("bin"):
     os.makedirs("bin")
 
-# Gather source files.
+# Gather source files. Ensure all your source files are here.
 sources = Glob("src/*.cpp")
 
 # Build the shared library.

@@ -4,6 +4,7 @@ class_name BiomeManager
 # 🗺️ Reference to BiomeMask
 var biome_mask: BiomeMask
 
+
 # 🌈 Section-to-Color Mapping
 var section_colors := {}
 
