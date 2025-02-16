@@ -1,7 +1,22 @@
 import os
+import json
 from SCons.Script import *
 
 print("Running SConstruct in:", Dir(".").abspath)
+
+# Generate commands for clangd
+def generate_compile_commands(target, source, env):
+    commands = []
+    for obj in source:
+        command = {
+            "directory": os.getcwd(),
+            "file": str(obj.sources[0]),
+            "output": str(obj),
+            "arguments": env.subst('$CXXCOM').split()
+        }
+        commands.append(command)
+    with open('compile_commands.json', 'w') as f:
+        json.dump(commands, f, indent=2)
 
 # Create the build environment.
 env = Environment(tools=["default"])
@@ -16,6 +31,9 @@ env.Append(CPPPATH=[
     "thirdparty"
 ])
 
+
+# Hook into the build process to generate compile_commands.json
+env.AddPostAction('.', generate_compile_commands)
 
 # Append library path and libraries.
 env.Append(LIBPATH=["../../godot-cpp/bin"])
