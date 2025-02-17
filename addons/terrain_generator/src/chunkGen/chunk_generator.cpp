@@ -15,11 +15,6 @@ void ChunkGenerator::_init() {
     // Called by Godot when the object is created.
 }
 
-void ChunkGenerator::_register_methods() {
-    register_method("initialize", &ChunkGenerator::initialize);
-    register_method("generate_chunk", &ChunkGenerator::generate_chunk);
-}
-
 void ChunkGenerator::initialize(int chunk_size, int seed) {
     m_chunkSize = chunk_size;
     m_seed = seed;
@@ -136,7 +131,7 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
 // -- Placeholder functions --
 // In your project these would be provided by your GDScript code or other logic.
 //
-ChunkGenerator::Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
+Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
     // Dummy implementation. Replace with actual logic.
     return {1.0f, 1.0f, 1.0f, 1.0f};
 }
