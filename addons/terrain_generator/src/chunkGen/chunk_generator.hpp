@@ -4,16 +4,12 @@
 #include <godot_cpp/classes/object.hpp>        // Using Object instead of Reference/RefCounted
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <vector>
 #include <string>
-#include <map>
 #include "../noiseGen/FastNoiseLiteWrapper.hpp" // Make sure this relative path is valid
 
 namespace godot {
-
-// Optionally, if you need a Color type you can either use godot::Color
-// or define your own. Here we'll use godot's built-in Color:
-using Color = Color; // (godot::Color is available via <godot_cpp/variant/color.hpp>)
 
 /// Internal mesh structure used for generating the mesh.
 struct Mesh {
@@ -51,7 +47,7 @@ private:
     // --- Placeholders for integration with GDScript logic ---
     // In your project these functions are implemented in GDScript.
     Color get_biome_color(float world_x, float world_y);
-    std::map<std::string, float> get_biome_weights(const Color &color);
+    std::unordered_map<std::string, float> get_biome_weights(const Color &color);
     bool is_boss_area(const Color &color);
 };
 

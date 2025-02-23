@@ -32,7 +32,7 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
     }
 
     // Get biome weights from the biome color.
-    std::map<std::string, float> biomeWeights = get_biome_weights(biomeColor);
+    std::unordered_map<std::string, float> biomeWeights = get_biome_weights(biomeColor);
 
     // Get blending noise.
     float blendNoise = m_noiseWrapper.get_blending_noise(world_x, world_y);
@@ -50,9 +50,11 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
         totalWeight += weight;
     }
 
-    if (totalWeight > 0.0f) {
+    if (totalWeight > 1e-6f) {  // Small epsilon to avoid floating-point issues
         blendedHeight /= totalWeight;
-    }
+    } else {
+        blendedHeight = 0.0f;  // Default value in case of no weight
+    }    
     return blendedHeight;
 }
 
@@ -136,7 +138,7 @@ Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
     return {1.0f, 1.0f, 1.0f, 1.0f};
 }
 
-std::map<std::string, float> ChunkGenerator::get_biome_weights(const Color &color) {
+std::unordered_map<std::string, float> ChunkGenerator::get_biome_weights(const Color &color) {
     // Dummy implementation. Replace with actual logic.
     // For example, based on the color, decide how much each biome contributes.
     return { {"Corral", 0.5f}, {"Sand", 0.5f} };

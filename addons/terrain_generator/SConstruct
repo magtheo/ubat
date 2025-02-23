@@ -38,7 +38,7 @@ env.Append(CPPPATH=[
 
 # Append library path and libraries.
 env.Append(LIBPATH=["../../godot-cpp/bin"])
-env.Append(LIBS=["godot-cpp.linux.template_release.x86_64"])
+env.Append(LIBS=["libgodot-cpp.linux.template_debug.x86_64.a"])
 
 # Debug: print out the CPPPATH.
 print("CPPPATH list after append:", env["CPPPATH"])
