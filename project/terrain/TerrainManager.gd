@@ -1,6 +1,6 @@
 extends Node
 
-var chunk_generator  # reference to our C++ class
+var libchunk_generator  # reference to our C++ class
 
 # Adjust to your actual resource paths:
 const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
@@ -19,12 +19,13 @@ const SEED       = 12345
 # We'll track which chunks are loaded to avoid duplicates
 var loaded_chunks = {}
 
+
 func _ready():
 	# Create the GD extension class
-	chunk_generator = ChunkGenerator.new()
+	libchunk_generator = libchunk_generator.new()
 
 	# Initialize with .tres paths + chunk size + seed
-	chunk_generator.initialize(
+	libchunk_generator.initialize(
 		PATH_CORRAL,
 		PATH_SAND,
 		PATH_ROCK,
@@ -63,7 +64,7 @@ func _thread_generate_chunk(params: Array):
 	var cx = params[0]
 	var cy = params[1]
 
-	var chunk_data = chunk_generator.generate_chunk(cx, cy)
+	var chunk_data = libchunk_generator.generate_chunk(cx, cy)
 	call_deferred("on_chunk_generated", cx, cy, chunk_data)
 
 func on_chunk_generated(cx: int, cy: int, chunk_data: PackedFloat32Array):
