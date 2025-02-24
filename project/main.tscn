@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=13 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="Script" path="res://project/terrain/TerrainManager.gd" id="1_c00og"]
 [ext_resource type="FastNoiseLite" uid="uid://bjiob6e4rjy65" path="res://project/terrain/noise/globalNoise.tres" id="2_8ugwp"]
@@ -10,7 +10,6 @@
 [ext_resource type="FastNoiseLite" uid="uid://dfmtgc8fmm48d" path="res://project/terrain/noise/rockNoise.tres" id="5_hhmhp"]
 [ext_resource type="FastNoiseLite" uid="uid://bjap0h0tq1a2e" path="res://project/terrain/noise/height_changer.tres" id="7_uvhxh"]
 [ext_resource type="Script" path="res://project/terrain/biomeMask.gd" id="9_d55ty"]
-[ext_resource type="Script" path="res://project/terrain/biomeManager.gd" id="10_oltl7"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
 [ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
 
@@ -34,9 +33,6 @@ lavaRock_noise = ExtResource("4_vt7y5")
 
 [node name="BiomeMask" type="Node3D" parent="World"]
 script = ExtResource("9_d55ty")
-
-[node name="BiomeManager" type="Node3D" parent="World"]
-script = ExtResource("10_oltl7")
 
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")
