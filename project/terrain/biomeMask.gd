@@ -1,5 +1,4 @@
 extends Node
-class_name BiomeMask
 
 # 🖼️ Biome Mask Texture
 var biome_image: Image = null
@@ -14,7 +13,7 @@ var world_height: float = 10000.0
 var color_cache := {}
 
 # 🗺️ Default Settings
-const DEFAULT_MASK_PATH = "res://assets/biomes/biome_mask.png"
+const DEFAULT_MASK_PATH = "res://textures/biomeMask_image.png"
 
 # 🚀 Initialize
 func _ready():
