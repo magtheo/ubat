@@ -4,6 +4,7 @@
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/classes/engine.hpp>
 
 using namespace godot;
 
@@ -12,7 +13,11 @@ void initialize_chunk_generator_module(ModuleInitializationLevel p_level) {
         return;
     }
 
+    // ClassDB::register_class<BiomeManager>();
+    Engine::get_singleton();
+
     GDREGISTER_CLASS(ChunkGenerator);
+    ClassDB::register_class<ChunkGenerator>();
 }
 
 void uninitialize_chunk_generator_module(ModuleInitializationLevel p_level) {

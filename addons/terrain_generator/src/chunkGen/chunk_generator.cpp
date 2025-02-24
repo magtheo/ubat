@@ -1,5 +1,12 @@
 #include "chunk_generator.hpp"
 #include <cmath>
+#include <godot_cpp/godot.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/classes/node.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/engine.hpp>
+
+#include "../utils/SingletonAccessor.hpp"
 
 namespace godot {
 
@@ -12,10 +19,14 @@ ChunkGenerator::~ChunkGenerator() {
 }
 
 void ChunkGenerator::_init() {
+    // Object *biome_manager_obj = Engine::get_singleton("BiomeManager");
+    
     // Called by Godot when the object is created.
 }
 
 void ChunkGenerator::initialize(int chunk_size, int seed) {
+    
+    // TODO ad accessing of singleton 
     m_chunkSize = chunk_size;
     m_seed = seed;
     // Randomize seeds for all noise instances.
