@@ -1,6 +1,8 @@
 #include "SingletonAccessor.hpp"
+#include <cstdio>
 #include <godot_cpp/classes/window.hpp>
-
+#include <iostream>
+using namespace std;
 using namespace godot;
 
 Node *SingletonAccessor::get_singleton(const String &singleton_name) {
@@ -23,6 +25,6 @@ Node *SingletonAccessor::get_singleton(const String &singleton_name) {
     if (!singleton_node) {
         printf("SingletonAccessor: Singleton node '%s' not found!\n", singleton_name.utf8().get_data());
     }
-    
+    cout << "singleton_node";
     return singleton_node;
 }
