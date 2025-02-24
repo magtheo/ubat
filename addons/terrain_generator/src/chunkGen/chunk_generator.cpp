@@ -1,5 +1,7 @@
 #include "chunk_generator.hpp"
+#include "godot_cpp/classes/node.hpp"
 #include <cmath>
+#include "../utils/SingletonAccessor.hpp"
 
 namespace godot {
 
@@ -82,6 +84,7 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
             
             // Call the (placeholder) function to get the biome color.
             Color biomeColor = get_biome_color(world_x, world_y);
+            // maybe add std::unordered_map<std::string, float> biomeWeights = get_biome_weights(biomeColor);
             
             // Compute the height.
             float height = compute_height(world_x, world_y, biomeColor);
@@ -134,14 +137,45 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
 // In your project these would be provided by your GDScript code or other logic.
 //
 Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
-    // Dummy implementation. Replace with actual logic.
-    return {1.0f, 1.0f, 1.0f, 1.0f};
+    // Get the BiomeMask singleton
+    Node *biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
+    if (!biome_mask_node) {
+        printf("ChunkGenerator: BiomeMask not found!\n");
+        return Color(1.0f, 1.0f, 1.0f, 1.0f); // Default color
+    }
+
+    // Call the "get_biome_color" function from GDScript
+    Variant result = biome_mask_node->call("get_biome_color", world_x, world_y);
+    if (result.get_type() != Variant::COLOR) {
+        printf("ChunkGenerator: Failed to get biome color!\n");
+        return Color(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    return result;  // Successfully got the biome color
 }
 
+
 std::unordered_map<std::string, float> ChunkGenerator::get_biome_weights(const Color &color) {
-    // Dummy implementation. Replace with actual logic.
-    // For example, based on the color, decide how much each biome contributes.
-    return { {"Corral", 0.5f}, {"Sand", 0.5f} };
+    // Get the BiomeManager singleton
+    Node *biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
+    if (!biome_manager_node) {
+        printf("ChunkGenerator: BiomeManager not found!\n");
+        return { {"Corral", 0.5f}, {"Sand", 0.5f} }; // Default biome blending
+    }
+
+    // Call the GDScript function "get_biome_weights"
+    Dictionary biome_weights_dict = biome_manager_node->call("get_biome_weights", color);
+    
+    // Convert Godot Dictionary to std::unordered_map
+    std::unordered_map<std::string, float> biome_weights;
+    Array keys = biome_weights_dict.keys();
+    for (int i = 0; i < keys.size(); i++) {
+        String biome_name = keys[i];
+        float weight = biome_weights_dict[keys[i]];
+        biome_weights[biome_name.utf8().get_data()] = weight;
+    }
+    
+    return biome_weights;
 }
 
 bool ChunkGenerator::is_boss_area(const Color &color) {
