@@ -15,6 +15,11 @@
 *.pdb
 *.lib
 
+bin/
+bin/*.so
+bin/*.dll
+bin/*.os
+
 # Exported projects
 *.exe
 *.apk
