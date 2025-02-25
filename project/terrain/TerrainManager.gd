@@ -1,6 +1,7 @@
 extends Node
 
 var libchunk_generator  # reference to our C++ class
+@onready var player: CharacterBody3D = $"../../CameraController"
 
 # Adjust to your actual resource paths:
 const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
@@ -22,7 +23,7 @@ var loaded_chunks = {}
 
 func _ready():
 	# Create the GD extension class
-	libchunk_generator = libchunk_generator.new()
+	libchunk_generator = ChunkGenerator.new()
 
 	# Initialize with .tres paths + chunk size + seed
 	libchunk_generator.initialize(
@@ -42,6 +43,7 @@ func _ready():
 	load_chunks_around_player(player_pos)
 
 func load_chunks_around_player(player_pos: Vector2):
+	# TODO: should only load chunks when the player moves to new chunks
 	# example: load a 3x3 area around the chunk containing player
 	var chunk_x = int(player_pos.x) / CHUNK_SIZE
 	var chunk_y = int(player_pos.y) / CHUNK_SIZE
@@ -58,11 +60,12 @@ func request_chunk(cx: int, cy: int):
 
 	# We'll generate in a thread
 	var thread = Thread.new()
-	thread.run(self, "_thread_generate_chunk", [cx, cy])
+	thread.start(_thread_generate_chunk.bind([cx, cy]))
 
 func _thread_generate_chunk(params: Array):
 	var cx = params[0]
 	var cy = params[1]
+	print("GD script call c++ to generate chunk at: ", cx, cy)
 
 	var chunk_data = libchunk_generator.generate_chunk(cx, cy)
 	call_deferred("on_chunk_generated", cx, cy, chunk_data)
@@ -98,7 +101,9 @@ func on_chunk_generated(cx: int, cy: int, chunk_data: PackedFloat32Array):
 
 func _process(delta: float):
 	# If your player moves, call load_chunks_around_player(new_position)
-	# to load new chunks.
-	var player = get_node("Player")
+	# to load new chunks.	
+	#var player = get_node("Player")
+	#print("player in TerrainManager: ", player)
 	if player:
-		load_chunks_around_player(player.position)
+		var player_pos_2d = Vector2(player.position.x, player.position.z)
+		load_chunks_around_player(player_pos_2d)
