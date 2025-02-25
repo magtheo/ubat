@@ -8,6 +8,8 @@
 #include <vector>
 #include <string>
 #include "../noiseGen/FastNoiseLiteWrapper.hpp" // Make sure this relative path is valid
+#include "godot_cpp/classes/node.hpp"
+#include "godot_cpp/variant/dictionary.hpp"
 
 namespace godot {
 
@@ -17,8 +19,8 @@ struct Mesh {
     std::vector<unsigned int> indices;
 };
 
-class ChunkGenerator : public Object {
-    GDCLASS(ChunkGenerator, Object)      // Using Object as the base
+class ChunkGenerator : public Node {
+    GDCLASS(ChunkGenerator, Node)      // Using Object as the base
 
 public:
     ChunkGenerator();
@@ -38,6 +40,9 @@ private:
     int m_chunkSize = 0;   // Number of quads per side (grid resolution)
     int m_seed = 0;
 
+    Node *biome_manager_node = nullptr;
+    Node *biome_mask_node = nullptr;
+
     // Noise wrapper instance.
     FastNoiseLiteWrapper m_noiseWrapper;
 
@@ -47,7 +52,7 @@ private:
     // --- Placeholders for integration with GDScript logic ---
     // In your project these functions are implemented in GDScript.
     Color get_biome_color(float world_x, float world_y);
-    std::unordered_map<std::string, float> get_biome_weights(const Color &color);
+    Dictionary get_biome_weights(const Color &color);
     bool is_boss_area(const Color &color);
 };
 
