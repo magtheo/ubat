@@ -3,14 +3,14 @@ extends Node3D
 signal noises_randomized
 
 # Adjust to your actual resource paths:
-const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
-const PATH_SAND     = "res://Noise/SandNoise.tres"
-const PATH_ROCK     = "res://Noise/RockNoise.tres"
-const PATH_KELP     = "res://Noise/KelpNoise.tres"
-const PATH_LAVAROCK = "res://Noise/LavaRockNoise.tres"
+const PATH_CORRAL   = "res://noise/corralNoise.tres"
+const PATH_SAND     = "res://noise/sandNoise.tres"
+const PATH_ROCK     = "res://noise/rockNoise.tres"
+const PATH_KELP     = "res://noise/kelpNoise.tres"
+const PATH_LAVAROCK = "res://noise/lavaRockNoise.tres"
 
-const PATH_SECTION  = "res://Noise/SectionNoise.tres"
-const PATH_BLEND    = "res://Noise/BlendNoise.tres"
+const PATH_SECTION  = "res://noise/sectionNoise.tres"
+const PATH_BLEND    = "res://noise/blendNoise.tres"
 
 var corral_noise
 var sand_noise
@@ -20,7 +20,7 @@ var lavarock_noise
 var section_noise
 var blend_noise
 
-@export var seed = 12345
+#@export var seed = 12345
 
 func _ready():
 	corral_noise = load(PATH_CORRAL)
@@ -32,6 +32,8 @@ func _ready():
 	blend_noise = load(PATH_BLEND)
 
 func randomize_noises():
-	seed = randi_range(0, 100000)
-	randomize()
+	#seed = randi_range(0, 100000)
+	#seed()
+	#randomize()
 	emit_signal("noises_randomized")
+	# TODO: randomize seeds

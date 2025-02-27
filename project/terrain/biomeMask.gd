@@ -14,7 +14,6 @@ var color_cache := {}
 
 # 🗺️ Biome mask image path
 const BIOME_MASK_IMAGE = "res://textures/biomeMask_image.png"
-# TODO: Image is not found
 
 # 🚀 Initialize
 func _ready():

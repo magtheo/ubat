@@ -209,7 +209,7 @@ Dictionary ChunkGenerator::get_biome_weights(const Color &color) {
         return Dictionary();
     }
 
-    godot::print_line("Chunk_generator.cpp: Got biome weights: ", biome_weights_var);
+    // godot::print_line("Chunk_generator.cpp: Got biome weights: ", biome_weights_var);
     return biome_weights_var;
 }
 
