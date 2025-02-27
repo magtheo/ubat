@@ -19,7 +19,8 @@ config/icon="res://icon.svg"
 
 PhantomCameraManager="*res://addons/phantom_camera/scripts/managers/phantom_camera_manager.gd"
 Debug="*res://addons/awesome_debug_log/autoloads/debug.tscn"
-biomeManager="*res://project/terrain/biomeManager.gd"
+BiomeManager="*res://project/terrain/biomeManager.gd"
+BiomeMask="*res://project/terrain/biomeMask.gd"
 
 [editor]
 

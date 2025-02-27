@@ -37,8 +37,9 @@ env.Append(CPPPATH=[
 ])
 
 # Append library path and libraries.
+env.Append(LINKFLAGS=["-shared"])  # Ensure shared library compilation
 env.Append(LIBPATH=["../../godot-cpp/bin"])
-env.Append(LIBS=["godot-cpp.linux.template_release.x86_64"])
+env.Append(LIBS=["libgodot-cpp.linux.template_debug.x86_64.a"])
 
 # Debug: print out the CPPPATH.
 print("CPPPATH list after append:", env["CPPPATH"])
@@ -58,10 +59,10 @@ if not os.path.exists("bin"):
     os.makedirs("bin")
 
 # Gather source files.
-sources = Glob("src/**/*.cpp")
-
+sources = Glob("src/**/*.cpp") + Glob("src/register_types.cpp") 
 for src in sources:
     print("Target files path", src.get_path()) # Print for debugging
+
 
 # Build the shared library.
 build_target = env.SharedLibrary(target_lib, sources)

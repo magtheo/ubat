@@ -1,5 +1,4 @@
 extends Node
-class_name BiomeMask
 
 # 🖼️ Biome Mask Texture
 var biome_image: Image = null
@@ -13,16 +12,18 @@ var world_height: float = 10000.0
 # ⚙️ Performance Cache
 var color_cache := {}
 
-# 🗺️ Default Settings
-const DEFAULT_MASK_PATH = "res://assets/biomes/biome_mask.png"
+# 🗺️ Biome mask image path
+const BIOME_MASK_IMAGE = "res://textures/biomeMask_image.png"
+# TODO: Image is not found
 
 # 🚀 Initialize
 func _ready():
-	load_mask(DEFAULT_MASK_PATH)
+	load_mask(BIOME_MASK_IMAGE)
 
 # 📂 Load Biome Mask
 func load_mask(path: String) -> bool:
 	var img_texture = load(path) as ImageTexture
+	print("image texture: ", img_texture)
 	if img_texture:
 		biome_image = img_texture.get_image()
 		mask_width = biome_image.get_width()

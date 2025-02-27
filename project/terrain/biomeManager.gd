@@ -1,6 +1,5 @@
 # BiomeManager.gd
 extends Node
-class_name BiomeManager
 
 # -----------------------------------------------------------------------------
 # This dictionary defines biome sections.

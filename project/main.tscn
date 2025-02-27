@@ -1,8 +1,6 @@
 [gd_scene load_steps=13 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="Script" path="res://project/terrain/TerrainManager.gd" id="1_c00og"]
-[ext_resource type="FastNoiseLite" uid="uid://bjiob6e4rjy65" path="res://project/terrain/noise/globalNoise.tres" id="2_8ugwp"]
-[ext_resource type="FastNoiseLite" uid="uid://dfg02m8vwd4bh" path="res://project/terrain/noise/coralNoise.tres" id="3_exq1v"]
 [ext_resource type="Script" path="res://project/network/networkManager.gd" id="4_4e5t6"]
 [ext_resource type="FastNoiseLite" uid="uid://dnvp4gtbcyn57" path="res://project/terrain/noise/sandNoise.tres" id="4_ovj6e"]
 [ext_resource type="FastNoiseLite" uid="uid://b87s5uxs2qoqb" path="res://project/terrain/noise/lavaRockNoise.tres" id="4_vt7y5"]
