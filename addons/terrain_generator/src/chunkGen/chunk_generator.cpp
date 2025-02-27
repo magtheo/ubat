@@ -4,6 +4,7 @@
 #include <cmath>
 #include "../utils/SingletonAccessor.hpp"
 #include "godot_cpp/variant/dictionary.hpp"
+#include "godot_cpp/variant/packed_float32_array.hpp"
 #include "godot_cpp/variant/string.hpp"
 
 namespace godot {
@@ -20,9 +21,21 @@ void ChunkGenerator::_init() {
     // Called by Godot when the object is created.
 }
 
-void ChunkGenerator::initialize(int chunk_size, int seed) {
+void ChunkGenerator::initialize(int chunk_size, Node* seed_node) {
     m_chunkSize = chunk_size;
-    m_seed = seed;
+    m_seedNode = seed_node;
+
+   // Get seed from the Node3D
+    int seed = 12345; // Default seed
+    if (seed_node) {
+        Variant seed_variant = seed_node->get("seed");
+        if (seed_variant.get_type() == Variant::INT) {
+            seed = (int)seed_variant;
+        } else {
+            godot::print_line("❌ ChunkGenerator: Seed node does not have an integer 'seed' property. Using default seed.");
+        }
+    }
+
     // Randomize seeds for all noise instances.
     m_noiseWrapper.randomize_seeds(seed);
 
@@ -41,7 +54,7 @@ void ChunkGenerator::initialize(int chunk_size, int seed) {
 
 void ChunkGenerator::_bind_methods() {
     // Register public functions so they can be called from GDScript
-    ClassDB::bind_method(D_METHOD("initialize", "chunk_size", "seed"), &ChunkGenerator::initialize);
+    ClassDB::bind_method(D_METHOD("initialize", "chunk_size", "seed_node"), &ChunkGenerator::initialize);
     ClassDB::bind_method(D_METHOD("generate_chunk", "cx", "cy"), &ChunkGenerator::generate_chunk);
 
     // If you want to expose more functions, add them here:
@@ -53,7 +66,6 @@ void ChunkGenerator::_bind_methods() {
 
 //
 // Helper function to compute vertex height using biome noise and blending.
-//
 float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor) {
     if (is_boss_area(biomeColor)) {
         return m_noiseWrapper.get_boss_noise(world_x, world_y);
@@ -155,7 +167,7 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
 
     // Convert the mesh to a Dictionary so it can be used in GDScript.
     Dictionary mesh_dict;
-    Array vertices_array;
+    PackedFloat32Array vertices_array;
     for (size_t i = 0; i < mesh.vertices.size(); ++i) {
         vertices_array.append(mesh.vertices[i]);
     }
@@ -163,8 +175,10 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
     for (size_t i = 0; i < mesh.indices.size(); ++i) {
         indices_array.append(mesh.indices[i]);
     }
+
     mesh_dict["vertices"] = vertices_array;
     mesh_dict["indices"] = indices_array;
+
 
     return mesh_dict;
 }
@@ -183,7 +197,7 @@ Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
 
     Variant result = biome_mask_node->call("get_biome_color", world_x, world_y);
     if (result.get_type() != Variant::COLOR) {
-        return Color(1.0f, 1.0f, 1.0f, 1.0f);
+        return Color(1.0f, 1.0f, 1.0f, 1.0f); // Default color
     }
 
     return result;
@@ -207,7 +221,7 @@ Dictionary ChunkGenerator::get_biome_weights(const Color &color) {
         return Dictionary();
     }
 
-    godot::print_line("Chunk_generator.cpp: Got biome weights: ", biome_weights_var);
+    //godot::print_line("Chunk_generator.cpp: Got biome weights: ", biome_weights_var);
     return biome_weights_var;
 }
 
@@ -219,6 +233,4 @@ bool ChunkGenerator::is_boss_area(const Color &color) {
         return true;
     }
     return false;
-}
-
-} // namespace godot
+}}

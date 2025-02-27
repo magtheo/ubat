@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=6 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="Script" path="res://project/terrain/TerrainManager.gd" id="1_c00og"]
+[ext_resource type="Script" path="res://project/terrain/SeedNode.gd" id="2_cmwqy"]
 [ext_resource type="Script" path="res://project/network/networkManager.gd" id="4_4e5t6"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
 [ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
@@ -11,6 +12,12 @@
 
 [node name="TerrainManager" type="Node3D" parent="World"]
 script = ExtResource("1_c00og")
+
+[node name="SeedNode" type="Node3D" parent="World/TerrainManager"]
+script = ExtResource("2_cmwqy")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -8.07736)
 
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")

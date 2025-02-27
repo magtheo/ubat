@@ -14,6 +14,7 @@ var color_cache := {}
 
 # 🗺️ Biome mask image path
 const BIOME_MASK_IMAGE = "res://textures/biomeMask_image.png"
+
 # TODO: Image is not found
 
 # 🚀 Initialize
@@ -22,13 +23,16 @@ func _ready():
 
 # 📂 Load Biome Mask
 func load_mask(path: String) -> bool:
-	var img_texture = load(path) as ImageTexture
+	var img_textureCompressed = load(path)
+	var img = img_textureCompressed.get_image()
+	var img_texture = ImageTexture.create_from_image(img)
+
 	print("image texture: ", img_texture)
 	if img_texture:
 		biome_image = img_texture.get_image()
 		mask_width = biome_image.get_width()
 		mask_height = biome_image.get_height()
-		biome_image.lock()
+		#biome_image.lock()
 		return true
 	else:
 		push_error("Failed to load biome mask at: " + path)

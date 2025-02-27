@@ -4,18 +4,18 @@ var libchunk_generator  # reference to our C++ class
 @onready var player: CharacterBody3D = $"../../CameraController"
 
 # Adjust to your actual resource paths:
-const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
-const PATH_SAND     = "res://Noise/SandNoise.tres"
-const PATH_ROCK     = "res://Noise/RockNoise.tres"
-const PATH_KELP     = "res://Noise/KelpNoise.tres"
+const PATH_CORRAL = "res://Noise/CorralNoise.tres"
+const PATH_SAND = "res://Noise/SandNoise.tres"
+const PATH_ROCK = "res://Noise/RockNoise.tres"
+const PATH_KELP = "res://Noise/KelpNoise.tres"
 const PATH_LAVAROCK = "res://Noise/LavaRockNoise.tres"
 
-const PATH_SECTION  = "res://Noise/SectionNoise.tres"
-const PATH_BLEND    = "res://Noise/BlendNoise.tres"
+const PATH_SECTION = "res://Noise/SectionNoise.tres"
+const PATH_BLEND = "res://Noise/BlendNoise.tres"
 
-	# Basic settings
-	const CHUNK_SIZE = 64
-	#const SEED       = 12345
+# Basic settings
+const CHUNK_SIZE = 64
+#const SEED       = 12345
 
 # We'll track which chunks are loaded to avoid duplicates
 var loaded_chunks = {}
@@ -31,6 +31,7 @@ func _ready():
 	print("libchunk_generator: ", libchunk_generator)
 
 	var seed_node = get_node("SeedNode")
+	print("Seed node: ", seed_node)
 	seed_node.connect("noises_randomized", _on_noises_randomized)
 
 	# Initialize with .tres paths + chunk size + seed

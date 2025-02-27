@@ -3,14 +3,14 @@ extends Node3D
 signal noises_randomized
 
 # Adjust to your actual resource paths:
-const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
-const PATH_SAND     = "res://Noise/SandNoise.tres"
-const PATH_ROCK     = "res://Noise/RockNoise.tres"
-const PATH_KELP     = "res://Noise/KelpNoise.tres"
-const PATH_LAVAROCK = "res://Noise/LavaRockNoise.tres"
+const PATH_CORRAL   = "res://project/terrain/noise/coralNoise.tres"
+const PATH_SAND     = "res://project/terrain/noise/sandNoise.tres"
+const PATH_ROCK     = "res://project/terrain/noise/rockNoise.tres"
+const PATH_KELP     = "res://project/terrain/noise/kelpNoise.tres"
+const PATH_LAVAROCK = "res://project/terrain/noise/lavaRockNoise.tres"
 
-const PATH_SECTION  = "res://Noise/SectionNoise.tres"
-const PATH_BLEND    = "res://Noise/BlendNoise.tres"
+const PATH_SECTION  = "res://project/terrain/noise/sectionNoise.tres"
+const PATH_BLEND    = "res://project/terrain/noise/blendNoise.tres"
 
 var corral_noise
 var sand_noise

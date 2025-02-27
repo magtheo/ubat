@@ -33,12 +33,13 @@ public:
     static void _bind_methods();
 
     // Exposed methods.
-    void initialize(int chunk_size, int seed);
+    void initialize(int chunk_size, Node* seed_node);
     Dictionary generate_chunk(int cx, int cy);
 
 private:
+
     int m_chunkSize = 0;   // Number of quads per side (grid resolution)
-    int m_seed = 0;
+    Node *m_seedNode = 0;
 
     Node *biome_manager_node = nullptr;
     Node *biome_mask_node = nullptr;
