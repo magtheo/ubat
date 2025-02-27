@@ -35,13 +35,6 @@ func _ready():
 
 	# Initialize with .tres paths + chunk size + seed
 	libchunk_generator.initialize(
-		PATH_CORRAL,
-		PATH_SAND,
-		PATH_ROCK,
-		PATH_KELP,
-		PATH_LAVAROCK,
-		PATH_SECTION,
-		PATH_BLEND,
 		CHUNK_SIZE,
 		seed_node
 	)

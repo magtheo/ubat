@@ -22,13 +22,11 @@ void ChunkGenerator::_init() {
     // Called by Godot when the object is created.
 }
 
-void ChunkGenerator::initialize(int chunk_size, int seed) {
+void ChunkGenerator::initialize(int chunk_size, Node *seed_node) {
     
     // TODO ad accessing of singleton 
     m_chunkSize = chunk_size;
-    m_seed = seed;
-    // Randomize seeds for all noise instances.
-    m_noiseWrapper.randomize_seeds(seed);
+    m_seedNode = seed_node;
 
     // Fetch singletons once at init
     
@@ -45,7 +43,7 @@ void ChunkGenerator::initialize(int chunk_size, int seed) {
 
 void ChunkGenerator::_bind_methods() {
     // Register public functions so they can be called from GDScript
-    ClassDB::bind_method(D_METHOD("initialize", "chunk_size", "seed"), &ChunkGenerator::initialize);
+    ClassDB::bind_method(D_METHOD("initialize", "chunk_size", "seedNode"), &ChunkGenerator::initialize);
     ClassDB::bind_method(D_METHOD("generate_chunk", "cx", "cy"), &ChunkGenerator::generate_chunk);
 
     // If you want to expose more functions, add them here:
