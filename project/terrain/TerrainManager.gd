@@ -13,9 +13,9 @@ const PATH_LAVAROCK = "res://Noise/LavaRockNoise.tres"
 const PATH_SECTION  = "res://Noise/SectionNoise.tres"
 const PATH_BLEND    = "res://Noise/BlendNoise.tres"
 
-	# Basic settings
-	const CHUNK_SIZE = 64
-	#const SEED       = 12345
+# Basic settings
+const CHUNK_SIZE = 64
+#const SEED       = 12345
 
 # We'll track which chunks are loaded to avoid duplicates
 var loaded_chunks = {}
