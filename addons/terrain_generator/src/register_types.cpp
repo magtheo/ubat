@@ -1,6 +1,5 @@
 #include "register_types.h"
 #include "./chunkGen/chunk_generator.hpp"  // Ensure this path is correct
-
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
@@ -16,7 +15,8 @@ void initialize_chunk_generator_module(ModuleInitializationLevel p_level) {
     // ClassDB::register_class<BiomeManager>();
     Engine::get_singleton();
 
-    GDREGISTER_CLASS(ChunkGenerator);
+    godot::print_line("Initializing: ChunkGenerator -> " + String(typeid(ChunkGenerator).name()));
+    // GDREGISTER_CLASS(ChunkGenerator);
     ClassDB::register_class<ChunkGenerator>();
 }
 

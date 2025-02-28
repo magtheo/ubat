@@ -28,7 +28,7 @@ var prev_chunk_y = null
 
 func _ready():
 	# Create the GD extension class
-	libchunk_generator = ChunkGenerator.new()
+	libchunk_generator = ChunkGenerator.new() #TODO; after moifying the chunk_generator.cpp its not found here
 	print("libchunk_generator: ", libchunk_generator)
 
 	var seed_node = get_node("SeedNode")
@@ -46,7 +46,8 @@ func _ready():
 	load_chunks_around_player(player_pos)
 
 func _on_noises_randomized():
-	print("Noises randomized, refreshing chunks")
+	print("TerrainManager.gd: Noises randomized, refreshing chunks")
+	seedsRandomized = true
 	# Clear loaded chunks
 	for chunk_pos in loaded_chunks:
 		# Remove chunk from scene
@@ -58,7 +59,6 @@ func _on_noises_randomized():
 
 	# Load initial chunks around (0,0)
 	var player_pos = Vector2(0, 0)
-	seedsRandomized = true
 	load_chunks_around_player(player_pos)
 
 func load_chunks_around_player(player_pos: Vector2):
@@ -89,20 +89,18 @@ func request_chunk(cx: int, cy: int):
 
 
 func _thread_generate_chunk(cx: int, cy: int):
-	print("Generating chunk at: ", cx, cy)
-	var chunk_data = libchunk_generator.generate_chunk(cx, cy)
+	print("TerrainManager: Generate chunk at: ", cx, cy)
+	var chunk = libchunk_generator.generate_chunk(cx, cy)
+	add_child(chunk)
 
-	# Ensure the thread is cleaned up after use
-	call_deferred("on_chunk_generated", cx, cy, chunk_data)
-
-	# Use mutex to safely update dictionary
-	chunk_mutex.lock()
-	call_deferred("on_chunk_generated", cx, cy, chunk_data)
+	# Use mutex to safely update dictionary TODO: mutext caused erros, investigate
+	# chunk_mutex.lock()
+	call_deferred("on_chunk_generated", cx, cy, chunk)
 	if Vector2i(cx, cy) in loaded_chunks:
 		var thread = loaded_chunks[Vector2i(cx, cy)]
 		thread.wait_to_finish()
 		loaded_chunks.erase(Vector2i(cx, cy))
-	chunk_mutex.unlock()
+	# chunk_mutex.unlock()
 
 
 func on_chunk_generated(cx: int, cy: int, chunk_data):
@@ -148,7 +146,7 @@ func _process(_delta: float):
 	# to load new chunks.	
 	#var player = get_node("Player")
 	#print("player in TerrainManager: ", player)
-	if player and seedsRandomized:
+	if player:
 		var player_pos_2d = Vector2(player.position.x, player.position.z)
 		
 		# Calculate the player's current chunk coordinates

@@ -45,5 +45,5 @@ func randomize_noises():
 	lavarock_noise.seed = new_seed
 	section_noise.seed = new_seed
 	blend_noise.seed = new_seed
-	print("Randomized noise seeds:", new_seed, "and applied to noises")
+	print("Randomized noise seed: ", new_seed, " and applied to noises")
 	emit_signal("noises_randomized")

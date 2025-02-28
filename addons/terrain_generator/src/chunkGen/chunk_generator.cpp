@@ -1,34 +1,30 @@
 #include "chunk_generator.hpp"
 #include "core/print_string.hpp"
-#include "godot_cpp/classes/node.hpp"
-#include <cmath>
+#include "godot_cpp/classes/node3d.hpp"
+#include "godot_cpp/classes/mesh_instance3d.hpp"
+#include "godot_cpp/classes/array_mesh.hpp"
+#include "godot_cpp/classes/shader_material.hpp"
+#include <godot_cpp/classes/shader.hpp>
+#include "godot_cpp/classes/image_texture.hpp"
+#include "godot_cpp/classes/viewport_texture.hpp"
+#include "godot_cpp/classes/texture2d.hpp"
+#include "godot_cpp/classes/image.hpp"
+#include <godot_cpp/classes/resource_loader.hpp>
 #include "../utils/SingletonAccessor.hpp"
-#include "godot_cpp/variant/dictionary.hpp"
-#include "godot_cpp/variant/string.hpp"
+#include <cmath>
+#include <godot_cpp/godot.hpp>
 
 namespace godot {
 
-ChunkGenerator::ChunkGenerator() {
-    // Constructor (if needed)
-}
+ChunkGenerator::ChunkGenerator() {}
+ChunkGenerator::~ChunkGenerator() {}
 
-ChunkGenerator::~ChunkGenerator() {
-    // Destructor (if needed)
-}
-
-void ChunkGenerator::_init() {
-    // Object *biome_manager_obj = Engine::get_singleton("BiomeManager");
-    
-    // Called by Godot when the object is created.
-}
+void ChunkGenerator::_init() {}
 
 void ChunkGenerator::initialize(int chunk_size, Node *seed_node) {
-    
     m_chunkSize = chunk_size;
     m_seedNode = seed_node;
 
-    // Fetch singletons once at init
-    
     biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     if (!biome_manager_node) {
         godot::print_line("❌ ChunkGenerator: BiomeManager not found at initialization!");
@@ -49,185 +45,101 @@ void ChunkGenerator::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_biome_color", "world_x", "world_y"), &ChunkGenerator::get_biome_color);
     ClassDB::bind_method(D_METHOD("get_biome_weights", "color"), &ChunkGenerator::get_biome_weights);
     ClassDB::bind_method(D_METHOD("is_boss_area", "color"), &ChunkGenerator::is_boss_area);
+    ClassDB::bind_method(D_METHOD("load_shader", "shader_path"), &ChunkGenerator::load_shader);
 }
 
+MeshInstance3D *ChunkGenerator::generate_chunk(int cx, int cy) {
+    godot::print_line("C++ Chunk_generator: Generating chunk at: ", cx, ", ", cy);
+    
+    MeshInstance3D *mesh_instance = memnew(MeshInstance3D);
+    Ref<ArrayMesh> mesh = memnew(ArrayMesh);
+    
+    // Assign mesh
+    mesh_instance->set_mesh(mesh);
+    
+    // Assign textures
+    Ref<ShaderMaterial> material = create_shader_material();
+    material->set_shader_parameter("biome_blend_map", generate_biome_blend_texture(cx, cy));
+    material->set_shader_parameter("height_map", generate_heightmap_texture(cx, cy));
+    
+    mesh_instance->set_material_override(material);
+    return mesh_instance;
+}
 
-//
-// Helper function to compute vertex height using biome noise and blending.
-//
-float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor) {
-    if (is_boss_area(biomeColor)) {
-        return m_noiseWrapper.get_boss_noise(world_x, world_y);
+Ref<ShaderMaterial> ChunkGenerator::create_shader_material() {
+    Ref<ShaderMaterial> material = memnew(ShaderMaterial);
+    material->set_shader(load_shader("res://project/terrain/shader/chunkShader.gdshader"));
+    return material;
+}
+
+Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture(int cx, int cy) {
+    Ref<Image> image = memnew(Image);
+    image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
+    for (int y = 0; y < m_chunkSize; y++) {
+        for (int x = 0; x < m_chunkSize; x++) {
+            Color biomeColor = get_biome_color(cx * m_chunkSize + x, cy * m_chunkSize + y);
+            image->set_pixel(x, y, biomeColor);
+        }
     }
+    Ref<ImageTexture> texture = memnew(ImageTexture);
+    texture->create_from_image(image);
+    return texture;
+}
 
-    // Get biome weights from the biome color (now a Dictionary)
+Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture(int cx, int cy) {
+    Ref<Image> image = memnew(Image);
+    image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_R8);
+    for (int y = 0; y < m_chunkSize; y++) {
+        for (int x = 0; x < m_chunkSize; x++) {
+            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, get_biome_color(cx, cy));
+            image->set_pixel(x, y, Color(height, height, height));
+        }
+    }
+    Ref<ImageTexture> texture = memnew(ImageTexture);
+    texture->create_from_image(image);
+    return texture;
+}
+
+float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor) {
     Dictionary biome_weights_dict = get_biome_weights(biomeColor);
-
-    // Get blending noise
     float blendNoise = m_noiseWrapper.get_blending_noise(world_x, world_y);
-
-    float blendedHeight = 0.0f;
-    float totalWeight = 0.0f;
-
-    // Iterate over the Dictionary to blend biome heights
+    float blendedHeight = 0.0f, totalWeight = 0.0f;
     Array keys = biome_weights_dict.keys();
     for (int i = 0; i < keys.size(); i++) {
-        // Convert biome_name (Godot String) to std::string
         String biome_name = keys[i];
-        std::string biome_name_std = biome_name.utf8().get_data();
-        
         float weight = biome_weights_dict[biome_name];
-        
-
-        // Retrieve noise for each biome
-        float biomeNoise = m_noiseWrapper.get_noise_2d(biome_name_std, world_x, world_y);
-        float contribution = weight * biomeNoise * blendNoise;
-        blendedHeight += contribution;
+        float biomeNoise = m_noiseWrapper.get_noise_2d(biome_name.utf8().get_data(), world_x, world_y);
+        blendedHeight += weight * biomeNoise * blendNoise;
         totalWeight += weight;
     }
-
-    // Normalize the height if needed
-    if (totalWeight > 1e-6f) {
-        blendedHeight /= totalWeight;
-    } else {
-        blendedHeight = 0.0f;  // Default value in case of no weight
-    }
-
-    return blendedHeight;
+    return (totalWeight > 1e-6f) ? blendedHeight / totalWeight : 0.0f;
 }
-
-
-//
-// The generate_chunk method builds a full mesh for a chunk and converts it
-// into a Godot Dictionary containing two Arrays: "vertices" and "indices".
-//
-Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
-    godot::print_line("-C++ generating chunk at: ", cx, ", ", cy);
-    Mesh mesh;
-    int numVerticesPerSide = m_chunkSize + 1;
-    float gridSpacing = 1.0f; // Adjust scale if necessary.
-
-    // Compute world offsets.
-    float worldOffsetX = cx * m_chunkSize * gridSpacing;
-    float worldOffsetY = cy * m_chunkSize * gridSpacing;
-
-    // Create PackedFloat32Array for vertices.
-    PackedFloat32Array vertices;
-    int num_vertices = numVerticesPerSide * numVerticesPerSide * 3;
-    vertices.resize(num_vertices);
-
-    // Create PackedInt32Array for indices.
-    PackedInt32Array indices;
-
-    int vertexIndex = 0;
-    for (int j = 0; j < numVerticesPerSide; ++j) {
-        for (int i = 0; i < numVerticesPerSide; ++i) {
-            float world_x = worldOffsetX + i * gridSpacing;
-            float world_y = worldOffsetY + j * gridSpacing;
-
-            // Call the (placeholder) function to get the biome color.
-            Color biomeColor = get_biome_color(world_x, world_y);
-
-            // Compute the height.
-            float height = compute_height(world_x, world_y, biomeColor);
-
-            // Store vertex (x, y, z).
-            if (vertexIndex < num_vertices) {
-                vertices[vertexIndex++] = world_x;
-                vertices[vertexIndex++] = height;
-                vertices[vertexIndex++] = world_y;
-            } else {
-                godot::print_line("❌ ERROR: Vertex index out of bounds!");
-            }
-        }
-    }
-
-    // Create indices for quads (2 triangles per quad).
-    for (int j = 0; j < m_chunkSize; ++j) {
-        for (int i = 0; i < m_chunkSize; ++i) {
-            int topLeft = j * numVerticesPerSide + i;
-            int topRight = topLeft + 1;
-            int bottomLeft = (j + 1) * numVerticesPerSide + i;
-            int bottomRight = bottomLeft + 1;
-
-            // First triangle.
-            indices.push_back(topLeft);
-            indices.push_back(bottomLeft);
-            indices.push_back(topRight);
-
-            // Second triangle.
-            indices.push_back(topRight);
-            indices.push_back(bottomLeft);
-            indices.push_back(bottomRight);
-        }
-    }
-
-    // Convert the mesh to a Dictionary so it can be used in GDScript.
-    Dictionary mesh_dict;
-    Array vertices_array;
-    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-        vertices_array.append(mesh.vertices[i]);
-    }
-    Array indices_array;
-    for (size_t i = 0; i < mesh.indices.size(); ++i) {
-        indices_array.append(mesh.indices[i]);
-    }
-    mesh_dict["vertices"] = vertices_array;
-    mesh_dict["indices"] = indices_array;
-
-    return mesh_dict;
-}
-
 
 Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
-    if (!biome_mask_node) {
-        godot::print_line("Chunk_generator.cpp: BiomeMask is NULL, trying to re-fetch...");
-        biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
-
-        if (!biome_mask_node) {
-            godot::print_line("ChunkGenerator.cpp: BiomeMask still not found!");
-            return Color(1.0f, 1.0f, 1.0f, 1.0f); // Default color
-        }
-    }
-
+    if (!biome_mask_node) biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
     Variant result = biome_mask_node->call("get_biome_color", world_x, world_y);
-    if (result.get_type() != Variant::COLOR) {
-        return Color(1.0f, 1.0f, 1.0f, 1.0f);
-    }
-
-    return result;
+    return (result.get_type() == Variant::COLOR) ? (Color)result : Color(1.0f, 1.0f, 1.0f, 1.0f);
 }
-
-
 
 Dictionary ChunkGenerator::get_biome_weights(const Color &color) {
-    if (!biome_manager_node) {
-        godot::print_line("Chunk_generator.cpp: BiomeManager is NULL, trying to re-fetch...");
-        biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
-        if (!biome_manager_node) {
-            godot::print_line("Chunk_generator.cpp: BiomeManager still not found!");
-            return Dictionary();
-        }
-    }
-
+    if (!biome_manager_node) biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     Variant biome_weights_var = biome_manager_node->call("get_biome_weights", color);
-    if (biome_weights_var.get_type() != Variant::DICTIONARY) {
-        godot::print_line("Chunk_generator.cpp: Failed to get biome weights!");
-        return Dictionary();
-    }
-
-    // godot::print_line("Chunk_generator.cpp: Got biome weights: ", biome_weights_var);
-    return biome_weights_var;
+    return (biome_weights_var.get_type() == Variant::DICTIONARY) ? (Dictionary)biome_weights_var : Dictionary();
 }
 
-
-
 bool ChunkGenerator::is_boss_area(const Color &color) {
-    // Dummy implementation. Replace with actual logic.
-    if (color == Color(1,0,0,1)) {
-        return true;
+    return color == Color(1, 0, 0, 1);
+}
+
+Ref<Shader> ChunkGenerator::load_shader(const String &shader_path) {
+    // godot::print_line("chunk_generator: loading shader");
+    Ref<Shader> shader = ResourceLoader::get_singleton()->load(shader_path);
+    if (shader.is_null()) {
+        godot::print_line("❌ Failed to load shader: " + shader_path);
+    } else {
+        // godot::print_line("✅ Shader loaded successfully: " + shader_path);
     }
-    return false;
+    return shader;
 }
 
 } // namespace godot
