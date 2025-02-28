@@ -24,7 +24,6 @@ void ChunkGenerator::_init() {
 
 void ChunkGenerator::initialize(int chunk_size, Node *seed_node) {
     
-    // TODO ad accessing of singleton 
     m_chunkSize = chunk_size;
     m_seedNode = seed_node;
 
@@ -112,26 +111,34 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
     float worldOffsetX = cx * m_chunkSize * gridSpacing;
     float worldOffsetY = cy * m_chunkSize * gridSpacing;
 
-    // Reserve space for vertices.
-    mesh.vertices.resize(numVerticesPerSide * numVerticesPerSide * 3);
+    // Create PackedFloat32Array for vertices.
+    PackedFloat32Array vertices;
+    int num_vertices = numVerticesPerSide * numVerticesPerSide * 3;
+    vertices.resize(num_vertices);
+
+    // Create PackedInt32Array for indices.
+    PackedInt32Array indices;
 
     int vertexIndex = 0;
     for (int j = 0; j < numVerticesPerSide; ++j) {
         for (int i = 0; i < numVerticesPerSide; ++i) {
             float world_x = worldOffsetX + i * gridSpacing;
             float world_y = worldOffsetY + j * gridSpacing;
-            
+
             // Call the (placeholder) function to get the biome color.
             Color biomeColor = get_biome_color(world_x, world_y);
-            // maybe add std::unordered_map<std::string, float> biomeWeights = get_biome_weights(biomeColor);
-            
+
             // Compute the height.
             float height = compute_height(world_x, world_y, biomeColor);
-            
+
             // Store vertex (x, y, z).
-            mesh.vertices[vertexIndex++] = world_x;
-            mesh.vertices[vertexIndex++] = height;
-            mesh.vertices[vertexIndex++] = world_y;
+            if (vertexIndex < num_vertices) {
+                vertices[vertexIndex++] = world_x;
+                vertices[vertexIndex++] = height;
+                vertices[vertexIndex++] = world_y;
+            } else {
+                godot::print_line("❌ ERROR: Vertex index out of bounds!");
+            }
         }
     }
 
@@ -142,16 +149,16 @@ Dictionary ChunkGenerator::generate_chunk(int cx, int cy) {
             int topRight = topLeft + 1;
             int bottomLeft = (j + 1) * numVerticesPerSide + i;
             int bottomRight = bottomLeft + 1;
-            
+
             // First triangle.
-            mesh.indices.push_back(topLeft);
-            mesh.indices.push_back(bottomLeft);
-            mesh.indices.push_back(topRight);
-            
+            indices.push_back(topLeft);
+            indices.push_back(bottomLeft);
+            indices.push_back(topRight);
+
             // Second triangle.
-            mesh.indices.push_back(topRight);
-            mesh.indices.push_back(bottomLeft);
-            mesh.indices.push_back(bottomRight);
+            indices.push_back(topRight);
+            indices.push_back(bottomLeft);
+            indices.push_back(bottomRight);
         }
     }
 

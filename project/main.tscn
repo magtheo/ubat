@@ -16,6 +16,10 @@ script = ExtResource("1_c00og")
 [node name="SeedNode" type="Node3D" parent="World/TerrainManager"]
 script = ExtResource("2_hk8t7")
 
+[node name="CSGBox3D" type="CSGBox3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.204346, 0.185608, -6.68032)
+size = Vector3(6.19775, 1.37122, 1)
+
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")
 speed = 1

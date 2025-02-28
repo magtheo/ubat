@@ -4,21 +4,22 @@ var libchunk_generator  # reference to our C++ class
 @onready var player: CharacterBody3D = $"../../CameraController"
 
 # Adjust to your actual resource paths:
-const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
+'const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
 const PATH_SAND     = "res://Noise/SandNoise.tres"
 const PATH_ROCK     = "res://Noise/RockNoise.tres"
 const PATH_KELP     = "res://Noise/KelpNoise.tres"
 const PATH_LAVAROCK = "res://Noise/LavaRockNoise.tres"
 
 const PATH_SECTION  = "res://Noise/SectionNoise.tres"
-const PATH_BLEND    = "res://Noise/BlendNoise.tres"
+const PATH_BLEND    = "res://Noise/BlendNoise.tres"'
 
 # Basic settings
 const CHUNK_SIZE = 64
-#const SEED       = 12345
+var seedsRandomized = false
 
 # We'll track which chunks are loaded to avoid duplicates
 var loaded_chunks = {}
+var chunk_mutex := Mutex.new()
 
 # Store the player's previous chunk coordinates
 var prev_chunk_x = null
@@ -57,6 +58,7 @@ func _on_noises_randomized():
 
 	# Load initial chunks around (0,0)
 	var player_pos = Vector2(0, 0)
+	seedsRandomized = true
 	load_chunks_around_player(player_pos)
 
 func load_chunks_around_player(player_pos: Vector2):
@@ -93,12 +95,14 @@ func _thread_generate_chunk(cx: int, cy: int):
 	# Ensure the thread is cleaned up after use
 	call_deferred("on_chunk_generated", cx, cy, chunk_data)
 
-	# Clean up thread (ensure it does not get garbage-collected improperly)
-	var key = Vector2i(cx, cy)
-	if key in loaded_chunks:
-		var thread = loaded_chunks[key]
+	# Use mutex to safely update dictionary
+	chunk_mutex.lock()
+	call_deferred("on_chunk_generated", cx, cy, chunk_data)
+	if Vector2i(cx, cy) in loaded_chunks:
+		var thread = loaded_chunks[Vector2i(cx, cy)]
 		thread.wait_to_finish()
-		loaded_chunks.erase(key)
+		loaded_chunks.erase(Vector2i(cx, cy))
+	chunk_mutex.unlock()
 
 
 func on_chunk_generated(cx: int, cy: int, chunk_data):
@@ -114,7 +118,7 @@ func on_chunk_generated(cx: int, cy: int, chunk_data):
 		return
 
 	loaded_chunks[Vector2i(cx, cy)] = true
-	print("✅ Chunk (", cx, ",", cy, ") generated. First cell:", chunk_data[0])
+	print("TerrainManager: ✅ Chunk (", cx, ",", cy, ") generated.")
 
 	# Optionally spawn objects
 	#spawn_biome_objects(cx, cy, chunk_data)
@@ -144,7 +148,7 @@ func _process(_delta: float):
 	# to load new chunks.	
 	#var player = get_node("Player")
 	#print("player in TerrainManager: ", player)
-	if player:
+	if player and seedsRandomized:
 		var player_pos_2d = Vector2(player.position.x, player.position.z)
 		
 		# Calculate the player's current chunk coordinates
