@@ -31,19 +31,20 @@ func _ready():
 	libchunk_generator = ChunkGenerator.new() #TODO; after moifying the chunk_generator.cpp its not found here
 	print("libchunk_generator: ", libchunk_generator)
 
-	var seed_node = get_node("SeedNode")
-	seed_node.connect("noises_randomized", _on_noises_randomized)
+	var seed_node = load("res://project/terrain/SeedNode.gd").new()
+
+	seed_node.noises_randomized.connect(_on_noises_randomized)
+	seed_node.randomize_noises()
 
 	# Initialize with .tres paths + chunk size + seed
 	libchunk_generator.initialize(
 		CHUNK_SIZE,
-		seed_node
 	)
 	#print("ChunkGenerator initialized with:", PATH_CORRAL, PATH_SAND, PATH_ROCK, PATH_KELP, PATH_LAVAROCK, PATH_SECTION, PATH_BLEND, CHUNK_SIZE, seed_node)
 
 	# Load initial chunks around (0,0)
 	var player_pos = Vector2(0, 0)
-	load_chunks_around_player(player_pos)
+	# load_chunks_around_player(player_pos)
 
 func _on_noises_randomized():
 	print("TerrainManager.gd: Noises randomized, refreshing chunks")
@@ -146,7 +147,7 @@ func _process(_delta: float):
 	# to load new chunks.	
 	#var player = get_node("Player")
 	#print("player in TerrainManager: ", player)
-	if player:
+	if player and seedsRandomized: # and seedRandomized
 		var player_pos_2d = Vector2(player.position.x, player.position.z)
 		
 		# Calculate the player's current chunk coordinates

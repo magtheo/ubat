@@ -1,3 +1,4 @@
-[gd_resource type="FastNoiseLite" format=3 uid="uid://dfmtgc8fmm48d"]
+[gd_resource type="FastNoiseLite" format=3]
 
 [resource]
+seed = -112935158
