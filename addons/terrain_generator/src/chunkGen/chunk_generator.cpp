@@ -21,9 +21,8 @@ ChunkGenerator::~ChunkGenerator() {}
 
 void ChunkGenerator::_init() {}
 
-void ChunkGenerator::initialize(int chunk_size, Node *seed_node) {
+void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;
-    m_seedNode = seed_node;
 
     biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     if (!biome_manager_node) {
@@ -38,7 +37,7 @@ void ChunkGenerator::initialize(int chunk_size, Node *seed_node) {
 
 void ChunkGenerator::_bind_methods() {
     // Register public functions so they can be called from GDScript
-    ClassDB::bind_method(D_METHOD("initialize", "chunk_size", "seedNode"), &ChunkGenerator::initialize);
+    ClassDB::bind_method(D_METHOD("initialize", "chunk_size"), &ChunkGenerator::initialize);
     ClassDB::bind_method(D_METHOD("generate_chunk", "cx", "cy"), &ChunkGenerator::generate_chunk);
 
     // If you want to expose more functions, add them here:

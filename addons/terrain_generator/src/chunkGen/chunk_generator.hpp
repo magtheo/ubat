@@ -17,11 +17,8 @@
 
 namespace godot {
 
-/// Internal mesh structure used for generating the mesh.
-
-
 class ChunkGenerator : public Node {
-    GDCLASS(ChunkGenerator, Node)      // Using Object as the base
+    GDCLASS(ChunkGenerator, Node)
 
 public:
     ChunkGenerator();
@@ -34,12 +31,11 @@ public:
     static void _bind_methods();
 
     // Exposed methods.
-    void initialize(int chunk_size, Node *seedNode);
+    void initialize(int chunk_size);
     MeshInstance3D *generate_chunk(int cx, int cy);
 
 private:
     int m_chunkSize = 0;   // Number of quads per side (grid resolution)
-    Node *m_seedNode;
 
     Node *biome_manager_node = nullptr;
     Node *biome_mask_node = nullptr;
