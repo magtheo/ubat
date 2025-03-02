@@ -43,7 +43,7 @@ func _input(event):
 			target_pitch = clamp(target_pitch, -deg_to_rad(PI/2), 0)
 		rotator.rotate_x(deg_to_rad(target_pitch))
 
-func _physics_process(delta):
+func _physics_process(_delta):
 	# Movement
 	if Input.is_action_pressed("move_forward"):
 		translate(DOWNWARD * SPEED)

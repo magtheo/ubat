@@ -7,7 +7,7 @@ var sensitivity = 2
 @onready var rotator = $rotator
 @onready var camera_3d = $rotator/Camera3D
 
-func _physics_process(delta):
+func _physics_process(_delta):
 	var velocity = Vector3()
 	
 	if Input.is_action_pressed("move_forward"):
