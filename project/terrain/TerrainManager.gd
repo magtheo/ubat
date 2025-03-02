@@ -3,16 +3,6 @@ extends Node
 var libchunk_generator  # reference to our C++ class
 @onready var player: CharacterBody3D = $"../../CameraController"
 
-# Adjust to your actual resource paths:
-'const PATH_CORRAL   = "res://Noise/CorralNoise.tres"
-const PATH_SAND     = "res://Noise/SandNoise.tres"
-const PATH_ROCK     = "res://Noise/RockNoise.tres"
-const PATH_KELP     = "res://Noise/KelpNoise.tres"
-const PATH_LAVAROCK = "res://Noise/LavaRockNoise.tres"
-
-const PATH_SECTION  = "res://Noise/SectionNoise.tres"
-const PATH_BLEND    = "res://Noise/BlendNoise.tres"'
-
 # Basic settings
 const CHUNK_SIZE = 64
 var seedsRandomized = false
@@ -25,6 +15,11 @@ var chunk_mutex := Mutex.new()
 var prev_chunk_x = null
 var prev_chunk_y = null
 
+var chunk_queue = []
+var max_chunks_per_frame = 2
+var is_processing_queue = false
+
+
 # TODO: add logic for removing chunks
 # TODO: LOD (Level of Detail): Add a LOD system that renders distant chunks with simpler meshes and less detail, gradually increasing detail as the player approaches.
 
@@ -36,15 +31,16 @@ func _ready():
 	else:
 		push_error("Failed to create ChunkGenerator!")
 
-	var seed_node = load("res://project/terrain/SeedNode.gd").new()
-
-	seed_node.noises_randomized.connect(_on_noises_randomized)
-	seed_node.randomize_noises()
-
 	# Initialize with .tres paths + chunk size + seed
 	libchunk_generator.initialize(
 		CHUNK_SIZE,
 	)
+	
+
+	var seed_node = load("res://project/terrain/SeedNode.gd").new()
+
+	seed_node.noises_randomized.connect(_on_noises_randomized)
+	seed_node.randomize_noises()
 
 	# Load initial chunks around (0,0)
 	var player_pos = Vector2(0, 0)
@@ -67,27 +63,38 @@ func _on_noises_randomized():
 	load_chunks_around_player(player_pos)
 
 func load_chunks_around_player(player_pos: Vector2):
-	# TODO: should only load chunks when the player moves to new chunks
-	# example: load a 3x3 area around the chunk containing player
-	var chunk_x = float(player_pos.x) / float(CHUNK_SIZE)
-	var chunk_y = float(player_pos.y) / float(CHUNK_SIZE)
-
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
+	var chunk_x = int(player_pos.x / CHUNK_SIZE)
+	var chunk_y = int(player_pos.y / CHUNK_SIZE)
+	
+	var view_distance = 3
+	var chunks_to_load = []
+	
+	# Calculate distances and prepare prioritized loading
+	for dy in range(-view_distance, view_distance + 1):
+		for dx in range(-view_distance, view_distance + 1):
 			var cx = chunk_x + dx
 			var cy = chunk_y + dy
-			request_chunk(cx, cy)
+			
+			# Skip if already loaded
+			if Vector2i(cx, cy) in loaded_chunks:
+				continue
+				
+			# Calculate distance for priority
+			var distance = sqrt(dx*dx + dy*dy)
+			if distance <= view_distance:
+				chunks_to_load.append({
+					"cx": cx,
+					"cy": cy,
+					"distance": distance
+				})
+	
+	# Sort by distance (closest first)
+	chunks_to_load.sort_custom(func(a, b): return a.distance < b.distance)
+	
+	# Queue chunks for loading (could be distributed across frames)
+	for chunk_data in chunks_to_load:
+		request_chunk(chunk_data.cx, chunk_data.cy)
 
-# Pre-generate biome data on the main thread
-func generate_biome_data(cx: int, cy: int, chunk_size: int) -> Dictionary:
-	var biome_data = {}
-	for y in range(chunk_size):
-		for x in range(chunk_size):
-			var world_x = cx * chunk_size + x
-			var world_y = cy * chunk_size + y
-			var key = Vector2i(x, y)
-			biome_data[key] = BiomeMask.get_biome_color(world_x, world_y)
-	return biome_data
 
 func request_chunk(cx: int, cy: int):
 	if Vector2i(cx, cy) in loaded_chunks:
@@ -95,7 +102,7 @@ func request_chunk(cx: int, cy: int):
 	
 	# Use the C++ implementation to generate biome data
 	var biome_data = libchunk_generator.generate_biome_data(cx, cy, CHUNK_SIZE)
-	
+	print("Terrainmanager.gd: biome_data: ", typeof(biome_data))
 	var thread = Thread.new()
 	var result = thread.start(_thread_generate_chunk.bind(cx, cy, thread, biome_data))
 
