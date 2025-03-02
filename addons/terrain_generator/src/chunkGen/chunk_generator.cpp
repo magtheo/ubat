@@ -23,6 +23,7 @@ ChunkGenerator::~ChunkGenerator() {}
 void ChunkGenerator::_init() {}
 
 // TODO: implement Memory Pooling: The C++ code frequently uses memnew() which could be replaced with memory pool allocations.
+// TODO: implement LOD with propper vertex stitching
 
 void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;
@@ -54,11 +55,17 @@ void ChunkGenerator::initialize(int chunk_size) {
     // ─────────────────────────────────────────────────────────────────────
     // 2. Load all biome textures once
     // ─────────────────────────────────────────────────────────────────────
-    corral_tex   = ResourceLoader::get_singleton()->load("res://project/terrain/textures/corral.png");
-    sand_tex     = ResourceLoader::get_singleton()->load("res://project/terrain/textures/sand.png");
-    rock_tex     = ResourceLoader::get_singleton()->load("res://project/terrain/textures/dark.png");
-    kelp_tex     = ResourceLoader::get_singleton()->load("res://project/terrain/textures/green.png");
-    lavarock_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/orange.png");
+    corral_tex   = ResourceLoader::get_singleton()->load("res://textures/corral.png");
+    sand_tex     = ResourceLoader::get_singleton()->load("res://textures/sand.png");
+    rock_tex     = ResourceLoader::get_singleton()->load("res://textures/dark.png");
+    kelp_tex     = ResourceLoader::get_singleton()->load("res://textures/green.png");
+    lavarock_tex = ResourceLoader::get_singleton()->load("res://textures/orange.png");
+
+    if (corral_tex.is_null() or sand_tex.is_null() or rock_tex.is_null() or kelp_tex.is_null() or lavarock_tex.is_null()) {
+        godot::print_line("❌ Failed to load one or more texture resources.");
+    } else {
+        godot::print_line("✅ texture resources loaded successfully.");
+    }
 
     // ─────────────────────────────────────────────────────────────────────
     // 3. Load the terrain shader only once and store it
@@ -97,7 +104,7 @@ void ChunkGenerator::_bind_methods() {
 
     // If you want to expose more functions, add them here:
     ClassDB::bind_method(D_METHOD("is_boss_area", "color"), &ChunkGenerator::is_boss_area);
-    ClassDB::bind_method(D_METHOD("load_shader", "shader_path"), &ChunkGenerator::load_shader);
+    // ClassDB::bind_method(D_METHOD("load_shader", "shader_path"), &ChunkGenerator::load_shader);
 }
 
 MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, const Dictionary &biome_data) {
@@ -118,7 +125,7 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
     PackedInt32Array indices;
 
     // Basic LOD logic
-    int resolution = 32;
+    int resolution = m_chunkSize;
     float distance = sqrt(float(cx*cx + cy*cy));
     if (distance > 3) resolution = 16;
     if (distance > 6) resolution = 8;
@@ -137,18 +144,12 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
             float worldZ = cy * m_chunkSize + zpos;
 
             // Sample biome color
-            Color biomeColor;
-            if (x < m_chunkSize && z < m_chunkSize) {
-                biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
-            } else {
-                // Fallback for edges
-                biomeColor = get_biome_color(worldX, worldZ);
-            }
+            Color biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
 
             float height = compute_height(worldX, worldZ, biomeColor, biome_data);
 
             // Push vertex
-            vertices.push_back(Vector3(xpos, height * 10.0f, zpos));
+            vertices.push_back(Vector3(xpos, height * m_heightMultiplier, zpos));
             // Push UV
             uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
         }
@@ -446,15 +447,15 @@ bool ChunkGenerator::is_boss_area(const Color &color) {
     return color == Color(1, 0, 0, 1);
 }
 
-Ref<Shader> ChunkGenerator::load_shader(const String &shader_path) {
-    // godot::print_line("chunk_generator: loading shader");
-    Ref<Shader> shader = ResourceLoader::get_singleton()->load(shader_path);
-    if (shader.is_null()) {
-        godot::print_line("❌ Failed to load shader: " + shader_path);
-    } else {
-        // godot::print_line("✅ Shader loaded successfully: " + shader_path);
-    }
-    return shader;
-}
+// Ref<Shader> ChunkGenerator::load_shader(const String &shader_path) {
+//     // godot::print_line("chunk_generator: loading shader");
+//     Ref<Shader> shader = ResourceLoader::get_singleton()->load(shader_path);
+//     if (shader.is_null()) {
+//         godot::print_line("❌ Failed to load shader: " + shader_path);
+//     } else {
+//         godot::print_line("✅ Shader loaded successfully: " + shader_path);
+//     }
+//     return shader;
+// }
 
 } // namespace godot

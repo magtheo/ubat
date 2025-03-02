@@ -62,6 +62,7 @@ private:
     HashMap<String, Ref<Resource>> m_biomeNoises;
 
     int m_chunkSize = 0;   // Number of quads per side (grid resolution)
+    float m_heightMultiplier = 20.0f;  // default
 
     Node *biome_manager_node = nullptr;
     Node *biome_mask_node = nullptr;
@@ -80,7 +81,7 @@ private:
     
     int find_chunk_size_from_data(const Dictionary &biome_data);
 
-    Ref<Shader> load_shader(const String &shader_path);
+    // Ref<Shader> load_shader(const String &shader_path);
 
     // --- Placeholders for integration with GDScript logic ---
     // In your project these functions are implemented in GDScript.

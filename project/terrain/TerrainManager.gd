@@ -2,6 +2,7 @@ extends Node
 
 var libchunk_generator  # reference to our C++ class
 @onready var player: CharacterBody3D = $"../../CameraController"
+@onready var thread_pool = $ThreadPool  # The node we wrote above
 
 # Basic settings
 const CHUNK_SIZE = 64
@@ -15,11 +16,6 @@ var chunk_mutex := Mutex.new()
 var prev_chunk_x = null
 var prev_chunk_y = null
 
-var chunk_queue = []
-var max_chunks_per_frame = 2
-var is_processing_queue = false
-
-
 # TODO: add logic for removing chunks
 # TODO: LOD (Level of Detail): Add a LOD system that renders distant chunks with simpler meshes and less detail, gradually increasing detail as the player approaches.
 
@@ -30,11 +26,15 @@ func _ready():
 		print("ChunkGenerator created successfully: ", libchunk_generator)
 	else:
 		push_error("Failed to create ChunkGenerator!")
+		
+	if !thread_pool:
+		push_error("Threadpool not found")
 
 	# Initialize with .tres paths + chunk size + seed
-	libchunk_generator.initialize(
-		CHUNK_SIZE,
-	)
+	libchunk_generator.initialize(CHUNK_SIZE)
+	
+	# Assign it to the thread pool so the pool can call it
+	thread_pool.libchunk_generator = libchunk_generator
 	
 
 	var seed_node = load("res://project/terrain/SeedNode.gd").new()
@@ -43,7 +43,7 @@ func _ready():
 	seed_node.randomize_noises()
 
 	# Load initial chunks around (0,0)
-	var player_pos = Vector2(0, 0)
+	#var player_pos = Vector2(0, 0)
 	# load_chunks_around_player(player_pos)
 
 func _on_noises_randomized():
@@ -102,16 +102,13 @@ func request_chunk(cx: int, cy: int):
 	
 	# Use the C++ implementation to generate biome data
 	var biome_data = libchunk_generator.generate_biome_data(cx, cy, CHUNK_SIZE)
-	print("Terrainmanager.gd: biome_data: ", typeof(biome_data))
-	var thread = Thread.new()
-	var result = thread.start(_thread_generate_chunk.bind(cx, cy, thread, biome_data))
+	# print("Terrainmanager.gd: biome_data: ", typeof(biome_data))
 
-	if result != OK:
-		print("⚠️ Failed to start chunk generation thread.")
-		return
+	# Enqueue the chunk task in the pool
+	thread_pool.enqueue_chunk(cx, cy, biome_data)
 
-	# Store the thread reference so we can clean it up later
-	loaded_chunks[Vector2i(cx, cy)] = thread
+	# Mark in loaded_chunks so we don't request it again
+	loaded_chunks[Vector2i(cx, cy)] = false
 
 
 func _thread_generate_chunk(cx: int, cy: int, thread: Thread, biome_data: Dictionary):
