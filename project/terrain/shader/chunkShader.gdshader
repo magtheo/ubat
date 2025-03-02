@@ -1,55 +1,97 @@
 shader_type spatial;
 
-// Biome Textures
-uniform sampler2D corral_texture;
-uniform sampler2D sand_texture;
-uniform sampler2D rock_texture;
-uniform sampler2D kelp_texture;
-uniform sampler2D lavaRock_texture;
+// Input textures from C++ code
+uniform sampler2D biome_blend_map : source_color;
+uniform sampler2D height_map : hint_default_white;
 
-// Biome Blend Map (passed from C++)
-uniform sampler2D biome_blend_map; // Stores biome weights in R, G, B, A
+// Biome textures - add your own textures here
+uniform sampler2D corral_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D sand_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D rock_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D kelp_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D lavarock_texture : source_color, filter_linear_mipmap, repeat_enable;
 
-// Heightmap (passed from C++)
-uniform sampler2D height_map;
-uniform float height_scale = 10.0;
+// Scaling for the textures
+uniform float texture_scale = 0.1;
+
+// Height parameters
+uniform float height_scale = 1.0;
+uniform float height_offset = 0.0;
+
+// Blend parameters
+uniform float blend_sharpness = 5.0;
+
+// Debug mode - set to true if textures aren't loaded
+uniform bool debug_mode = false;
 
 void vertex() {
-    vec2 uv = UV;
-    
-    // Sample height from heightmap (R channel)
-    float height = texture(height_map, uv).r * height_scale;
-    VERTEX.y += height; // Apply height displacement
+	// No height displacement needed in vertex shader since we're already building
+	// the mesh with height displacement in C++
+
+	// Pass UV to fragment shader
+	UV = UV * texture_scale;
 }
 
 void fragment() {
-    vec2 uv = UV;
+	// Sample the biome blend map
+	vec4 biome_color = texture(biome_blend_map, UV / texture_scale);
 
-    // Sample biome blend map
-    vec4 biome_weights = texture(biome_blend_map, uv);
+	// DEBUG MODE - just show the biome blend map colors
+	if (debug_mode) {
+		ALBEDO = biome_color.rgb;
+		ROUGHNESS = 0.7;
+		METALLIC = 0.0;
+		return;
+	}
 
-    // Section 1: Corral & Sand (Red Channel)
-    vec4 corral_color = texture(corral_texture, uv);
-    vec4 sand_color = texture(sand_texture, uv);
-    vec4 section1 = mix(corral_color, sand_color, biome_weights.r);
+	// Sample all textures at the current UV
+	vec4 corral_color = texture(corral_texture, UV);
+	vec4 sand_color = texture(sand_texture, UV);
+	vec4 rock_color = texture(rock_texture, UV);
+	vec4 kelp_color = texture(kelp_texture, UV);
+	vec4 lavarock_color = texture(lavarock_texture, UV);
 
-    // Section 2: Rock & Kelp (Green Channel)
-    vec4 rock_color = texture(rock_texture, uv);
-    vec4 kelp_color = texture(kelp_texture, uv);
-    vec4 section2 = mix(rock_color, kelp_color, biome_weights.g);
+	// Initialize final color
+	vec4 final_color = vec4(0.0);
 
-    // Section 3: Rock & Lavarock (Blue Channel)
-    vec4 lavaRock_color = texture(lavaRock_texture, uv);
-    vec4 section3 = mix(rock_color, lavaRock_color, biome_weights.b);
+	// Color matching for biomes using the red, green, blue channels
+	// These colors should match your BiomeManager's color definitions
+	float corral_weight = smoothstep(0.0, 1.0/blend_sharpness, 1.0 - distance(biome_color.rgb, vec3(0.9, 0.6, 0.6)));
+	float sand_weight = smoothstep(0.0, 1.0/blend_sharpness, 1.0 - distance(biome_color.rgb, vec3(0.9, 0.9, 0.6)));
+	float rock_weight = smoothstep(0.0, 1.0/blend_sharpness, 1.0 - distance(biome_color.rgb, vec3(0.6, 0.6, 0.6)));
+	float kelp_weight = smoothstep(0.0, 1.0/blend_sharpness, 1.0 - distance(biome_color.rgb, vec3(0.3, 0.7, 0.3)));
+	float lavarock_weight = smoothstep(0.0, 1.0/blend_sharpness, 1.0 - distance(biome_color.rgb, vec3(0.7, 0.3, 0.3)));
 
-    // Boss Area (White channel - Optional)
-    vec4 boss_area = vec4(1.0, 0.0, 0.0, 1.0); // Red visual cue for debug
-    vec4 final_color = mix(mix(section1, section2, biome_weights.g), section3, biome_weights.b);
+	// Calculate sum of weights
+	float total_weight = corral_weight + sand_weight + rock_weight + kelp_weight + lavarock_weight;
 
-    // If Boss Area is detected, override
-    if (biome_weights.a > 0.8) {
-        final_color = boss_area;
-    }
+	// If no biome matches (to avoid division by zero), use a fallback color
+	if (total_weight < 0.001) {
+		final_color = vec4(0.5, 0.5, 0.5, 1.0);
+	} else {
+		// Normalize weights
+		corral_weight /= total_weight;
+		sand_weight /= total_weight;
+		rock_weight /= total_weight;
+		kelp_weight /= total_weight;
+		lavarock_weight /= total_weight;
 
-    ALBEDO = final_color.rgb;
+		// Blend textures based on weights
+		final_color =
+			corral_color * corral_weight +
+			sand_color * sand_weight +
+			rock_color * rock_weight +
+			kelp_color * kelp_weight +
+			lavarock_color * lavarock_weight;
+	}
+
+	// Apply final color to the material
+	ALBEDO = final_color.rgb;
+
+	// Adjust roughness based on biome
+	// Rock and lava rock are less smooth than sand and kelp
+	ROUGHNESS = mix(0.9, 0.3, sand_weight + kelp_weight);
+
+	// Adjust metallic property - lava rock can be slightly metallic
+	METALLIC = lavarock_weight * 0.3;
 }
