@@ -23,10 +23,14 @@ func _ready():
 func load_mask(path: String) -> bool:
 	var img_texture = load(path)
 	print("image texture: ", img_texture)
+
+
 	if img_texture:
 		biome_image = img_texture.get_image()
 		mask_width = biome_image.get_width()
 		mask_height = biome_image.get_height()
+		print("Biome image dimensions: ", mask_width, "x", mask_height)
+		print("Biome image format: ", biome_image.get_format())
 		return true
 	else:
 		push_error("Failed to load biome mask at: " + path)
