@@ -28,37 +28,55 @@ void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;
     godot::print_line("ChunkGenerator initialized with chunk size: ", m_chunkSize);
 
-    // Load noise resources
+    // ─────────────────────────────────────────────────────────────────────
+    // 1. Load all noise resources once
+    // ─────────────────────────────────────────────────────────────────────
     m_noiseCorral = ResourceLoader::get_singleton()->load("res://project/terrain/noise/coralNoise.tres");
-    m_noiseSand = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sandNoise.tres");
-    m_noiseRock = ResourceLoader::get_singleton()->load("res://project/terrain/noise/rockNoise.tres");
-    m_noiseKelp = ResourceLoader::get_singleton()->load("res://project/terrain/noise/kelpNoise.tres");
+    m_noiseSand   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sandNoise.tres");
+    m_noiseRock   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/rockNoise.tres");
+    m_noiseKelp   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/kelpNoise.tres");
     m_noiseLavarock = ResourceLoader::get_singleton()->load("res://project/terrain/noise/lavaRockNoise.tres");
     m_noiseSection = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sectionNoise.tres");
-    m_noiseBlend = ResourceLoader::get_singleton()->load("res://project/terrain/noise/blendNoise.tres");
-    
-    // Map biome names to noise resources for quick lookup
-    m_biomeNoises["Corral"] = m_noiseCorral;
-    m_biomeNoises["Sand"] = m_noiseSand;
-    m_biomeNoises["Rock"] = m_noiseRock;
-    m_biomeNoises["Kelp"] = m_noiseKelp;
+    m_noiseBlend    = ResourceLoader::get_singleton()->load("res://project/terrain/noise/blendNoise.tres");
+
+    m_biomeNoises["Corral"]   = m_noiseCorral;
+    m_biomeNoises["Sand"]     = m_noiseSand;
+    m_biomeNoises["Rock"]     = m_noiseRock;
+    m_biomeNoises["Kelp"]     = m_noiseKelp;
     m_biomeNoises["Lavarock"] = m_noiseLavarock;
-    
-    // Check for loading errors
+
     if (m_noiseBlend.is_null()) {
         godot::print_line("❌ Failed to load one or more noise resources.");
     } else {
         godot::print_line("✅ Noise resources loaded successfully.");
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // 2. Load all biome textures once
+    // ─────────────────────────────────────────────────────────────────────
+    corral_tex   = ResourceLoader::get_singleton()->load("res://project/terrain/textures/corral.png");
+    sand_tex     = ResourceLoader::get_singleton()->load("res://project/terrain/textures/sand.png");
+    rock_tex     = ResourceLoader::get_singleton()->load("res://project/terrain/textures/dark.png");
+    kelp_tex     = ResourceLoader::get_singleton()->load("res://project/terrain/textures/green.png");
+    lavarock_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/orange.png");
 
-    // Load biome textures
-    Ref<Texture2D> corral_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/corral.png");
-    Ref<Texture2D> sand_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/sand.png");
-    Ref<Texture2D> rock_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/dark.png");
-    Ref<Texture2D> kelp_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/green.png");
-    Ref<Texture2D> lavarock_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/orange.png");
+    // ─────────────────────────────────────────────────────────────────────
+    // 3. Load the terrain shader only once and store it
+    // ─────────────────────────────────────────────────────────────────────
+    m_terrainShader = ResourceLoader::get_singleton()->load("res://project/terrain/shader/chunkShader.gdshader");
+    if (m_terrainShader.is_valid()) {
+        godot::print_line("✅ Terrain shader loaded once at initialization.");
+    } else {
+        godot::print_line("❌ Failed to load terrain shader. Check your path.");
+    }
 
+    // You can also create and keep a single shared material if you want
+    // but typically you'll need to set different parameters per-chunk.
+    // For a shared base, do something like:
+    // m_sharedMaterial = memnew(ShaderMaterial);
+    // if (m_terrainShader.is_valid()) {
+    //     m_sharedMaterial->set_shader(m_terrainShader);
+    // }
 
     biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     if (!biome_manager_node) {
@@ -84,131 +102,121 @@ void ChunkGenerator::_bind_methods() {
 
 MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, const Dictionary &biome_data) {
     godot::print_line("C++ Chunk_generator: Generating chunk with biome data at: ", cx, ", ", cy);
-     
-    // Create mesh instance
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 1. Create the new MeshInstance3D and Mesh
+    // ─────────────────────────────────────────────────────────────────────
     MeshInstance3D *mesh_instance = memnew(MeshInstance3D);
     Ref<ArrayMesh> mesh = memnew(ArrayMesh);
-    
-    // Generate a basic plane mesh for the terrain
+
+    // Create arrays for your vertex data
     Array arrays;
     arrays.resize(Mesh::ARRAY_MAX);
-    
-    // Create vertices (a grid of points)
+
     PackedVector3Array vertices;
     PackedVector2Array uvs;
     PackedInt32Array indices;
-    
-    // Use a lower resolution for performance - adjust as needed
-    // int resolution = 32; // Lower than m_chunkSize for better performance
 
-    int resolution = 32; // Base resolution
-
-    // Reduce detail for distant chunks
-    float distance = sqrt((cx*cx) + (cy*cy)); // Distance from origin
+    // Basic LOD logic
+    int resolution = 32;
+    float distance = sqrt(float(cx*cx + cy*cy));
     if (distance > 3) resolution = 16;
     if (distance > 6) resolution = 8;
 
     float step = float(m_chunkSize) / float(resolution);
-    
-    // Generate a grid of vertices
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 2. Generate terrain geometry (vertices/indices)
+    // ─────────────────────────────────────────────────────────────────────
     for (int z = 0; z <= resolution; z++) {
         for (int x = 0; x <= resolution; x++) {
-            // Calculate position in chunk space
             float xpos = x * step;
             float zpos = z * step;
-            
-            // Sample height at this position
+
             float worldX = cx * m_chunkSize + xpos;
             float worldZ = cy * m_chunkSize + zpos;
-            
-            // Get biome color for this position
+
+            // Sample biome color
             Color biomeColor;
             if (x < m_chunkSize && z < m_chunkSize) {
                 biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
             } else {
+                // Fallback for edges
                 biomeColor = get_biome_color(worldX, worldZ);
             }
-            
-            // Compute height using biome data
-            float height = compute_height(cx * m_chunkSize + xpos, cy * m_chunkSize + zpos, biomeColor, biome_data);
 
-            // Add vertex with height displacement
-            vertices.push_back(Vector3(xpos, height * 10.0f, zpos)); // Multiply height for visibility
-            
-            // Add UV coordinate (for texturing)
+            float height = compute_height(worldX, worldZ, biomeColor, biome_data);
+
+            // Push vertex
+            vertices.push_back(Vector3(xpos, height * 10.0f, zpos));
+            // Push UV
             uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
         }
     }
-    
-    // Generate triangle indices
+
+    // Indices
     for (int z = 0; z < resolution; z++) {
         for (int x = 0; x < resolution; x++) {
             int i = z * (resolution + 1) + x;
-            
-            // First triangle of the quad
             indices.push_back(i);
             indices.push_back(i + 1);
             indices.push_back(i + (resolution + 1));
-            
-            // Second triangle of the quad
+
             indices.push_back(i + 1);
             indices.push_back(i + (resolution + 1) + 1);
             indices.push_back(i + (resolution + 1));
         }
     }
-    
-    // Assign arrays to mesh
+
     arrays[Mesh::ARRAY_VERTEX] = vertices;
     arrays[Mesh::ARRAY_TEX_UV] = uvs;
-    arrays[Mesh::ARRAY_INDEX] = indices;
-    
-    // Create the mesh
+    arrays[Mesh::ARRAY_INDEX]  = indices;
+
     mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-    
-    // Assign mesh to mesh instance
     mesh_instance->set_mesh(mesh);
-    
-    // Position the chunk in world space
     mesh_instance->set_position(Vector3(cx * m_chunkSize, 0.0f, cy * m_chunkSize));
-    
-    // Create material
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 3. Create a ShaderMaterial using the pre-loaded terrain shader
+    // ─────────────────────────────────────────────────────────────────────
     Ref<ShaderMaterial> material = memnew(ShaderMaterial);
-    Ref<Shader> shader = load_shader("res://project/terrain/shader/chunkShader.gdshader");
-    if (shader.is_valid()) {
-        material->set_shader(shader);
-        godot::print_line("C++ Chunk_generator: shader loaded successfully");
+    if (m_terrainShader.is_valid()) {
+        material->set_shader(m_terrainShader);
+        godot::print_line("C++ Chunk_generator: Shader assigned from cached reference.");
     } else {
-        godot::print_line("C++ Chunk_generator: Failed to load shader, shader:", shader, "| material:", material);
+        godot::print_line("C++ Chunk_generator: m_terrainShader is null; check initialization.");
     }
-    
-    // Generate textures using pre-generated biome data
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4. Generate / assign biome blend & height textures
+    // ─────────────────────────────────────────────────────────────────────
     Ref<ImageTexture> biome_blend_texture = generate_biome_blend_texture_with_data(cx, cy, biome_data);
-    Ref<ImageTexture> height_map_texture = generate_heightmap_texture_with_data(cx, cy, biome_data);
-    
-    // Set texture debugging params
-    material->set_shader_parameter("height_scale", 10.0f);  // Increase height scaling
-    material->set_shader_parameter("texture_scale", 0.1f);  // Set texture scale
-    material->set_shader_parameter("blend_sharpness", 5.0f); // Set blend sharpness
-    
-    material->set_shader_parameter("corral_texture", corral_tex);
-    material->set_shader_parameter("sand_texture", sand_tex);
-    material->set_shader_parameter("rock_texture", rock_tex);
-    material->set_shader_parameter("kelp_texture", kelp_tex);
+    Ref<ImageTexture> height_map_texture  = generate_heightmap_texture_with_data(cx, cy, biome_data);
+
+    // Example shader parameters
+    material->set_shader_parameter("height_scale",     10.0f);
+    material->set_shader_parameter("texture_scale",    0.1f);
+    material->set_shader_parameter("blend_sharpness",  5.0f);
+
+    // Assign the textures you loaded once in initialize()
+    material->set_shader_parameter("corral_texture",   corral_tex);
+    material->set_shader_parameter("sand_texture",     sand_tex);
+    material->set_shader_parameter("rock_texture",     rock_tex);
+    material->set_shader_parameter("kelp_texture",     kelp_tex);
     material->set_shader_parameter("lavarock_texture", lavarock_tex);
+
     material->set_shader_parameter("debug_mode", false);
 
-    // Check if textures were created successfully
     if (biome_blend_texture.is_valid() && height_map_texture.is_valid()) {
         material->set_shader_parameter("biome_blend_map", biome_blend_texture);
-        material->set_shader_parameter("height_map", height_map_texture);
+        material->set_shader_parameter("height_map",       height_map_texture);
         mesh_instance->set_material_override(material);
     } else {
         godot::print_line("❌ Failed to create textures for chunk: ", cx, ", ", cy);
     }
-    
+
     return mesh_instance;
 }
-
 
 Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
     Dictionary biome_data;

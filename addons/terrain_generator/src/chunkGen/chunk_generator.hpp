@@ -66,6 +66,8 @@ private:
     Node *biome_manager_node = nullptr;
     Node *biome_mask_node = nullptr;
 
+    Ref<ShaderMaterial> m_sharedMaterial;
+    Ref<Shader> m_terrainShader;  // Add this line
 
     // Helper to compute height from biome noise.
     float compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data);
