@@ -13,6 +13,7 @@
 #include "../utils/SingletonAccessor.hpp"
 #include <cmath>
 #include <godot_cpp/godot.hpp>
+#include <godot_cpp/templates/hash_map.hpp>
 
 namespace godot {
 
@@ -21,8 +22,34 @@ ChunkGenerator::~ChunkGenerator() {}
 
 void ChunkGenerator::_init() {}
 
+// TODO: implement Memory Pooling: The C++ code frequently uses memnew() which could be replaced with memory pool allocations.
+
 void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;
+    godot::print_line("ChunkGenerator initialized with chunk size: ", m_chunkSize);
+
+    // Load noise resources
+    m_noiseCorral = ResourceLoader::get_singleton()->load("res://project/terrain/noise/coralNoise.tres");
+    m_noiseSand = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sandNoise.tres");
+    m_noiseRock = ResourceLoader::get_singleton()->load("res://project/terrain/noise/rockNoise.tres");
+    m_noiseKelp = ResourceLoader::get_singleton()->load("res://project/terrain/noise/kelpNoise.tres");
+    m_noiseLavarock = ResourceLoader::get_singleton()->load("res://project/terrain/noise/lavaRockNoise.tres");
+    m_noiseSection = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sectionNoise.tres");
+    m_noiseBlend = ResourceLoader::get_singleton()->load("res://project/terrain/noise/blendNoise.tres");
+    
+    // Map biome names to noise resources for quick lookup
+    m_biomeNoises["Corral"] = m_noiseCorral;
+    m_biomeNoises["Sand"] = m_noiseSand;
+    m_biomeNoises["Rock"] = m_noiseRock;
+    m_biomeNoises["Kelp"] = m_noiseKelp;
+    m_biomeNoises["Lavarock"] = m_noiseLavarock;
+    
+    // Check for loading errors
+    if (m_noiseBlend.is_null()) {
+        godot::print_line("❌ Failed to load one or more noise resources.");
+    } else {
+        godot::print_line("✅ Noise resources loaded successfully.");
+    }
 
     biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     if (!biome_manager_node) {
@@ -38,17 +65,16 @@ void ChunkGenerator::initialize(int chunk_size) {
 void ChunkGenerator::_bind_methods() {
     // Register public functions so they can be called from GDScript
     ClassDB::bind_method(D_METHOD("initialize", "chunk_size"), &ChunkGenerator::initialize);
-    ClassDB::bind_method(D_METHOD("generate_chunk", "cx", "cy"), &ChunkGenerator::generate_chunk);
+    ClassDB::bind_method(D_METHOD("generate_chunk_with_biome_data", "cx", "cy", "biome_data"), &ChunkGenerator::generate_chunk_with_biome_data);
+    ClassDB::bind_method(D_METHOD("generate_biome_data", "cx", "cy", "chunk_size"), &ChunkGenerator::generate_biome_data);
 
     // If you want to expose more functions, add them here:
-    ClassDB::bind_method(D_METHOD("get_biome_color", "world_x", "world_y"), &ChunkGenerator::get_biome_color);
-    ClassDB::bind_method(D_METHOD("get_biome_weights", "color"), &ChunkGenerator::get_biome_weights);
     ClassDB::bind_method(D_METHOD("is_boss_area", "color"), &ChunkGenerator::is_boss_area);
     ClassDB::bind_method(D_METHOD("load_shader", "shader_path"), &ChunkGenerator::load_shader);
 }
 
-MeshInstance3D *ChunkGenerator::generate_chunk(int cx, int cy) {
-    godot::print_line("C++ Chunk_generator: Generating chunk at: ", cx, ", ", cy);
+MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, const Dictionary &biome_data) {
+    godot::print_line("C++ Chunk_generator: Generating chunk with biome data at: ", cx, ", ", cy);
     
     MeshInstance3D *mesh_instance = memnew(MeshInstance3D);
     Ref<ArrayMesh> mesh = memnew(ArrayMesh);
@@ -56,61 +82,189 @@ MeshInstance3D *ChunkGenerator::generate_chunk(int cx, int cy) {
     // Assign mesh
     mesh_instance->set_mesh(mesh);
     
-    // Assign textures
-    Ref<ShaderMaterial> material = create_shader_material();
-    material->set_shader_parameter("biome_blend_map", generate_biome_blend_texture(cx, cy));
-    material->set_shader_parameter("height_map", generate_heightmap_texture(cx, cy));
+    Ref<ShaderMaterial> material = memnew(ShaderMaterial);
+    Ref<Shader> shader = load_shader("res://project/terrain/shader/chunkShader.gdshader");
+    if (shader.is_valid()) {
+        material->set_shader(shader);
+        godot::print_line("C++ Chunk_generator: shader loaded successfully" );
+    } else {
+        godot::print_line("C++ Chunk_generator: Failed to load shader, shader:", shader,"| material:", material);
+    }
     
-    mesh_instance->set_material_override(material);
+    // Generate textures using pre-generated biome data
+    Ref<ImageTexture> biome_blend_texture = generate_biome_blend_texture_with_data(cx, cy, biome_data);
+    Ref<ImageTexture> height_map_texture = generate_heightmap_texture_with_data(cx, cy, biome_data);
+    
+    // Check if textures were created successfully
+    if (biome_blend_texture.is_valid() && height_map_texture.is_valid()) {
+        material->set_shader_parameter("biome_blend_map", biome_blend_texture);
+        material->set_shader_parameter("height_map", height_map_texture);
+        mesh_instance->set_material_override(material);
+    } else {
+        godot::print_line("❌ Failed to create textures for chunk: ", cx, ", ", cy);
+    }
+    
     return mesh_instance;
 }
 
-Ref<ShaderMaterial> ChunkGenerator::create_shader_material() {
-    Ref<ShaderMaterial> material = memnew(ShaderMaterial);
-    material->set_shader(load_shader("res://project/terrain/shader/chunkShader.gdshader"));
-    return material;
+
+Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
+    Dictionary biome_data;
+    
+    // Make sure we have access to BiomeMask
+    if (!biome_mask_node) {
+        biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
+        if (!biome_mask_node) {
+            godot::print_line("❌ ChunkGenerator: BiomeMask not found!");
+            return biome_data; // Return empty dictionary
+        }
+    }
+    
+    // Pre-generate all biome colors in one go
+    for (int y = 0; y < chunk_size; y++) {
+        for (int x = 0; x < chunk_size; x++) {
+            // Convert to world coordinates
+            float world_x = cx * chunk_size + x;
+            float world_y = cy * chunk_size + y;
+            
+            // Create the key (local position in chunk)
+            Vector2i key(x, y);
+            
+            // Get the biome color and store in dictionary
+            Color biome_color = get_biome_color(world_x, world_y);
+            biome_data[key] = biome_color;
+        }
+    }
+    
+    return biome_data;
 }
 
-Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture(int cx, int cy) {
-    Ref<Image> image = memnew(Image);
-    image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
+Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx, int cy, const Dictionary &biome_data) {
+    godot::print_line("Creating biome blend texture with pre-generated data for chunk: ", cx, ", ", cy);
+    
+    
+    // Verify chunk size is valid
+    if (m_chunkSize <= 0) {
+        godot::print_line("ERROR: Invalid chunk size: ", m_chunkSize);
+        return Ref<ImageTexture>(); // Return empty reference
+    }
+
+    PackedByteArray data;
+    data.resize(m_chunkSize * m_chunkSize * 3); // RGB format needs 3 bytes per pixel
+    
+    // Fill the data with default values (black)
+    for (int i = 0; i < data.size(); i++) {
+        data[i] = 0;
+    }
+    
+    // Create a new image with explicit dimensions
+    Ref<Image> image;
+    image.instantiate();    
+    // Create the image from raw data
+    image->set_data(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8, data);
+    
+    godot::print_line("Biome blend image created with dimensions: ", image->get_width(), "x", image->get_height());
+    
+    // Set pixel values using pre-generated biome data
     for (int y = 0; y < m_chunkSize; y++) {
         for (int x = 0; x < m_chunkSize; x++) {
-            Color biomeColor = get_biome_color(cx * m_chunkSize + x, cy * m_chunkSize + y);
+            Color biomeColor = get_biome_color_from_data(x, y, biome_data);
             image->set_pixel(x, y, biomeColor);
         }
     }
-    Ref<ImageTexture> texture = memnew(ImageTexture);
+    
+    // Create texture from image
+    Ref<ImageTexture> texture;
+    texture.instantiate();
     texture->create_from_image(image);
+    
     return texture;
 }
 
-Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture(int cx, int cy) {
-    Ref<Image> image = memnew(Image);
-    image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_R8);
+Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture_with_data(int cx, int cy, const Dictionary &biome_data) {
+    godot::print_line("Creating heightmap texture with pre-generated data for chunk: ", cx, ", ", cy);
+    
+    // Create a new image with explicit dimensions
+    Ref<Image> image;
+    image.instantiate();
+    
+    // Try a different approach to create the image
+    PackedByteArray data;
+    data.resize(m_chunkSize * m_chunkSize * 3); // RGB format needs 3 bytes per pixel
+    
+    // Fill the data with default values (black)
+    for (int i = 0; i < data.size(); i++) {
+        data[i] = 0;
+    }
+    
+    // Create the image from raw data
+    image->set_data(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8, data);
+    
+    godot::print_line("Heightmap image created with dimensions: ", image->get_width(), "x", image->get_height());
+    
+    // Set pixel values using pre-generated biome data
     for (int y = 0; y < m_chunkSize; y++) {
         for (int x = 0; x < m_chunkSize; x++) {
-            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, get_biome_color(cx, cy));
+            Color biomeColor = get_biome_color_from_data(x, y, biome_data);
+            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, biomeColor);
             image->set_pixel(x, y, Color(height, height, height));
         }
     }
-    Ref<ImageTexture> texture = memnew(ImageTexture);
+    
+    // Create texture from image
+    Ref<ImageTexture> texture;
+    texture.instantiate();
     texture->create_from_image(image);
+    
     return texture;
 }
 
+Color ChunkGenerator::get_biome_color_from_data(int x, int y, const Dictionary &biome_data) {
+    Vector2i key(x, y);
+    if (biome_data.has(key)) {
+        Variant color_var = biome_data[key];
+        if (color_var.get_type() == Variant::COLOR) {
+            return (Color)color_var;
+        }
+    }
+    // Fallback to white if the color is not found
+    return Color(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+
 float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor) {
     Dictionary biome_weights_dict = get_biome_weights(biomeColor);
-    float blendNoise = m_noiseWrapper.get_blending_noise(world_x, world_y);
-    float blendedHeight = 0.0f, totalWeight = 0.0f;
+    
+    // Sample the blend noise directly
+    float blendNoise = 0.0f;
+    if (m_noiseBlend.is_valid()) {
+        // Use call() to invoke the method on the resource
+        Variant result = m_noiseBlend->call("get_noise_2d", world_x, world_y);
+        if (result.get_type() == Variant::FLOAT) {
+            blendNoise = (float)result;
+        }
+    }
+    
+    float blendedHeight = 0.0f;
+    float totalWeight = 0.0f;
     Array keys = biome_weights_dict.keys();
+    
     for (int i = 0; i < keys.size(); i++) {
         String biome_name = keys[i];
         float weight = biome_weights_dict[biome_name];
-        float biomeNoise = m_noiseWrapper.get_noise_2d(biome_name.utf8().get_data(), world_x, world_y);
-        blendedHeight += weight * biomeNoise * blendNoise;
-        totalWeight += weight;
+        
+        // Get the appropriate noise resource from our map
+        if (m_biomeNoises.has(biome_name)) {
+            Ref<Resource> biome_noise = m_biomeNoises[biome_name];
+            if (biome_noise.is_valid()) {
+                Variant result = biome_noise->call("get_noise_2d", world_x, world_y);
+                float biomeNoise = (result.get_type() == Variant::FLOAT) ? (float)result : 0.0f;
+                blendedHeight += weight * biomeNoise * blendNoise;
+                totalWeight += weight;
+            }
+        }
     }
+    
     return (totalWeight > 1e-6f) ? blendedHeight / totalWeight : 0.0f;
 }
 

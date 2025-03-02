@@ -25,11 +25,16 @@ var chunk_mutex := Mutex.new()
 var prev_chunk_x = null
 var prev_chunk_y = null
 
+# TODO: add logic for removing chunks
+# TODO: LOD (Level of Detail): Add a LOD system that renders distant chunks with simpler meshes and less detail, gradually increasing detail as the player approaches.
 
 func _ready():
 	# Create the GD extension class
-	libchunk_generator = ChunkGenerator.new() #TODO; after moifying the chunk_generator.cpp its not found here
-	print("libchunk_generator: ", libchunk_generator)
+	libchunk_generator = ChunkGenerator.new()
+	if libchunk_generator:
+		print("ChunkGenerator created successfully: ", libchunk_generator)
+	else:
+		push_error("Failed to create ChunkGenerator!")
 
 	var seed_node = load("res://project/terrain/SeedNode.gd").new()
 
@@ -40,7 +45,6 @@ func _ready():
 	libchunk_generator.initialize(
 		CHUNK_SIZE,
 	)
-	#print("ChunkGenerator initialized with:", PATH_CORRAL, PATH_SAND, PATH_ROCK, PATH_KELP, PATH_LAVAROCK, PATH_SECTION, PATH_BLEND, CHUNK_SIZE, seed_node)
 
 	# Load initial chunks around (0,0)
 	var player_pos = Vector2(0, 0)
@@ -74,12 +78,26 @@ func load_chunks_around_player(player_pos: Vector2):
 			var cy = chunk_y + dy
 			request_chunk(cx, cy)
 
+# Pre-generate biome data on the main thread
+func generate_biome_data(cx: int, cy: int, chunk_size: int) -> Dictionary:
+	var biome_data = {}
+	for y in range(chunk_size):
+		for x in range(chunk_size):
+			var world_x = cx * chunk_size + x
+			var world_y = cy * chunk_size + y
+			var key = Vector2i(x, y)
+			biome_data[key] = BiomeMask.get_biome_color(world_x, world_y)
+	return biome_data
+
 func request_chunk(cx: int, cy: int):
 	if Vector2i(cx, cy) in loaded_chunks:
 		return # Already loaded
-
+	
+	# Use the C++ implementation to generate biome data
+	var biome_data = libchunk_generator.generate_biome_data(cx, cy, CHUNK_SIZE)
+	
 	var thread = Thread.new()
-	var result = thread.start(_thread_generate_chunk.bind(cx, cy))
+	var result = thread.start(_thread_generate_chunk.bind(cx, cy, thread, biome_data))
 
 	if result != OK:
 		print("⚠️ Failed to start chunk generation thread.")
@@ -89,38 +107,30 @@ func request_chunk(cx: int, cy: int):
 	loaded_chunks[Vector2i(cx, cy)] = thread
 
 
-func _thread_generate_chunk(cx: int, cy: int):
+func _thread_generate_chunk(cx: int, cy: int, thread: Thread, biome_data: Dictionary):
 	print("TerrainManager: Generate chunk at: ", cx, cy)
-	var chunk = libchunk_generator.generate_chunk(cx, cy)
+	
+	# Pass the pre-generated biome data to the chunk generator
+	var chunk = libchunk_generator.generate_chunk_with_biome_data(cx, cy, biome_data)
+	call_deferred("_on_chunk_thread_completed", cx, cy, chunk, thread)
+
+
+func _on_chunk_thread_completed(cx: int, cy: int, chunk, thread: Thread):
 	add_child(chunk)
-
-	# Use mutex to safely update dictionary TODO: mutext caused erros, investigate
-	# chunk_mutex.lock()
-	call_deferred("on_chunk_generated", cx, cy, chunk)
+	
+	# Wait for thread to finish and clean up
+	thread.wait_to_finish()
+	
+	# Update the loaded chunks dictionary
 	if Vector2i(cx, cy) in loaded_chunks:
-		var thread = loaded_chunks[Vector2i(cx, cy)]
-		thread.wait_to_finish()
 		loaded_chunks.erase(Vector2i(cx, cy))
-	# chunk_mutex.unlock()
-
-
-func on_chunk_generated(cx: int, cy: int, chunk_data):
-	if chunk_data is Dictionary:
-		if "vertices" in chunk_data:
-			chunk_data = chunk_data["vertices"] as PackedFloat32Array
-		else:
-			push_error("❌ Error: Received Dictionary, but missing 'vertices' key!")
-			return
-
-	if not chunk_data is PackedFloat32Array:
-		push_error("❌ Error: Invalid chunk data format!")
-		return
-
+	
+	# Mark as loaded
 	loaded_chunks[Vector2i(cx, cy)] = true
 	print("TerrainManager: ✅ Chunk (", cx, ",", cy, ") generated.")
 
-	# Optionally spawn objects
-	#spawn_biome_objects(cx, cy, chunk_data)
+
+# This function is no longer needed as we handle everything in _on_chunk_thread_completed
 
 'func spawn_biome_objects(cx: int, cy: int, chunk_data: PackedFloat32Array):
 	# If you need to know which biome is dominant at each cell,
