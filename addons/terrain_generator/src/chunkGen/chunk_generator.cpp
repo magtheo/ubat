@@ -51,6 +51,15 @@ void ChunkGenerator::initialize(int chunk_size) {
         godot::print_line("✅ Noise resources loaded successfully.");
     }
 
+
+    // Load biome textures
+    Ref<Texture2D> corral_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/corral.png");
+    Ref<Texture2D> sand_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/sand.png");
+    Ref<Texture2D> rock_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/dark.png");
+    Ref<Texture2D> kelp_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/green.png");
+    Ref<Texture2D> lavarock_tex = ResourceLoader::get_singleton()->load("res://project/terrain/textures/orange.png");
+
+
     biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     if (!biome_manager_node) {
         godot::print_line("❌ ChunkGenerator: BiomeManager not found at initialization!");
@@ -75,26 +84,119 @@ void ChunkGenerator::_bind_methods() {
 
 MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, const Dictionary &biome_data) {
     godot::print_line("C++ Chunk_generator: Generating chunk with biome data at: ", cx, ", ", cy);
-    
+     
+    // Create mesh instance
     MeshInstance3D *mesh_instance = memnew(MeshInstance3D);
     Ref<ArrayMesh> mesh = memnew(ArrayMesh);
     
-    // Assign mesh
+    // Generate a basic plane mesh for the terrain
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    
+    // Create vertices (a grid of points)
+    PackedVector3Array vertices;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+    
+    // Use a lower resolution for performance - adjust as needed
+    // int resolution = 32; // Lower than m_chunkSize for better performance
+
+    int resolution = 32; // Base resolution
+
+    // Reduce detail for distant chunks
+    float distance = sqrt((cx*cx) + (cy*cy)); // Distance from origin
+    if (distance > 3) resolution = 16;
+    if (distance > 6) resolution = 8;
+
+    float step = float(m_chunkSize) / float(resolution);
+    
+    // Generate a grid of vertices
+    for (int z = 0; z <= resolution; z++) {
+        for (int x = 0; x <= resolution; x++) {
+            // Calculate position in chunk space
+            float xpos = x * step;
+            float zpos = z * step;
+            
+            // Sample height at this position
+            float worldX = cx * m_chunkSize + xpos;
+            float worldZ = cy * m_chunkSize + zpos;
+            
+            // Get biome color for this position
+            Color biomeColor;
+            if (x < m_chunkSize && z < m_chunkSize) {
+                biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
+            } else {
+                biomeColor = get_biome_color(worldX, worldZ);
+            }
+            
+            // Compute height using biome data
+            float height = compute_height(cx * m_chunkSize + xpos, cy * m_chunkSize + zpos, biomeColor, biome_data);
+
+            // Add vertex with height displacement
+            vertices.push_back(Vector3(xpos, height * 10.0f, zpos)); // Multiply height for visibility
+            
+            // Add UV coordinate (for texturing)
+            uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
+        }
+    }
+    
+    // Generate triangle indices
+    for (int z = 0; z < resolution; z++) {
+        for (int x = 0; x < resolution; x++) {
+            int i = z * (resolution + 1) + x;
+            
+            // First triangle of the quad
+            indices.push_back(i);
+            indices.push_back(i + 1);
+            indices.push_back(i + (resolution + 1));
+            
+            // Second triangle of the quad
+            indices.push_back(i + 1);
+            indices.push_back(i + (resolution + 1) + 1);
+            indices.push_back(i + (resolution + 1));
+        }
+    }
+    
+    // Assign arrays to mesh
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+    
+    // Create the mesh
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    
+    // Assign mesh to mesh instance
     mesh_instance->set_mesh(mesh);
     
+    // Position the chunk in world space
+    mesh_instance->set_position(Vector3(cx * m_chunkSize, 0.0f, cy * m_chunkSize));
+    
+    // Create material
     Ref<ShaderMaterial> material = memnew(ShaderMaterial);
     Ref<Shader> shader = load_shader("res://project/terrain/shader/chunkShader.gdshader");
     if (shader.is_valid()) {
         material->set_shader(shader);
-        godot::print_line("C++ Chunk_generator: shader loaded successfully" );
+        godot::print_line("C++ Chunk_generator: shader loaded successfully");
     } else {
-        godot::print_line("C++ Chunk_generator: Failed to load shader, shader:", shader,"| material:", material);
+        godot::print_line("C++ Chunk_generator: Failed to load shader, shader:", shader, "| material:", material);
     }
     
     // Generate textures using pre-generated biome data
     Ref<ImageTexture> biome_blend_texture = generate_biome_blend_texture_with_data(cx, cy, biome_data);
     Ref<ImageTexture> height_map_texture = generate_heightmap_texture_with_data(cx, cy, biome_data);
     
+    // Set texture debugging params
+    material->set_shader_parameter("height_scale", 10.0f);  // Increase height scaling
+    material->set_shader_parameter("texture_scale", 0.1f);  // Set texture scale
+    material->set_shader_parameter("blend_sharpness", 5.0f); // Set blend sharpness
+    
+    material->set_shader_parameter("corral_texture", corral_tex);
+    material->set_shader_parameter("sand_texture", sand_tex);
+    material->set_shader_parameter("rock_texture", rock_tex);
+    material->set_shader_parameter("kelp_texture", kelp_tex);
+    material->set_shader_parameter("lavarock_texture", lavarock_tex);
+    material->set_shader_parameter("debug_mode", false);
+
     // Check if textures were created successfully
     if (biome_blend_texture.is_valid() && height_map_texture.is_valid()) {
         material->set_shader_parameter("biome_blend_map", biome_blend_texture);
@@ -110,8 +212,14 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
 
 Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
     Dictionary biome_data;
-    
-    // Make sure we have access to BiomeMask
+
+    // Set our own chunk size from the parameter (this will help with initialization issues)
+    if (m_chunkSize <= 0 && chunk_size > 0) {
+        m_chunkSize = chunk_size;
+        godot::print_line("Setting chunk size from parameter: ", m_chunkSize);
+    }
+
+    // Make sure we have access to BiomeMask and BiomeManager
     if (!biome_mask_node) {
         biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
         if (!biome_mask_node) {
@@ -120,7 +228,15 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
         }
     }
     
-    // Pre-generate all biome colors in one go
+    if (!biome_manager_node) {
+        biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
+        if (!biome_manager_node) {
+            godot::print_line("❌ ChunkGenerator: BiomeManager not found!");
+            return biome_data; // Return empty dictionary
+        }
+    }
+    
+    // Pre-generate all biome colors and weights in one go
     for (int y = 0; y < chunk_size; y++) {
         for (int x = 0; x < chunk_size; x++) {
             // Convert to world coordinates
@@ -130,9 +246,16 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
             // Create the key (local position in chunk)
             Vector2i key(x, y);
             
-            // Get the biome color and store in dictionary
+            // Get the biome color
             Color biome_color = get_biome_color(world_x, world_y);
+            
+            // Store color
             biome_data[key] = biome_color;
+            
+            // Pre-compute and store weights
+            Dictionary weights = get_biome_weights(biome_color);
+            String weights_key = String("weights_") + String::num_int64(x) + "_" + String::num_int64(y);
+            biome_data[weights_key] = weights;
         }
     }
     
@@ -142,8 +265,12 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
 Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx, int cy, const Dictionary &biome_data) {
     godot::print_line("Creating biome blend texture with pre-generated data for chunk: ", cx, ", ", cy);
     
+    if (m_chunkSize <= 0) {
+        // Attempt to determine size from the biome data
+        m_chunkSize = find_chunk_size_from_data(biome_data);
+        godot::print_line("Using derived chunk size: ", m_chunkSize);
+    }
     
-    // Verify chunk size is valid
     if (m_chunkSize <= 0) {
         godot::print_line("ERROR: Invalid chunk size: ", m_chunkSize);
         return Ref<ImageTexture>(); // Return empty reference
@@ -206,7 +333,7 @@ Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture_with_data(int cx, i
     for (int y = 0; y < m_chunkSize; y++) {
         for (int x = 0; x < m_chunkSize; x++) {
             Color biomeColor = get_biome_color_from_data(x, y, biome_data);
-            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, biomeColor);
+            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, biomeColor, biome_data);
             image->set_pixel(x, y, Color(height, height, height));
         }
     }
@@ -217,6 +344,20 @@ Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture_with_data(int cx, i
     texture->create_from_image(image);
     
     return texture;
+}
+
+int ChunkGenerator::find_chunk_size_from_data(const Dictionary &biome_data) {
+    int max_x = 0;
+    int max_y = 0;
+    
+    Array keys = biome_data.keys();
+    for (int i = 0; i < keys.size(); i++) {
+        Vector2i key = keys[i];
+        max_x = MAX(max_x, key.x + 1);
+        max_y = MAX(max_y, key.y + 1);
+    }
+    
+    return max_x > max_y ? max_x : max_y;
 }
 
 Color ChunkGenerator::get_biome_color_from_data(int x, int y, const Dictionary &biome_data) {
@@ -232,8 +373,21 @@ Color ChunkGenerator::get_biome_color_from_data(int x, int y, const Dictionary &
 }
 
 
-float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor) {
-    Dictionary biome_weights_dict = get_biome_weights(biomeColor);
+float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data) {
+    // Get local coordinates within the chunk
+    int chunk_x = int(world_x) % m_chunkSize;
+    int chunk_y = int(world_y) % m_chunkSize;
+    
+    // Get pre-computed weights
+    String weights_key = String("weights_") + String::num_int64(chunk_x) + "_" + String::num_int64(chunk_y);
+    Dictionary biome_weights_dict;
+    
+    if (biome_data.has(weights_key)) {
+        biome_weights_dict = biome_data[weights_key];
+    } else {
+        // Fallback - should not happen in normal operation
+        return 0.0f;
+    }
     
     // Sample the blend noise directly
     float blendNoise = 0.0f;

@@ -51,6 +51,13 @@ private:
     Ref<Resource> m_noiseSection;
     Ref<Resource> m_noiseBlend;
 
+    // texture resources
+    Ref<Texture2D> corral_tex;
+    Ref<Texture2D> sand_tex;
+    Ref<Texture2D> rock_tex;
+    Ref<Texture2D> kelp_tex;
+    Ref<Texture2D> lavarock_tex;
+
     // Map biome names to noise resources
     HashMap<String, Ref<Resource>> m_biomeNoises;
 
@@ -61,13 +68,15 @@ private:
 
 
     // Helper to compute height from biome noise.
-    float compute_height(float world_x, float world_y, const Color &biomeColor);
+    float compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data);
 
     Ref<ImageTexture> generate_biome_blend_texture(int cx, int cy);
     Ref<ImageTexture> generate_heightmap_texture(int cx, int cy);
     
     Ref<ImageTexture> generate_biome_blend_texture_with_data(int cx, int cy, const Dictionary &biome_data);
     Ref<ImageTexture> generate_heightmap_texture_with_data(int cx, int cy, const Dictionary &biome_data);
+    
+    int find_chunk_size_from_data(const Dictionary &biome_data);
 
     Ref<Shader> load_shader(const String &shader_path);
 
