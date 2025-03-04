@@ -29,19 +29,19 @@ void vertex() {
 	// the mesh with height displacement in C++
 
 	// Pass UV to fragment shader
-	UV = UV * texture_scale;
+	//UV = UV * texture_scale;
 }
 
 void fragment() {
 	// Sample the biome blend map
-	vec4 biome_color = texture(biome_blend_map, UV / texture_scale);
+	vec4 biome_color = texture(biome_blend_map, UV);
 
 	// DEBUG MODE - just show the biome blend map colors
 	if (debug_mode) {
 		ALBEDO = biome_color.rgb;
 		ROUGHNESS = 0.7;
 		METALLIC = 0.0;
-		return;
+		// return;
 	}
 
 	// Sample all textures at the current UV
