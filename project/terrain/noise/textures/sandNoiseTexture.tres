@@ -1,0 +1,7 @@
+[gd_resource type="NoiseTexture2D" load_steps=2 format=3 uid="uid://cusuou1jcmkuf"]
+
+[ext_resource type="FastNoiseLite" path="res://project/terrain/noise/sandNoise.tres" id="1_78nr4"]
+
+[resource]
+seamless = true
+noise = ExtResource("1_78nr4")
