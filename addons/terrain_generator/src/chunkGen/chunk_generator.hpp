@@ -14,8 +14,9 @@
 #include "godot_cpp/classes/shader.hpp"
 #include "godot_cpp/classes/image_texture.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
-#include "../utils/FastNoiseLite.h"
+// #include "../utils/FastNoiseLite.h"
 #include "godot_cpp/templates/hash_map.hpp"
+#include <godot_cpp/classes/noise_texture2d.hpp>
 
 namespace godot {
 
@@ -43,13 +44,19 @@ public:
 
 private:
     // Noise resources
-    Ref<Resource> m_noiseCorral;
-    Ref<Resource> m_noiseSand;
-    Ref<Resource> m_noiseRock;
-    Ref<Resource> m_noiseKelp;
-    Ref<Resource> m_noiseLavarock;
-    Ref<Resource> m_noiseSection;
-    Ref<Resource> m_noiseBlend;
+    Ref<NoiseTexture2D> m_noiseCorral;
+    Ref<NoiseTexture2D> m_noiseSand;
+    Ref<NoiseTexture2D> m_noiseRock;
+    Ref<NoiseTexture2D> m_noiseKelp;
+    Ref<NoiseTexture2D> m_noiseLavarock;
+    Ref<NoiseTexture2D> m_noiseSection;
+    Ref<NoiseTexture2D> m_noiseBlend;
+    
+    // Map biome names to noise resources
+    Dictionary m_biomeNoises;
+
+    Dictionary m_cachedBiomeNoiseImages; // key: biome name, value: Ref<Image>
+    Ref<Image> m_blendNoiseImage;         // Cached blend noise image
 
     // texture resources
     Ref<Texture2D> corral_tex;
@@ -58,8 +65,6 @@ private:
     Ref<Texture2D> kelp_tex;
     Ref<Texture2D> lavarock_tex;
 
-    // Map biome names to noise resources
-    HashMap<String, Ref<Resource>> m_biomeNoises;
 
     int m_chunkSize = 0;   // Number of quads per side (grid resolution)
     float m_heightMultiplier = 20.0f;  // default

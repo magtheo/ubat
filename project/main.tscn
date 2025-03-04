@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=6 format=3 uid="uid://qjul30hhfbyk"]
 
 [ext_resource type="Script" path="res://project/terrain/TerrainManager.gd" id="1_c00og"]
+[ext_resource type="Script" path="res://project/terrain/threadPool.gd" id="2_t1lqj"]
 [ext_resource type="Script" path="res://project/misc/preformanceNode.gd" id="4_lltm8"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
 [ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
@@ -11,6 +12,9 @@
 
 [node name="TerrainManager" type="Node3D" parent="World"]
 script = ExtResource("1_c00og")
+
+[node name="ThreadPool" type="Node3D" parent="World/TerrainManager"]
+script = ExtResource("2_t1lqj")
 
 [node name="CSGBox3D" type="CSGBox3D" parent="World"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.204346, 0.185608, -6.68032)

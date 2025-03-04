@@ -6,6 +6,8 @@
 #include "godot_cpp/classes/shader_material.hpp"
 #include <godot_cpp/classes/shader.hpp>
 #include "godot_cpp/classes/image_texture.hpp"
+#include <godot_cpp/classes/noise_texture2d.hpp>
+#include <godot_cpp/classes/fast_noise_lite.hpp>
 #include "godot_cpp/classes/viewport_texture.hpp"
 #include "godot_cpp/classes/texture2d.hpp"
 #include "godot_cpp/classes/image.hpp"
@@ -15,6 +17,7 @@
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
 
+using namespace godot;
 namespace godot {
 
 ChunkGenerator::ChunkGenerator() {}
@@ -32,13 +35,13 @@ void ChunkGenerator::initialize(int chunk_size) {
     // ─────────────────────────────────────────────────────────────────────
     // 1. Load all noise resources once
     // ─────────────────────────────────────────────────────────────────────
-    m_noiseCorral = ResourceLoader::get_singleton()->load("res://project/terrain/noise/coralNoise.tres");
-    m_noiseSand   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sandNoise.tres");
-    m_noiseRock   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/rockNoise.tres");
-    m_noiseKelp   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/kelpNoise.tres");
-    m_noiseLavarock = ResourceLoader::get_singleton()->load("res://project/terrain/noise/lavaRockNoise.tres");
-    m_noiseSection = ResourceLoader::get_singleton()->load("res://project/terrain/noise/sectionNoise.tres");
-    m_noiseBlend    = ResourceLoader::get_singleton()->load("res://project/terrain/noise/blendNoise.tres");
+    m_noiseCorral = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/corralNoiseTexture.tres"); // NoiseTexture2D which has a FastNoiseLite, same for rest of noise
+    m_noiseSand   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/sandNoiseTexture.tres"); 
+    m_noiseRock   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/rockNoiseTexture.tres");
+    m_noiseKelp   = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/kelpNoiseTexture.tres");
+    m_noiseLavarock = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/lavaRockNoiseTexture.tres");
+    m_noiseSection = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/sectionNoiseTexture.tres");
+    m_noiseBlend    = ResourceLoader::get_singleton()->load("res://project/terrain/noise/texture/blendNoiseTexture.tres");
 
     m_biomeNoises["Corral"]   = m_noiseCorral;
     m_biomeNoises["Sand"]     = m_noiseSand;
@@ -53,7 +56,36 @@ void ChunkGenerator::initialize(int chunk_size) {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // 2. Load all biome textures once
+    // 2. Cache noise image data for seamless sampling
+    // ─────────────────────────────────────────────────────────────────────
+    // Cache blend noise image (used for blending between biomes)
+    if (m_noiseBlend.is_valid()) {
+        m_blendNoiseImage = m_noiseBlend->get_image(); // make sure noise data is fethced
+        if (m_blendNoiseImage.is_valid()) {
+            godot::print_line("✅ Cached blend noise image.");
+        } else {
+            godot::print_line("❌ Failed to cache blend noise image.");
+        }
+    }
+
+    // Cache each biome's noise image
+    Array biome_keys = m_biomeNoises.keys();
+    for (int i = 0; i < biome_keys.size(); i++) {
+        String key = biome_keys[i];
+        Ref<NoiseTexture2D> noise_tex = m_biomeNoises[key];
+        if (noise_tex.is_valid()) {
+            Ref<Image> noise_img = noise_tex->get_image();
+            if (noise_img.is_valid()) {
+                m_cachedBiomeNoiseImages[key] = noise_img;
+                godot::print_line("✅ Cached biome noise image for: ", key);
+            } else {
+                godot::print_line("❌ Failed to cache biome noise image for: ", key);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 3. Load all biome textures once
     // ─────────────────────────────────────────────────────────────────────
     corral_tex   = ResourceLoader::get_singleton()->load("res://textures/corral.png");
     sand_tex     = ResourceLoader::get_singleton()->load("res://textures/sand.png");
@@ -68,7 +100,7 @@ void ChunkGenerator::initialize(int chunk_size) {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // 3. Load the terrain shader only once and store it
+    // 4. Load the terrain shader only once and store it
     // ─────────────────────────────────────────────────────────────────────
     m_terrainShader = ResourceLoader::get_singleton()->load("res://project/terrain/shader/chunkShader.gdshader");
     if (m_terrainShader.is_valid()) {
@@ -221,53 +253,31 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
 
 Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
     Dictionary biome_data;
+    Dictionary biome_colors;
+    Dictionary biome_weights;
 
-    // Set our own chunk size from the parameter (this will help with initialization issues)
-    if (m_chunkSize <= 0 && chunk_size > 0) {
-        m_chunkSize = chunk_size;
-        godot::print_line("Setting chunk size from parameter: ", m_chunkSize);
-    }
-
-    // Make sure we have access to BiomeMask and BiomeManager
-    if (!biome_mask_node) {
-        biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
-        if (!biome_mask_node) {
-            godot::print_line("❌ ChunkGenerator: BiomeMask not found!");
-            return biome_data; // Return empty dictionary
-        }
-    }
-    
-    if (!biome_manager_node) {
-        biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
-        if (!biome_manager_node) {
-            godot::print_line("❌ ChunkGenerator: BiomeManager not found!");
-            return biome_data; // Return empty dictionary
-        }
-    }
-    
-    // Pre-generate all biome colors and weights in one go
     for (int y = 0; y < chunk_size; y++) {
         for (int x = 0; x < chunk_size; x++) {
             // Convert to world coordinates
             float world_x = cx * chunk_size + x;
             float world_y = cy * chunk_size + y;
-            
-            // Create the key (local position in chunk)
-            Vector2i key(x, y);
-            
-            // Get the biome color
+
+            // Create a key for the color (using Vector2i is fine)
+            Vector2i color_key(x, y);
             Color biome_color = get_biome_color(world_x, world_y);
-            
-            // Store color
-            biome_data[key] = biome_color;
-            
-            // Pre-compute and store weights
+            biome_colors[color_key] = biome_color;
+
+            // Pre-compute and store weights under a string key
             Dictionary weights = get_biome_weights(biome_color);
             String weights_key = String("weights_") + String::num_int64(x) + "_" + String::num_int64(y);
-            biome_data[weights_key] = weights;
+            biome_weights[weights_key] = weights;
         }
     }
-    
+
+    // Combine the two dictionaries into one parent dictionary.
+    biome_data["colors"] = biome_colors;
+    biome_data["weights"] = biome_weights;
+
     return biome_data;
 }
 
@@ -383,52 +393,82 @@ Color ChunkGenerator::get_biome_color_from_data(int x, int y, const Dictionary &
 
 
 float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data) {
-    // Get local coordinates within the chunk
-    int chunk_x = int(world_x) % m_chunkSize;
-    int chunk_y = int(world_y) % m_chunkSize;
+    // Ensure local coordinates are always in [0, m_chunkSize)
+    int local_x = ((int)world_x % m_chunkSize + m_chunkSize) % m_chunkSize;
+    int local_y = ((int)world_y % m_chunkSize + m_chunkSize) % m_chunkSize;
     
-    // Get pre-computed weights
-    String weights_key = String("weights_") + String::num_int64(chunk_x) + "_" + String::num_int64(chunk_y);
+    // Build the key using these positive coordinates.
+    String weights_key = String("weights_") + String::num_int64(local_x) + "_" + String::num_int64(local_y);
+    
     Dictionary biome_weights_dict;
-    
-    if (biome_data.has(weights_key)) {
-        biome_weights_dict = biome_data[weights_key];
+    if (biome_data.has("weights")) {
+        Dictionary weights_data = (Dictionary)biome_data["weights"];
+        if (weights_data.has(weights_key)) {
+            biome_weights_dict = weights_data[weights_key];
+        } else {
+            godot::print_line("Warning: No pre-computed weights found for local coordinate: ", local_x, ", ", local_y);
+            return 0.0f;
+        }
     } else {
-        // Fallback - should not happen in normal operation
+        godot::print_line("Warning: 'weights' dictionary missing from biome data.");
         return 0.0f;
     }
     
-    // Sample the blend noise directly
-    float blendNoise = 0.0f;
+    // Sample blend noise from the cached blend noise image
+    float blendNoise = 1.0f;  // fallback
     if (m_noiseBlend.is_valid()) {
-        // Use call() to invoke the method on the resource
-        Variant result = m_noiseBlend->call("get_noise_2d", world_x, world_y);
-        if (result.get_type() == Variant::FLOAT) {
-            blendNoise = (float)result;
+        if (!m_blendNoiseImage.is_valid()) {
+            m_blendNoiseImage = m_noiseBlend->get_image();
+        }
+        if (m_blendNoiseImage.is_valid()) {
+            int img_width = m_blendNoiseImage->get_width();
+            int img_height = m_blendNoiseImage->get_height();
+            int sample_x = ((int)world_x % img_width + img_width) % img_width;
+            int sample_y = ((int)world_y % img_height + img_height) % img_height;
+            Color pixel = m_blendNoiseImage->get_pixel(sample_x, sample_y);
+            blendNoise = pixel.r; // Assuming noise value is stored in the red channel
         }
     }
     
     float blendedHeight = 0.0f;
     float totalWeight = 0.0f;
     Array keys = biome_weights_dict.keys();
-    
     for (int i = 0; i < keys.size(); i++) {
         String biome_name = keys[i];
-        float weight = biome_weights_dict[biome_name];
+        float weight = (float)biome_weights_dict[biome_name];
         
-        // Get the appropriate noise resource from our map
         if (m_biomeNoises.has(biome_name)) {
-            Ref<Resource> biome_noise = m_biomeNoises[biome_name];
-            if (biome_noise.is_valid()) {
-                Variant result = biome_noise->call("get_noise_2d", world_x, world_y);
-                float biomeNoise = (result.get_type() == Variant::FLOAT) ? (float)result : 0.0f;
-                blendedHeight += weight * biomeNoise * blendNoise;
-                totalWeight += weight;
+            Ref<NoiseTexture2D> biome_tex = m_biomeNoises[biome_name];
+            if (biome_tex.is_valid()) {
+                // Try to fetch a cached image for this biome noise
+                Ref<Image> noise_image;
+                if (m_cachedBiomeNoiseImages.has(biome_name)) {
+                    noise_image = m_cachedBiomeNoiseImages[biome_name];
+                } else {
+                    noise_image = biome_tex->get_image();
+                    if (noise_image.is_valid()) {
+                        m_cachedBiomeNoiseImages[biome_name] = noise_image;
+                    }
+                }
+                if (noise_image.is_valid()) {
+                    int img_width = noise_image->get_width();
+                    int img_height = noise_image->get_height();
+                    int sample_x = ((int)world_x % img_width + img_width) % img_width;
+                    int sample_y = ((int)world_y % img_height + img_height) % img_height;
+                    Color pixel = noise_image->get_pixel(sample_x, sample_y);
+                    float biomeNoise = pixel.r; // Use the red channel as the noise value
+
+                    blendedHeight += weight * biomeNoise * blendNoise;
+                    totalWeight += weight;
+                }
             }
         }
     }
     
-    return (totalWeight > 1e-6f) ? blendedHeight / totalWeight : 0.0f;
+    if (totalWeight < 1e-6f) {
+        return 0.0f;
+    }
+    return blendedHeight / totalWeight;
 }
 
 Color ChunkGenerator::get_biome_color(float world_x, float world_y) {
