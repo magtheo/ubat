@@ -1,6 +1,6 @@
 extends Node
 
-const NUM_WORKERS = 2       # Or 4, depending on CPU
+const NUM_WORKERS = 4       # Or 4, depending on CPU
 var tasks = []
 var tasks_mutex = Mutex.new()
 var workers = []
@@ -16,12 +16,12 @@ func _ready():
 		workers.append(t)
 
 # Called by your terrain code: queue a "chunk generation" job
-func enqueue_chunk(cx, cy, biome_data):
+func enqueue_chunk(cx, cy, CHUNK_SIZE):
 	tasks_mutex.lock()
-	tasks.append({"cx": cx, "cy": cy, "biome_data": biome_data})
+	tasks.append({"cx": cx, "cy": cy, "CHUNK_SIZE": CHUNK_SIZE})
 	tasks_mutex.unlock()
 
-func _worker_loop(worker_id):
+func _worker_loop(_worker_id):
 	while true:
 		tasks_mutex.lock()
 
@@ -32,9 +32,9 @@ func _worker_loop(worker_id):
 			# Do the heavy chunk generation off-thread:
 			var chunk = null
 			if libchunk_generator:
-				chunk = libchunk_generator.generate_chunk_with_biome_data(
-					task.cx, task.cy, task.biome_data
-				)
+				var biome_data = libchunk_generator.generate_biome_data(task.cx, task.cy, task.CHUNK_SIZE) # where should the biomeData be stored
+				
+				chunk = libchunk_generator.generate_chunk_with_biome_data(task.cx, task.cy, biome_data)
 
 			# Defer final scene add to the main thread
 			call_deferred("_finalize_chunk", chunk, task.cx, task.cy)

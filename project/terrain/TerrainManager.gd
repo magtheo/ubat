@@ -101,22 +101,23 @@ func request_chunk(cx: int, cy: int):
 		return # Already loaded
 	
 	# Use the C++ implementation to generate biome data
-	var biome_data = libchunk_generator.generate_biome_data(cx, cy, CHUNK_SIZE)
+	# var biome_data = libchunk_generator.generate_biome_data(cx, cy, CHUNK_SIZE)
 	# print("Terrainmanager.gd: biome_data: ", typeof(biome_data))
 
 	# Enqueue the chunk task in the pool
-	thread_pool.enqueue_chunk(cx, cy, biome_data)
+	thread_pool.enqueue_chunk(cx, cy, CHUNK_SIZE)
 
 	# Mark in loaded_chunks so we don't request it again
 	loaded_chunks[Vector2i(cx, cy)] = false
 
 
-func _thread_generate_chunk(cx: int, cy: int, thread: Thread, biome_data: Dictionary):
-	print("TerrainManager: Generate chunk at: ", cx, cy)
+# -- not used --
+# func _thread_generate_chunk(cx: int, cy: int, thread: Thread, biome_data: Dictionary):
+# 	print("TerrainManager: Generate chunk at: ", cx, cy)
 	
-	# Pass the pre-generated biome data to the chunk generator
-	var chunk = libchunk_generator.generate_chunk_with_biome_data(cx, cy, biome_data)
-	call_deferred("_on_chunk_thread_completed", cx, cy, chunk, thread)
+# 	# Pass the pre-generated biome data to the chunk generator
+# 	var chunk = libchunk_generator.generate_chunk_with_biome_data(cx, cy, biome_data)
+# 	call_deferred("_on_chunk_thread_completed", cx, cy, chunk, thread)
 
 
 func _on_chunk_thread_completed(cx: int, cy: int, chunk, thread: Thread):
