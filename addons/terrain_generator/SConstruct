@@ -1,7 +1,26 @@
 import os
+import json
 from SCons.Script import *
 
 print("Running SConstruct in:", Dir(".").abspath)
+
+# Generate commands for clangd
+def generate_compile_commands(target, source, env):
+    commands = []
+    # We'll iterate over the list of source files you compiled.
+    for src in source:
+        # Build a compile command entry for each file.
+        # Here we assume that '$CXXCOM' holds your compiler command line.
+        command = {
+            "directory": os.getcwd(),
+            "file": str(src),
+            "output": "",  # This field is not really used by clangd
+            "arguments": env.subst('$CXXCOM').split()
+        }
+        commands.append(command)
+    with open('compile_commands.json', 'w') as f:
+        json.dump(commands, f, indent=2)
+    print("compile_commands.json generated with", len(commands), "entries.")
 
 # Create the build environment.
 env = Environment(tools=["default"])
@@ -11,35 +30,43 @@ env.Append(CPPFLAGS=["-std=c++17"])
 env.Append(CPPPATH=[
     "../../godot-cpp/gdextension",
     "../../godot-cpp/include",
+    "../../godot-cpp/include/godot_cpp",
     "../../godot-cpp/gen/include",
     "src/thirdparty",
-    "thirdparty"
+    "thirdparty",
 ])
 
-
 # Append library path and libraries.
+env.Append(LINKFLAGS=["-shared"])  # Ensure shared library compilation
 env.Append(LIBPATH=["../../godot-cpp/bin"])
-env.Append(LIBS=["godot-cpp.linux.template_release.x86_64"])
+env.Append(LIBS=["libgodot-cpp.linux.template_debug.x86_64.a"])
 
 # Debug: print out the CPPPATH.
 print("CPPPATH list after append:", env["CPPPATH"])
 print("Substituted CPPPATH:", env.subst("$CPPPATH"))
 
-# Determine platform; you can also use sys.platform if needed.
+# Determine platform and target.
 platform = ARGUMENTS.get("platform", "linux")
 if platform == "linux":
-    target = "bin/libterrain_generator.so"
+    target_lib = "bin/libchunk_generator.so"
 elif platform == "windows":
-    target = "bin/terrain_generator.dll"
+    target_lib = "bin/chunk_generator.dll"
 else:
-    target = "bin/libterrain_generator.so"  # Default to Linux naming
+    target_lib = "bin/libchunk_generator.so"  # Default to Linux naming
 
 # Ensure the bin directory exists.
 if not os.path.exists("bin"):
     os.makedirs("bin")
 
 # Gather source files.
-sources = Glob("src/*.cpp")
+sources = Glob("src/**/*.cpp") + Glob("src/register_types.cpp") 
+for src in sources:
+    print("Target files path", src.get_path()) # Print for debugging
+
 
 # Build the shared library.
-env.SharedLibrary(target, sources)
+build_target = env.SharedLibrary(target_lib, sources)
+
+# Option 1: Post-action on the default build target.
+# This will run generate_compile_commands after building the shared library.
+env.AddPostAction(build_target, lambda target, source, env: generate_compile_commands(target, [src.get_path() for src in sources], env))

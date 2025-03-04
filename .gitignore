@@ -7,6 +7,19 @@
 .editor_settings-*
 .editor_settings
 
+# Binaries
+*.o
+*.os
+*.so
+*.bc
+*.pdb
+*.lib
+
+bin/
+bin/*.so
+bin/*.dll
+bin/*.os
+
 # Exported projects
 *.exe
 *.apk

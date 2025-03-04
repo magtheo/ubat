@@ -7,17 +7,17 @@ var sensitivity = 2
 @onready var rotator = $rotator
 @onready var camera_3d = $rotator/Camera3D
 
-func _physics_process(delta):
-	var velocity = Vector3()
+func _physics_process(_delta):
+	var local_velocity = Vector3()
 	
 	if Input.is_action_pressed("move_forward"):
-		velocity -= rotator.global_transform.basis[2] * speed
+		local_velocity -= rotator.global_transform.basis[2] * speed
 	if Input.is_action_pressed("move_backward"):
-		velocity += rotator.global_transform.basis[2] * speed
+		local_velocity += rotator.global_transform.basis[2] * speed
 	if Input.is_action_pressed("move_left"):
-		velocity -= rotator.global_transform.basis[0] * speed
+		local_velocity -= rotator.global_transform.basis[0] * speed
 	if Input.is_action_pressed("move_right"):
-		velocity += rotator.global_transform.basis[0] * speed
+		local_velocity += rotator.global_transform.basis[0] * speed
 	
 	var velocity_up = Vector3()
 	if Input.is_action_pressed("move_up"):
@@ -25,7 +25,7 @@ func _physics_process(delta):
 	if Input.is_action_pressed("move_down"):
 		velocity_up -= self.transform.basis[1] * speed
 	
-	self.translate(velocity + velocity_up)
+	self.translate(local_velocity + velocity_up)
 	Debug.log("player position", self.position)
 
 func _unhandled_input(event):

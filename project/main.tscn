@@ -1,14 +1,8 @@
-[gd_scene load_steps=12 format=3 uid="uid://qjul30hhfbyk"]
+[gd_scene load_steps=6 format=3 uid="uid://qjul30hhfbyk"]
 
-[ext_resource type="Script" path="res://project/terrainManager/TerrainManager.gd" id="1_c00og"]
-[ext_resource type="FastNoiseLite" uid="uid://bjiob6e4rjy65" path="res://project/terrainManager/noise/globalNoise.tres" id="2_8ugwp"]
-[ext_resource type="FastNoiseLite" uid="uid://dfg02m8vwd4bh" path="res://project/terrainManager/noise/coralNoise.tres" id="3_exq1v"]
-[ext_resource type="Script" path="res://project/network/networkManager.gd" id="4_4e5t6"]
-[ext_resource type="FastNoiseLite" uid="uid://dnvp4gtbcyn57" path="res://project/terrainManager/noise/sandNoise.tres" id="4_ovj6e"]
-[ext_resource type="FastNoiseLite" uid="uid://b87s5uxs2qoqb" path="res://project/terrainManager/noise/lavaRockNoise.tres" id="4_vt7y5"]
-[ext_resource type="FastNoiseLite" uid="uid://binyd2e0r0eae" path="res://project/terrainManager/noise/kelpNoise.tres" id="5_ccivb"]
-[ext_resource type="FastNoiseLite" uid="uid://dfmtgc8fmm48d" path="res://project/terrainManager/noise/rockNoise.tres" id="5_hhmhp"]
-[ext_resource type="FastNoiseLite" uid="uid://bjap0h0tq1a2e" path="res://project/terrainManager/noise/height_changer.tres" id="7_uvhxh"]
+[ext_resource type="Script" path="res://project/terrain/TerrainManager.gd" id="1_c00og"]
+[ext_resource type="Script" path="res://project/terrain/threadPool.gd" id="2_t1lqj"]
+[ext_resource type="Script" path="res://project/misc/preformanceNode.gd" id="4_lltm8"]
 [ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="14_idsun"]
 [ext_resource type="Script" path="res://project/camera/player.gd" id="15_nngca"]
 
@@ -18,17 +12,17 @@
 
 [node name="TerrainManager" type="Node3D" parent="World"]
 script = ExtResource("1_c00og")
-global_noise = ExtResource("2_8ugwp")
-corral_noise = ExtResource("3_exq1v")
-sand_noise = ExtResource("4_ovj6e")
-rock_noise = ExtResource("5_hhmhp")
-kelp_noise = ExtResource("5_ccivb")
-blending_noise = ExtResource("7_uvhxh")
-lavaRock_noise = ExtResource("4_vt7y5")
+
+[node name="ThreadPool" type="Node3D" parent="World/TerrainManager"]
+script = ExtResource("2_t1lqj")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.204346, 0.185608, -6.68032)
+size = Vector3(6.19775, 1.37122, 1)
 
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")
 speed = 1
 
-[node name="NetworkManager" type="Node" parent="."]
-script = ExtResource("4_4e5t6")
+[node name="Preformance node" type="Node2D" parent="."]
+script = ExtResource("4_lltm8")
