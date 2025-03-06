@@ -16,8 +16,8 @@ var chunk_mutex := Mutex.new()
 var prev_chunk_x = null
 var prev_chunk_y = null
 
-# TODO: add logic for removing chunks
-# TODO: LOD (Level of Detail): Add a LOD system that renders distant chunks with simpler meshes and less detail, gradually increasing detail as the player approaches.
+# Track which chunks should be removed - chunks beyond this distance will be unloaded
+var cleanup_distance = 5
 
 func _ready():
 	# Create the GD extension class
@@ -36,23 +36,19 @@ func _ready():
 	# Assign it to the thread pool so the pool can call it
 	thread_pool.libchunk_generator = libchunk_generator
 	
-
 	var seed_node = load("res://project/terrain/SeedNode.gd").new()
-
 	seed_node.noises_randomized.connect(_on_noises_randomized)
 	seed_node.randomize_noises()
-
-	# Load initial chunks around (0,0)
-	#var player_pos = Vector2(0, 0)
-	# load_chunks_around_player(player_pos)
 
 func _on_noises_randomized():
 	print("TerrainManager.gd: Noises randomized, refreshing chunks")
 	seedsRandomized = true
+	
 	# Clear loaded chunks
 	for chunk_pos in loaded_chunks:
 		# Remove chunk from scene
-		var chunk = get_node(str(chunk_pos))
+		var chunk_name = "Chunk_%d_%d" % [chunk_pos.x, chunk_pos.y]
+		var chunk = get_node_or_null(chunk_name)
 		if chunk:
 			chunk.queue_free()
 
@@ -76,7 +72,8 @@ func load_chunks_around_player(player_pos: Vector2):
 			var cy = chunk_y + dy
 			
 			# Skip if already loaded
-			if Vector2i(cx, cy) in loaded_chunks:
+			var pos = Vector2i(cx, cy)
+			if pos in loaded_chunks:
 				continue
 				
 			# Calculate distance for priority
@@ -91,78 +88,53 @@ func load_chunks_around_player(player_pos: Vector2):
 	# Sort by distance (closest first)
 	chunks_to_load.sort_custom(func(a, b): return a.distance < b.distance)
 	
-	# Queue chunks for loading (could be distributed across frames)
+	# Queue chunks for loading
 	for chunk_data in chunks_to_load:
 		request_chunk(chunk_data.cx, chunk_data.cy)
-
+	
+	# Clean up distant chunks
+	cleanup_distant_chunks(chunk_x, chunk_y, cleanup_distance)
 
 func request_chunk(cx: int, cy: int):
-	if Vector2i(cx, cy) in loaded_chunks:
-		return # Already loaded
+	var pos = Vector2i(cx, cy)
+	if pos in loaded_chunks:
+		return # Already loaded or requested
 	
-	# Use the C++ implementation to generate biome data
-	# var biome_data = libchunk_generator.generate_biome_data(cx, cy, CHUNK_SIZE)
-	# print("Terrainmanager.gd: biome_data: ", typeof(biome_data))
-
+	# Mark in loaded_chunks so we don't request it again
+	# false means it's requested but not yet loaded
+	loaded_chunks[pos] = false
+	
 	# Enqueue the chunk task in the pool
 	thread_pool.enqueue_chunk(cx, cy, CHUNK_SIZE)
 
-	# Mark in loaded_chunks so we don't request it again
-	loaded_chunks[Vector2i(cx, cy)] = false
-
-
-# -- not used --
-# func _thread_generate_chunk(cx: int, cy: int, thread: Thread, biome_data: Dictionary):
-# 	print("TerrainManager: Generate chunk at: ", cx, cy)
+func cleanup_distant_chunks(center_x: int, center_y: int, max_distance: int):
+	var chunks_to_remove = []
 	
-# 	# Pass the pre-generated biome data to the chunk generator
-# 	var chunk = libchunk_generator.generate_chunk_with_biome_data(cx, cy, biome_data)
-# 	call_deferred("_on_chunk_thread_completed", cx, cy, chunk, thread)
-
-
-func _on_chunk_thread_completed(cx: int, cy: int, chunk, thread: Thread):
-	add_child(chunk)
+	# Find chunks that are too far away
+	for chunk_pos in loaded_chunks:
+		var dx = chunk_pos.x - center_x
+		var dy = chunk_pos.y - center_y
+		var distance = sqrt(dx*dx + dy*dy)
+		
+		if distance > max_distance:
+			chunks_to_remove.append(chunk_pos)
 	
-	# Wait for thread to finish and clean up
-	thread.wait_to_finish()
+	# Remove the distant chunks
+	for pos in chunks_to_remove:
+		var chunk_name = "Chunk_%d_%d" % [pos.x, pos.y]
+		var chunk = get_node_or_null(chunk_name)
+		if chunk:
+			chunk.queue_free()
+		loaded_chunks.erase(pos)
 	
-	# Update the loaded chunks dictionary
-	if Vector2i(cx, cy) in loaded_chunks:
-		loaded_chunks.erase(Vector2i(cx, cy))
-	
-	# Mark as loaded
-	loaded_chunks[Vector2i(cx, cy)] = true
-	print("TerrainManager: ✅ Chunk (", cx, ",", cy, ") generated.")
-
-
-# This function is no longer needed as we handle everything in _on_chunk_thread_completed
-
-'func spawn_biome_objects(cx: int, cy: int, chunk_data: PackedFloat32Array):
-	# If you need to know which biome is dominant at each cell,
-	# you can either store that info in an additional array
-	# or re-run the same logic (section + blend) to figure it out
-	# for each cell. For now, we do a simple "if height > 0.7 => place X object."
-
-	for i in range(5):
-		var lx = randi() % CHUNK_SIZE
-		var ly = randi() % CHUNK_SIZE
-		var idx = ly * CHUNK_SIZE + lx
-		if chunk_data[idx] > 0.7:
-			# Example: spawn a "LargeCoral" scene
-			var coral_scene = preload("res://Objects/LargeCoral.tscn")
-			var coral_inst = coral_scene.instantiate()
-			add_child(coral_inst)
-			coral_inst.position = Vector2(
-				(cx * CHUNK_SIZE) + lx,
-				(cy * CHUNK_SIZE) + ly
-			)'
+	# Clean up cached textures in the chunk generator
+	if chunks_to_remove.size() > 0:
+		var min_chunk = Vector2i(center_x - max_distance, center_y - max_distance)
+		var max_chunk = Vector2i(center_x + max_distance, center_y + max_distance)
+		libchunk_generator.cleanup_chunk_caches(min_chunk, max_chunk)
 
 func _process(_delta: float):
-	# If your player moves, call load_chunks_around_player(new_position)
-	# to load new chunks.	
-	#var player = get_node("Player")
-	#print("player in TerrainManager: ", player)
-	if player and seedsRandomized: # and seedRandomized
+	if player and seedsRandomized:
 		var player_pos_2d = Vector2(player.position.x, player.position.z)
 		
 		# Calculate the player's current chunk coordinates
