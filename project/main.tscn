@@ -25,4 +25,5 @@ script = ExtResource("15_nngca")
 speed = 1
 
 [node name="Preformance node" type="Node2D" parent="."]
+position = Vector2(0, 304)
 script = ExtResource("4_lltm8")

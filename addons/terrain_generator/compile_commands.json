@@ -1,53 +1,74 @@
 [
   {
-    "directory": "/home/theo/Documents/GameDev/ubat/addons/terrain_generator",
-    "file": "src/chunkGen/chunk_generator.cpp",
+    "directory": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator",
+    "file": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/chunkGen/chunk_generator.cpp",
     "output": "",
     "arguments": [
       "g++",
-      "-o",
-      "-c",
       "-std=c++17",
-      "-I../../godot-cpp/gdextension",
-      "-I../../godot-cpp/include",
-      "-I../../godot-cpp/include/godot_cpp",
-      "-I../../godot-cpp/gen/include",
-      "-Isrc/thirdparty",
-      "-Ithirdparty"
+      "-fPIC",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gdextension",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include/godot_cpp",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gen/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/thirdparty",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/thirdparty",
+      "-c",
+      "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/chunkGen/chunk_generator.cpp"
     ]
   },
   {
-    "directory": "/home/theo/Documents/GameDev/ubat/addons/terrain_generator",
-    "file": "src/utils/SingletonAccessor.cpp",
+    "directory": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator",
+    "file": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/utils/ResourceLoaderHelper.cpp",
     "output": "",
     "arguments": [
       "g++",
-      "-o",
-      "-c",
       "-std=c++17",
-      "-I../../godot-cpp/gdextension",
-      "-I../../godot-cpp/include",
-      "-I../../godot-cpp/include/godot_cpp",
-      "-I../../godot-cpp/gen/include",
-      "-Isrc/thirdparty",
-      "-Ithirdparty"
+      "-fPIC",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gdextension",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include/godot_cpp",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gen/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/thirdparty",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/thirdparty",
+      "-c",
+      "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/utils/ResourceLoaderHelper.cpp"
     ]
   },
   {
-    "directory": "/home/theo/Documents/GameDev/ubat/addons/terrain_generator",
-    "file": "src/register_types.cpp",
+    "directory": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator",
+    "file": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/utils/SingletonAccessor.cpp",
     "output": "",
     "arguments": [
       "g++",
-      "-o",
-      "-c",
       "-std=c++17",
-      "-I../../godot-cpp/gdextension",
-      "-I../../godot-cpp/include",
-      "-I../../godot-cpp/include/godot_cpp",
-      "-I../../godot-cpp/gen/include",
-      "-Isrc/thirdparty",
-      "-Ithirdparty"
+      "-fPIC",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gdextension",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include/godot_cpp",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gen/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/thirdparty",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/thirdparty",
+      "-c",
+      "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/utils/SingletonAccessor.cpp"
+    ]
+  },
+  {
+    "directory": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator",
+    "file": "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/register_types.cpp",
+    "output": "",
+    "arguments": [
+      "g++",
+      "-std=c++17",
+      "-fPIC",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gdextension",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/include/godot_cpp",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/godot-cpp/gen/include",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/thirdparty",
+      "-I/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/thirdparty",
+      "-c",
+      "/home/theo/Documents/Coding/GameDev/ubat/addons/terrain_generator/src/register_types.cpp"
     ]
   }
 ]
