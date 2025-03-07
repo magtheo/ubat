@@ -17,7 +17,6 @@
 #include <godot_cpp/godot.hpp>
 #include <cmath>
 
-
 #include "../utils/SingletonAccessor.hpp"
 #include "../utils/ResourceLoaderHelper.hpp"
 #include "variant/variant.hpp"
@@ -151,6 +150,13 @@ void ChunkGenerator::initialize(int chunk_size) {
     biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
     if (!biome_mask_node) {
         godot::print_line("❌ ChunkGenerator: BiomeMask not found at initialization!");
+    } else {
+        bool ready = biome_mask_node->is_node_ready();
+        if (ready == false ) {
+            godot::print_line("❌ BiomeMask is not ready. Terrain generation should wait.");
+        } else {
+            godot::print_line("✅ BiomeMask is ready for use.");
+        }
     }
 }
 
@@ -214,10 +220,12 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
     PackedInt32Array indices;
 
     // Basic LOD logic
-    int resolution = m_chunkSize;
+    int resolution = m_chunkSize * 2; 
     float distance = sqrt(float(cx*cx + cy*cy));
-    if (distance > 3) resolution = 16;
-    if (distance > 6) resolution = 8;
+    if (distance > 6) resolution = m_chunkSize;   // Reduce only at farther distances
+    if (distance > 12) resolution = 16;
+    if (distance > 20) resolution = 8;
+    
 
     float step = float(m_chunkSize) / float(resolution);
 
@@ -226,21 +234,21 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
     // ─────────────────────────────────────────────────────────────────────
     for (int z = 0; z <= resolution; z++) {
         for (int x = 0; x <= resolution; x++) {
-            float xpos = x * step;
-            float zpos = z * step;
+            float xpos = float(x) / resolution * m_chunkSize;
+        float zpos = float(z) / resolution * m_chunkSize;
 
-            float worldX = cx * m_chunkSize + xpos;
-            float worldZ = cy * m_chunkSize + zpos;
+        float worldX = cx * m_chunkSize + xpos;
+        float worldZ = cy * m_chunkSize + zpos;
 
-            // Sample biome color
-            Color biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
+        // Sample biome color
+        Color biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
+        float height = compute_height(worldX, worldZ, biomeColor, biome_data);
 
-            float height = compute_height(worldX, worldZ, biomeColor, biome_data);
+        // Push vertex
+        vertices.push_back(Vector3(xpos, height * m_heightMultiplier, zpos));
 
-            // Push vertex
-            vertices.push_back(Vector3(xpos, height * m_heightMultiplier, zpos));
-            // Push UV
-            uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
+        // Push UV
+        uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
         }
     }
 
@@ -312,6 +320,11 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
     Dictionary biome_data;
     Dictionary biome_colors;
     Dictionary biome_weights;
+
+    if (!biome_mask_node->is_node_ready()) {
+        godot::print_line("❌ Attempted to generate biome data before BiomeMask is ready.");
+        return Dictionary();  // Return empty to prevent bad data
+    }
 
     for (int y = 0; y < chunk_size; y++) {
         for (int x = 0; x < chunk_size; x++) {
