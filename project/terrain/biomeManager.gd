@@ -11,13 +11,13 @@ var biome_sections = {
 	"section1": {
 		# For Section 1, you may have a predefined color (optional)
 		# "color": Color(0.8, 0.8, 0.8, 1.0),
-		"biomes": {"Corral": 0.5, "Sand": 0.5}
+		"biomes": {"corral": 0.5, "sand": 0.5}
 	},
 	"section2": {
-		"biomes": {"Rock": 0.5, "Kelp": 0.5}
+		"biomes": {"rock": 0.5, "kelp": 0.5}
 	},
 	"section3": {
-		"biomes": {"Rock": 0.5, "Lavarock": 0.5}
+		"biomes": {"rock": 0.5, "lavarock": 0.5}
 	}
 }
 
