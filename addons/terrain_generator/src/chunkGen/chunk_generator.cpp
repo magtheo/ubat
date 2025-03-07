@@ -552,6 +552,7 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
     }
     
     if (totalWeight < 1e-6f) {
+        godot::print_line("⚠️ Flat height detected at world pos (", world_x, ", ", world_y, ") in chunk ", local_x, ", ", local_y);
         return 0.0f;
     }
     return blendedHeight / totalWeight;

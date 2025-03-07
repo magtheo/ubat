@@ -98,10 +98,10 @@ func load_chunks_around_player(player_pos: Vector2):
 func request_chunk(cx: int, cy: int):
 	var pos = Vector2i(cx, cy)
 	if pos in loaded_chunks:
-		return # Already loaded or requested
-	
-	# Mark in loaded_chunks so we don't request it again
-	# false means it's requested but not yet loaded
+		if loaded_chunks[pos]:
+			return # Already fully loaded
+		else:
+			return # Already requested and in progress
 	loaded_chunks[pos] = false
 	
 	# Enqueue the chunk task in the pool
