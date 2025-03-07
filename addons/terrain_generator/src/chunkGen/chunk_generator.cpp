@@ -36,60 +36,31 @@ void ChunkGenerator::_init() {}
 
 bool ChunkGenerator::load_resources() {
     godot::print_line("🔄 Loading and caching resources...");
-    bool all_resources_loaded = true;
-
-    // Load noise textures
-    m_noiseCorral = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/corralNoiseTexture.tres", "NoiseTexture2D corral");
-    if (!m_noiseCorral.is_valid()) {
-        godot::print_line("❌ Failed to load corral noise texture");
-        all_resources_loaded = false;
-    }
-    m_noiseSand = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sandNoiseTexture.tres", "NoiseTexture2D sand");
-    if (!m_noiseSand.is_valid()) {
-        godot::print_line("❌ Failed to load sand noise texture");
-        all_resources_loaded = false;
-    }
     
-    m_noiseRock = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/rockNoiseTexture.tres", "NoiseTexture2D rock");
-    if (!m_noiseRock.is_valid()) {
-        godot::print_line("❌ Failed to load rock noise texture");
-        all_resources_loaded = false;
-    }
+    // First, try to load the FastNoiseLite resources
+    Ref<FastNoiseLite> corralNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/corralNoise.tres", "corral Noise");
+    Ref<FastNoiseLite> sandNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/sandNoise.tres", "sand Noise");
+    Ref<FastNoiseLite> rockNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/rockNoise.tres", "rock Noise");
+    Ref<FastNoiseLite> kelpNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/kelpNoise.tres", "kelp Noise");
+    Ref<FastNoiseLite> lavaRockNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/lavaRockNoise.tres", "lavarock Noise");
+    Ref<FastNoiseLite> sectionNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/sectionNoise.tres", "section Noise");
+    Ref<FastNoiseLite> blendNoise = ResourceLoaderHelper::load_cached<FastNoiseLite>("res://project/terrain/noise/blendNoise.tres", "blend Noise");
     
-    m_noiseKelp = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/kelpNoiseTexture.tres", "NoiseTexture2D kelp");
-    if (!m_noiseKelp.is_valid()) {
-        godot::print_line("❌ Failed to load kelp noise texture");
-        all_resources_loaded = false;
-    }
+    // Then create NoiseTexture2D objects and assign the loaded noise
+    m_noiseCorral = create_noise_texture(corralNoise, 256, 256, true);
+    m_noiseSand = create_noise_texture(sandNoise, 256, 256, true);
+    m_noiseRock = create_noise_texture(rockNoise, 256, 256, true);
+    m_noiseKelp = create_noise_texture(kelpNoise, 256, 256, true);
+    m_noiseLavarock = create_noise_texture(lavaRockNoise, 256, 256, true);
+    m_noiseSection = create_noise_texture(sectionNoise, 256, 256, true);
+    m_noiseBlend = create_noise_texture(blendNoise, 256, 256, true);
     
-    m_noiseLavarock = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/lavaRockNoiseTexture.tres", "NoiseTexture2D lavarock");
-    if (!m_noiseLavarock.is_valid()) {
-        godot::print_line("❌ Failed to load lavarock noise texture");
-        all_resources_loaded = false;
-    }
-    
-    m_noiseSection = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sectionNoiseTexture.tres", "NoiseTexture2D section");
-    if (!m_noiseSection.is_valid()) {
-        godot::print_line("❌ Failed to load section noise texture");
-        all_resources_loaded = false;
-    }
-    
-    m_noiseBlend = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/blendNoiseTexture.tres", "NoiseTexture2D blend");
-    if (!m_noiseBlend.is_valid()) {
-        godot::print_line("❌ Failed to load blend noise texture");
-        all_resources_loaded = false;
-    }
-
-    // Add biome noises to dictionary (only if valid)
-    m_biomeNoises.clear(); // Clear existing entries to avoid stale references
-
+    // Add to dictionary
     if (m_noiseCorral.is_valid())   m_biomeNoises.insert("corral", m_noiseCorral);
     if (m_noiseSand.is_valid())     m_biomeNoises.insert("sand", m_noiseSand);
     if (m_noiseRock.is_valid())     m_biomeNoises.insert("rock", m_noiseRock);
     if (m_noiseKelp.is_valid())     m_biomeNoises.insert("kelp", m_noiseKelp);
     if (m_noiseLavarock.is_valid()) m_biomeNoises.insert("lavarock", m_noiseLavarock);
-
-    godot::print_line("✓ Biome noise dictionary contains ", m_biomeNoises.size(), " entries");
 
     // Load biome textures
     corral_tex   = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/corral.png", "corral Texture");
@@ -101,7 +72,6 @@ bool ChunkGenerator::load_resources() {
     if (corral_tex.is_null() || sand_tex.is_null() || rock_tex.is_null() ||
         kelp_tex.is_null() || lavarock_tex.is_null()) {
         godot::print_line("❌ One or more biome textures failed to load.");
-        all_resources_loaded = false;
     } else {
         godot::print_line("✅ All biome textures loaded successfully.");
     }
@@ -110,13 +80,51 @@ bool ChunkGenerator::load_resources() {
     m_terrainShader = ResourceLoaderHelper::load_cached<Shader>("res://project/terrain/shader/chunkShader.gdshader", "Terrain Shader");
     if (m_terrainShader.is_valid()) {
         godot::print_line("✅ Terrain shader loaded once at initialization.");
-        all_resources_loaded = false;
     } else {
         godot::print_line("❌ Failed to load terrain shader. Check your path.");
     }
-    return all_resources_loaded;
+    
+    return true;
 }
 
+Ref<NoiseTexture2D> ChunkGenerator::create_noise_texture(const Ref<FastNoiseLite>& noise, int width, int height, bool seamless) {
+    // Create a new noise texture
+    Ref<NoiseTexture2D> texture;
+    texture.instantiate();
+    
+    if (!texture.is_valid()) {
+        godot::print_line("❌ Failed to instantiate NoiseTexture2D");
+        return Ref<NoiseTexture2D>();
+    }
+    
+    // Check if the noise resource is valid
+    if (!noise.is_valid()) {
+        godot::print_line("❌ Provided FastNoiseLite is invalid, creating default noise");
+        
+        // Create a default noise if the provided one is invalid
+        Ref<FastNoiseLite> default_noise;
+        default_noise.instantiate();
+        default_noise->set_noise_type(FastNoiseLite::TYPE_PERLIN);
+        default_noise->set_frequency(0.05);
+        
+        texture->set_noise(default_noise);
+    } else {
+        // Use the provided noise
+        texture->set_noise(noise);
+    }
+    
+    // Configure the texture
+    texture->set_width(width);
+    texture->set_height(height);
+    texture->set_seamless(seamless);
+    texture->set_invert(false);
+    
+    // Force the texture to generate immediately to catch any issues
+    texture->set_generate_mipmaps(true);
+    
+    godot::print_line("✅ Successfully created noise texture");
+    return texture;
+}
 
 void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;

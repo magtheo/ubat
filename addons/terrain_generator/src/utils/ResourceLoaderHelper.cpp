@@ -1,5 +1,6 @@
 #include "ResourceLoaderHelper.hpp"
 #include "core/print_string.hpp"
+#include "godot_cpp/classes/fast_noise_lite.hpp"
 #include <godot_cpp/classes/noise_texture2d.hpp>
 #include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
@@ -114,5 +115,6 @@ Ref<T> ResourceLoaderHelper::load_cached(const String &path, const String &resou
 template Ref<NoiseTexture2D> ResourceLoaderHelper::load_cached(const String&, const String&);
 template Ref<Texture2D> ResourceLoaderHelper::load_cached(const String&, const String&);
 template Ref<Shader> ResourceLoaderHelper::load_cached(const String&, const String&);
+template Ref<FastNoiseLite> ResourceLoaderHelper::load_cached(const String&, const String&);
 
 } // namespace godot

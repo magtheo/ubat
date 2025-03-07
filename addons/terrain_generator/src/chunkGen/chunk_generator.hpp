@@ -6,6 +6,7 @@
 #include <godot_cpp/variant/color.hpp>
 #include <vector>
 #include <string>
+#include "godot_cpp/classes/fast_noise_lite.hpp"
 #include "godot_cpp/classes/node.hpp"
 #include "godot_cpp/variant/dictionary.hpp"
 #include "godot_cpp/classes/mesh_instance3d.hpp"
@@ -13,7 +14,7 @@
 #include "godot_cpp/classes/shader.hpp"
 #include "godot_cpp/classes/image_texture.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
-// #include "../utils/FastNoiseLite.h"
+// #include "../utils/FastNoiseLite.h"ChunkGenerator
 #include "godot_cpp/templates/hash_map.hpp"
 #include <godot_cpp/classes/noise_texture2d.hpp>
 
@@ -40,7 +41,17 @@ public:
     bool is_boss_area(const Color &color);
 
 private:
-    // Noise resources
+    //  FastNoiseLite resources
+    Ref<FastNoiseLite> noiseCorral;
+    Ref<FastNoiseLite> noiseSand;
+    Ref<FastNoiseLite> noiseRock;
+    Ref<FastNoiseLite> noiseKelp;
+    Ref<FastNoiseLite> noiseLavarock;
+    Ref<FastNoiseLite> noiseSection;
+    Ref<FastNoiseLite> noiseBlend;
+
+
+    // NoiseTexture resources
     Ref<NoiseTexture2D> m_noiseCorral;
     Ref<NoiseTexture2D> m_noiseSand;
     Ref<NoiseTexture2D> m_noiseRock;
@@ -64,6 +75,9 @@ private:
 
     bool load_resources();
     bool cache_resources();
+
+    Ref<NoiseTexture2D> create_noise_texture(const Ref<FastNoiseLite>& noise, int width, int height, bool seamless);
+
 
     int m_chunkSize = 0; // Number of quads per side (grid resolution)
     float m_heightMultiplier = 20.0f; // default
