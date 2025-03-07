@@ -38,26 +38,26 @@ bool ChunkGenerator::load_resources() {
     godot::print_line("🔄 Loading and caching resources...");
 
     // Load noise textures
-    m_noiseCorral   = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/corralNoiseTexture.tres", "NoiseTexture2D Corral");
-    m_noiseSand     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/sandNoiseTexture.tres", "NoiseTexture2D Sand");
-    m_noiseRock     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/rockNoiseTexture.tres", "NoiseTexture2D Rock");
-    m_noiseKelp     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/kelpNoiseTexture.tres", "NoiseTexture2D Kelp");
-    m_noiseLavarock = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/lavaRockNoiseTexture.tres", "NoiseTexture2D Lavarock");
-    m_noiseSection  = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/sectionNoiseTexture.tres", "NoiseTexture2D Section");
-    m_noiseBlend    = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/texture/blendNoiseTexture.tres", "NoiseTexture2D Blend");
+    m_noiseCorral   = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/corralNoiseTexture.tres", "NoiseTexture2D corral");
+    m_noiseSand     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sandNoiseTexture.tres", "NoiseTexture2D sand");
+    m_noiseRock     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/rockNoiseTexture.tres", "NoiseTexture2D rock");
+    m_noiseKelp     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/kelpNoiseTexture.tres", "NoiseTexture2D kelp");
+    m_noiseLavarock = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/lavaRockNoiseTexture.tres", "NoiseTexture2D lavarock");
+    m_noiseSection  = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sectionNoiseTexture.tres", "NoiseTexture2D Section");
+    m_noiseBlend    = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/blendNoiseTexture.tres", "NoiseTexture2D Blend");
 
-    if (m_noiseCorral.is_valid())   m_biomeNoises.insert("Corral", m_noiseCorral);
-    if (m_noiseSand.is_valid())     m_biomeNoises.insert("Sand", m_noiseSand);
-    if (m_noiseRock.is_valid())     m_biomeNoises.insert("Rock", m_noiseRock);
-    if (m_noiseKelp.is_valid())     m_biomeNoises.insert("Kelp", m_noiseKelp);
-    if (m_noiseLavarock.is_valid()) m_biomeNoises.insert("Lavarock", m_noiseLavarock);
+    if (m_noiseCorral.is_valid())   m_biomeNoises.insert("corral", m_noiseCorral);
+    if (m_noiseSand.is_valid())     m_biomeNoises.insert("sand", m_noiseSand);
+    if (m_noiseRock.is_valid())     m_biomeNoises.insert("rock", m_noiseRock);
+    if (m_noiseKelp.is_valid())     m_biomeNoises.insert("kelp", m_noiseKelp);
+    if (m_noiseLavarock.is_valid()) m_biomeNoises.insert("lavarock", m_noiseLavarock);
 
     // Load biome textures
-    corral_tex   = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/corral.png", "Corral Texture");
-    sand_tex     = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/sand.png", "Sand Texture");
-    rock_tex     = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/dark.png", "Rock Texture");
-    kelp_tex     = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/green.png", "Kelp Texture");
-    lavarock_tex = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/orange.png", "Lavarock Texture");
+    corral_tex   = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/corral.png", "corral Texture");
+    sand_tex     = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/sand.png", "sand Texture");
+    rock_tex     = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/dark.png", "rock Texture");
+    kelp_tex     = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/green.png", "kelp Texture");
+    lavarock_tex = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/orange.png", "lavarock Texture");
 
     if (corral_tex.is_null() || sand_tex.is_null() || rock_tex.is_null() ||
         kelp_tex.is_null() || lavarock_tex.is_null()) {
@@ -86,7 +86,7 @@ void ChunkGenerator::initialize(int chunk_size) {
         godot::print_line("resources failed to load");
     }
 
-    bool resources_cached = cache_resources();
+    bool resources_cached = cache_resources(); // TODO: test and ask gpt: forbedringer/tanker
     if (!resources_cached) {
         godot::print_line("resources failed to cache");
     }
