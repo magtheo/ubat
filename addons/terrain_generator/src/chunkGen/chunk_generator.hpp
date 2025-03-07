@@ -62,7 +62,8 @@ private:
     Ref<Texture2D> kelp_tex;
     Ref<Texture2D> lavarock_tex;
 
-    void load_resources();
+    bool load_resources();
+    bool cache_resources();
 
     int m_chunkSize = 0; // Number of quads per side (grid resolution)
     float m_heightMultiplier = 20.0f; // default

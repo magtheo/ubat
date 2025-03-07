@@ -20,6 +20,7 @@
 
 #include "../utils/SingletonAccessor.hpp"
 #include "../utils/ResourceLoaderHelper.hpp"
+#include "variant/variant.hpp"
 
 
 using namespace godot;
@@ -33,7 +34,7 @@ void ChunkGenerator::_init() {}
 // TODO: implement Memory Pooling: The C++ code frequently uses memnew() which could be replaced with memory pool allocations.
 // TODO: implement LOD with propper vertex stitching
 
-void ChunkGenerator::load_resources() {
+bool ChunkGenerator::load_resources() {
     godot::print_line("🔄 Loading and caching resources...");
 
     // Load noise textures
@@ -72,6 +73,7 @@ void ChunkGenerator::load_resources() {
     } else {
         godot::print_line("❌ Failed to load terrain shader. Check your path.");
     }
+    return true;
 }
 
 
@@ -79,13 +81,33 @@ void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;
     godot::print_line("ChunkGenerator initialized with chunk size: ", m_chunkSize);
 
-    load_resources();
+    bool resources_are_loaded = load_resources();
+    if (!resources_are_loaded) {
+        godot::print_line("resources failed to load");
+    }
+
+    bool resources_cached = cache_resources();
+    if (!resources_cached) {
+        godot::print_line("resources failed to cache");
+    }
+
     
-    // Important: Pre-cache all noise images at initialization time
-    godot::print_line("ChunkGenerator: Pre-caching noise images");
-    
-     // Cache blend noise image
-     if (m_noiseBlend.is_valid()) {
+     
+    // Get BiomeManager and BiomeMask singletons
+    biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
+    if (!biome_manager_node) {
+        godot::print_line("❌ ChunkGenerator: BiomeManager not found at initialization!");
+    }
+
+    biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
+    if (!biome_mask_node) {
+        godot::print_line("❌ ChunkGenerator: BiomeMask not found at initialization!");
+    }
+}
+
+bool ChunkGenerator::cache_resources(){
+    // Cache blend noise image
+    if (m_noiseBlend.is_valid()) {
         m_blendNoiseImage = m_noiseBlend->get_image();
         if (m_blendNoiseImage.is_valid()) {
             godot::print_line("✅ Cached blend noise image, size: ",
@@ -112,17 +134,7 @@ void ChunkGenerator::initialize(int chunk_size) {
             }
         }
     }
-
-    // Get BiomeManager and BiomeMask singletons
-    biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
-    if (!biome_manager_node) {
-        godot::print_line("❌ ChunkGenerator: BiomeManager not found at initialization!");
-    }
-
-    biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
-    if (!biome_mask_node) {
-        godot::print_line("❌ ChunkGenerator: BiomeMask not found at initialization!");
-    }
+    return true;
 }
 
 void ChunkGenerator::_bind_methods() {
