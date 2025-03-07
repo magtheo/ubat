@@ -36,21 +36,60 @@ void ChunkGenerator::_init() {}
 
 bool ChunkGenerator::load_resources() {
     godot::print_line("🔄 Loading and caching resources...");
+    bool all_resources_loaded = true;
 
     // Load noise textures
-    m_noiseCorral   = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/corralNoiseTexture.tres", "NoiseTexture2D corral");
-    m_noiseSand     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sandNoiseTexture.tres", "NoiseTexture2D sand");
-    m_noiseRock     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/rockNoiseTexture.tres", "NoiseTexture2D rock");
-    m_noiseKelp     = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/kelpNoiseTexture.tres", "NoiseTexture2D kelp");
+    m_noiseCorral = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/corralNoiseTexture.tres", "NoiseTexture2D corral");
+    if (!m_noiseCorral.is_valid()) {
+        godot::print_line("❌ Failed to load corral noise texture");
+        all_resources_loaded = false;
+    }
+    m_noiseSand = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sandNoiseTexture.tres", "NoiseTexture2D sand");
+    if (!m_noiseSand.is_valid()) {
+        godot::print_line("❌ Failed to load sand noise texture");
+        all_resources_loaded = false;
+    }
+    
+    m_noiseRock = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/rockNoiseTexture.tres", "NoiseTexture2D rock");
+    if (!m_noiseRock.is_valid()) {
+        godot::print_line("❌ Failed to load rock noise texture");
+        all_resources_loaded = false;
+    }
+    
+    m_noiseKelp = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/kelpNoiseTexture.tres", "NoiseTexture2D kelp");
+    if (!m_noiseKelp.is_valid()) {
+        godot::print_line("❌ Failed to load kelp noise texture");
+        all_resources_loaded = false;
+    }
+    
     m_noiseLavarock = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/lavaRockNoiseTexture.tres", "NoiseTexture2D lavarock");
-    m_noiseSection  = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sectionNoiseTexture.tres", "NoiseTexture2D Section");
-    m_noiseBlend    = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/blendNoiseTexture.tres", "NoiseTexture2D Blend");
+    if (!m_noiseLavarock.is_valid()) {
+        godot::print_line("❌ Failed to load lavarock noise texture");
+        all_resources_loaded = false;
+    }
+    
+    m_noiseSection = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/sectionNoiseTexture.tres", "NoiseTexture2D section");
+    if (!m_noiseSection.is_valid()) {
+        godot::print_line("❌ Failed to load section noise texture");
+        all_resources_loaded = false;
+    }
+    
+    m_noiseBlend = ResourceLoaderHelper::load_cached<NoiseTexture2D>("res://project/terrain/noise/textures/blendNoiseTexture.tres", "NoiseTexture2D blend");
+    if (!m_noiseBlend.is_valid()) {
+        godot::print_line("❌ Failed to load blend noise texture");
+        all_resources_loaded = false;
+    }
+
+    // Add biome noises to dictionary (only if valid)
+    m_biomeNoises.clear(); // Clear existing entries to avoid stale references
 
     if (m_noiseCorral.is_valid())   m_biomeNoises.insert("corral", m_noiseCorral);
     if (m_noiseSand.is_valid())     m_biomeNoises.insert("sand", m_noiseSand);
     if (m_noiseRock.is_valid())     m_biomeNoises.insert("rock", m_noiseRock);
     if (m_noiseKelp.is_valid())     m_biomeNoises.insert("kelp", m_noiseKelp);
     if (m_noiseLavarock.is_valid()) m_biomeNoises.insert("lavarock", m_noiseLavarock);
+
+    godot::print_line("✓ Biome noise dictionary contains ", m_biomeNoises.size(), " entries");
 
     // Load biome textures
     corral_tex   = ResourceLoaderHelper::load_cached<Texture2D>("res://textures/corral.png", "corral Texture");
@@ -62,6 +101,7 @@ bool ChunkGenerator::load_resources() {
     if (corral_tex.is_null() || sand_tex.is_null() || rock_tex.is_null() ||
         kelp_tex.is_null() || lavarock_tex.is_null()) {
         godot::print_line("❌ One or more biome textures failed to load.");
+        all_resources_loaded = false;
     } else {
         godot::print_line("✅ All biome textures loaded successfully.");
     }
@@ -70,10 +110,11 @@ bool ChunkGenerator::load_resources() {
     m_terrainShader = ResourceLoaderHelper::load_cached<Shader>("res://project/terrain/shader/chunkShader.gdshader", "Terrain Shader");
     if (m_terrainShader.is_valid()) {
         godot::print_line("✅ Terrain shader loaded once at initialization.");
+        all_resources_loaded = false;
     } else {
         godot::print_line("❌ Failed to load terrain shader. Check your path.");
     }
-    return true;
+    return all_resources_loaded;
 }
 
 
@@ -459,10 +500,6 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
             blendNoise = pixel.r; // Assuming noise value is stored in the red channel
         }
     }
-    for (KeyValue<String, Ref<Image>> &E : m_cachedBiomeNoiseImages) {
-        String biome_name = E.key;
-        Ref<Image> image = E.value;
-    }
     
 
     float blendedHeight = 0.0f;
@@ -478,9 +515,7 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
                 // Try to fetch a cached image for this biome noise
                 Ref<Image> noise_image;
                 if (m_cachedBiomeNoiseImages.has(biome_name)) {
-                    if (m_cachedBiomeNoiseImages.has(biome_name)) {
-                        Ref<Image> image = E.value;
-                    }
+                    Ref<Image> image = E.value;
 
                 } else {
                     noise_image = biome_tex->get_image();
