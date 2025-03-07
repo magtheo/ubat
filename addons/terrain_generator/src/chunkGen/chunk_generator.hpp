@@ -88,7 +88,7 @@ private:
     HashMap<Vector2i, Ref<ImageTexture>> m_biomeBlendTextureCache;
     HashMap<Vector2i, Ref<ImageTexture>> m_heightmapTextureCache;
     Ref<ShaderMaterial> m_sharedMaterial;
-    Ref<Shader> m_terrainShader; // Add this line
+    Ref<Shader> m_terrainShader;
 
     // Helper to compute height from biome noise.
     float compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data);

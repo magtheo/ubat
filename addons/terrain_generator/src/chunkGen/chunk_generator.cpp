@@ -81,7 +81,7 @@ bool ChunkGenerator::load_resources() {
     if (m_terrainShader.is_valid()) {
         godot::print_line("✅ Terrain shader loaded once at initialization.");
     } else {
-        godot::print_line("❌ Failed to load terrain shader. Check your path.");
+        godot::print_line("❌ Failed to load terrain shader. Check your path.", m_terrainShader);
     }
     
     return true;
@@ -361,11 +361,12 @@ Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx,
     }
 
     // Create a new image with explicit dimensions
-    Ref<Image> image;
-    image.instantiate();
+    // Ref<Image> image;
+    // image.instantiate();
     
+    godot::print_line("Chunksize:", m_chunkSize);
     // IMPORTANT: Create the image with proper dimensions before using it
-    image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
+    Ref<Image> image = image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
     
     godot::print_line("Biome blend image created with dimensions: ", 
         image->get_width(), "x", image->get_height());
@@ -401,11 +402,11 @@ Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture_with_data(int cx, i
     }
     
     // Create a new image with explicit dimensions
-    Ref<Image> image;
-    image.instantiate();
+    // Ref<Image> image;
+    // image.instantiate();
     
     // IMPORTANT: Create the image with proper dimensions first
-    image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
+    Ref<Image> image = image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
     
     godot::print_line("Heightmap image created with dimensions: ", 
         image->get_width(), "x", image->get_height());
@@ -509,13 +510,17 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
         }
     }
     
-
     float blendedHeight = 0.0f;
     float totalWeight = 0.0f;
+    
+    // Iterate through the biome weights dictionary keys
     Array keys = biome_weights_dict.keys();
-    for (KeyValue<String, Ref<Image>> &E : m_cachedBiomeNoiseImages) {
-        String biome_name = E.key;
+    for (int i = 0; i < keys.size(); i++) {
+        String biome_name = keys[i];
         float weight = (float)biome_weights_dict[biome_name];
+        
+        // Skip negligible weights
+        if (weight < 0.001f) continue;
         
         if (m_biomeNoises.has(biome_name)) {
             Ref<NoiseTexture2D> biome_tex = m_biomeNoises[biome_name];
@@ -523,14 +528,14 @@ float ChunkGenerator::compute_height(float world_x, float world_y, const Color &
                 // Try to fetch a cached image for this biome noise
                 Ref<Image> noise_image;
                 if (m_cachedBiomeNoiseImages.has(biome_name)) {
-                    Ref<Image> image = E.value;
-
+                    noise_image = m_cachedBiomeNoiseImages[biome_name];
                 } else {
                     noise_image = biome_tex->get_image();
                     if (noise_image.is_valid()) {
                         m_cachedBiomeNoiseImages.insert(biome_name, noise_image);
                     }
                 }
+                
                 if (noise_image.is_valid()) {
                     int img_width = noise_image->get_width();
                     int img_height = noise_image->get_height();
