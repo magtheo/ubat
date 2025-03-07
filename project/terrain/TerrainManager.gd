@@ -3,10 +3,18 @@ extends Node
 var libchunk_generator  # reference to our C++ class
 @onready var player: CharacterBody3D = $"../../CameraController"
 @onready var thread_pool = $ThreadPool  # The node we wrote above
+@onready var biome_manager = get_node("/root/BiomeManager")
+@onready var biome_mask = get_node("/root/BiomeMask")
+
 
 # Basic settings
 const CHUNK_SIZE = 64
 var seedsRandomized = false
+
+var biome_mask_ready = false
+var biome_manager_ready = false
+
+var system_ready = false
 
 # We'll track which chunks are loaded to avoid duplicates
 var loaded_chunks = {}
@@ -20,6 +28,10 @@ var prev_chunk_y = null
 var cleanup_distance = 5
 
 func _ready():
+	# Connect module readiness
+	biome_mask.connect("biome_mask_ready", Callable(self, "_on_biome_mask_ready"))
+	biome_manager.connect("biome_manager_ready", Callable(self, "_on_biome_manager_ready"))
+
 	# Create the GD extension class
 	libchunk_generator = ChunkGenerator.new()
 	if libchunk_generator:
@@ -40,23 +52,28 @@ func _ready():
 	seed_node.noises_randomized.connect(_on_noises_randomized)
 	seed_node.randomize_noises()
 
+
+func _on_biome_mask_ready():
+	biome_mask_ready = true
+	print("BiomeMask is ready.")
+	_check_if_ready_to_start()
+
+func _on_biome_manager_ready():
+	biome_manager_ready = true
+	print("BiomeManager is ready.")
+	_check_if_ready_to_start()
+
 func _on_noises_randomized():
 	print("TerrainManager.gd: Noises randomized, refreshing chunks")
 	seedsRandomized = true
-	
-	# Clear loaded chunks
-	for chunk_pos in loaded_chunks:
-		# Remove chunk from scene
-		var chunk_name = "Chunk_%d_%d" % [chunk_pos.x, chunk_pos.y]
-		var chunk = get_node_or_null(chunk_name)
-		if chunk:
-			chunk.queue_free()
+	_check_if_ready_to_start()
 
-	loaded_chunks.clear()
-
-	# Load initial chunks around (0,0)
-	var player_pos = Vector2(0, 0)
-	load_chunks_around_player(player_pos)
+func _check_if_ready_to_start():
+	if biome_mask_ready and biome_manager_ready and seedsRandomized:
+		print("✅ All systems ready. Starting terrain generation.")
+		system_ready = true
+	else:
+		print("⏳ Waiting for all systems...")
 
 func load_chunks_around_player(player_pos: Vector2):
 	var chunk_x = int(player_pos.x / CHUNK_SIZE)
@@ -103,7 +120,7 @@ func request_chunk(cx: int, cy: int):
 		else:
 			return # Already requested and in progress
 	loaded_chunks[pos] = false
-	
+
 	# Enqueue the chunk task in the pool
 	thread_pool.enqueue_chunk(cx, cy, CHUNK_SIZE)
 

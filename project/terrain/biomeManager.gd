@@ -1,6 +1,7 @@
 # BiomeManager.gd
 extends Node
 
+signal biome_manager_ready
 # -----------------------------------------------------------------------------
 # This dictionary defines biome sections.
 # Each entry maps a section key to a dictionary that includes:
@@ -73,3 +74,8 @@ func _get_section_from_color(color: Color) -> String:
 		return "section2"
 	else:
 		return "section3"
+
+
+func _ready():
+	emit_signal("biome_mask_ready")
+	print("✅ BiomeManager is fully loaded and ready.")
