@@ -6,9 +6,10 @@ var libchunk_generator  # reference to our C++ class
 @onready var biome_manager = get_node("/root/BiomeManager")
 @onready var biome_mask = get_node("/root/BiomeMask")
 
+@export var view_distance = 5
 
 # Basic settings
-const CHUNK_SIZE = 64
+const CHUNK_SIZE = 64/4
 var seedsRandomized = false
 
 var biome_mask_ready = false
@@ -79,7 +80,7 @@ func load_chunks_around_player(player_pos: Vector2):
 	var chunk_x = int(player_pos.x / CHUNK_SIZE)
 	var chunk_y = int(player_pos.y / CHUNK_SIZE)
 	
-	var view_distance = 3
+
 	var chunks_to_load = []
 	
 	# Calculate distances and prepare prioritized loading
