@@ -40,6 +40,10 @@ public:
     void cleanup_chunk_caches(Vector2i min_chunk, Vector2i max_chunk);
     bool is_boss_area(const Color &color);
 
+    // Debugging
+    bool debug_biome_distribution = true;
+    void print_chunk_biome_distribution(int cx, int cy,  const Dictionary &biome_data, bool debug_biome_distribution);
+
 private:
     //  FastNoiseLite resources
     Ref<FastNoiseLite> noiseCorral;
