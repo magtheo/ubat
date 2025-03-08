@@ -366,6 +366,7 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
         godot::print_line("ERROR Failed to create textures for chunk: ", cx, ", ", cy);
     }
 
+    print_chunk_biome_distribution(cx, cy, biome_data, debug_biome_distribution);
     return mesh_instance;
 }
 
@@ -438,11 +439,53 @@ Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx,
     godot::print_line("Biome blend image created with dimensions: ", 
         image->get_width(), "x", image->get_height());
     
+    Dictionary weights_data;
+    if (biome_data.has("weights")) {
+        Variant weights_var = biome_data["weights"];
+        if (weights_var.get_type() == Variant::DICTIONARY) {
+            weights_data = (Dictionary)weights_var;
+        } else {
+            godot::print_line("Error: 'weights' is not a Dictionary");
+            return Ref<ImageTexture>();
+        }
+    } else {
+        godot::print_line("Error: 'weights' dictionary missing from biome data");
+        return Ref<ImageTexture>();
+    }
+
     // Set pixel values using pre-generated biome data
     for (int y = 0; y < m_chunkSize; y++) {
         for (int x = 0; x < m_chunkSize; x++) {
-            Color biomeColor = get_biome_color_from_data(x, y, biome_data);
-            image->set_pixel(x, y, biomeColor);
+            // Get the dictionary of weights for this pixel
+            String weights_key = String("weights_") + String::num_int64(x) + "_" + String::num_int64(y);
+            
+            // Default to zero for all weights
+            float corral_weight = 0.0f;
+            float sand_weight = 0.0f;
+            float rock_weight = 0.0f;
+            float kelp_weight = 0.0f;
+            float lavarock_weight = 0.0f;
+            
+            // Access the specific weights dictionary
+            if (weights_data.has(weights_key)) {
+                Variant specific_weights_var = weights_data[weights_key];
+                if (specific_weights_var.get_type() == Variant::DICTIONARY) {
+                    Dictionary specific_weights = (Dictionary)specific_weights_var;
+                    
+                    // Extract weights for each biome
+                    if (specific_weights.has("corral")) corral_weight = (float)(real_t)specific_weights["corral"];
+                    if (specific_weights.has("sand")) sand_weight = (float)(real_t)specific_weights["sand"];
+                    if (specific_weights.has("rock")) rock_weight = (float)(real_t)specific_weights["rock"];
+                    if (specific_weights.has("kelp")) kelp_weight = (float)(real_t)specific_weights["kelp"];
+                }
+            }
+            
+            // Encode in RGBA (you can use all 4 channels)
+            Color pixel_color(corral_weight, sand_weight, rock_weight, kelp_weight);
+            image->set_pixel(x, y, pixel_color);
+            
+            // Note: we can only encode 4 weights in RGBA, so lavarock would need special handling
+            // if all 5 biomes can be blended simultaneously
         }
     }
     
@@ -455,6 +498,74 @@ Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx,
     m_biomeBlendTextureCache[chunk_pos] = texture;
     
     return texture;
+}
+
+void ChunkGenerator::print_chunk_biome_distribution(int cx, int cy, const Dictionary &biome_data, bool debug_biome_distribution) {
+    // Only run this in debug builds or when explicitly requested
+    if ( debug_biome_distribution) {
+        
+        // Get the weights dictionary
+        if (!biome_data.has("weights")) {
+            return;
+        }
+        
+        Dictionary weights_data = (Dictionary)biome_data["weights"];
+        
+        // Track total weights for each biome
+        float total_corral = 0.0f;
+        float total_sand = 0.0f;
+        float total_rock = 0.0f;
+        float total_kelp = 0.0f;
+        float total_lavarock = 0.0f;
+        
+        // Sample only a subset of pixels for performance
+        // For a 64x64 chunk, sampling every 8th pixel gives us 64 samples (8x8 grid)
+        int sample_step = m_chunkSize / 8;
+        if (sample_step < 1) sample_step = 1;
+        
+        int samples_count = 0;
+        
+        // Process the samples
+        for (int y = 0; y < m_chunkSize; y += sample_step) {
+            for (int x = 0; x < m_chunkSize; x += sample_step) {
+                String weights_key = String("weights_") + String::num_int64(x) + "_" + String::num_int64(y);
+                
+                if (weights_data.has(weights_key)) {
+                    Dictionary specific_weights = (Dictionary)weights_data[weights_key];
+                    
+                    if (specific_weights.has("corral")) total_corral += (float)(real_t)specific_weights["corral"];
+                    if (specific_weights.has("sand")) total_sand += (float)(real_t)specific_weights["sand"];
+                    if (specific_weights.has("rock")) total_rock += (float)(real_t)specific_weights["rock"];
+                    if (specific_weights.has("kelp")) total_kelp += (float)(real_t)specific_weights["kelp"];
+                    if (specific_weights.has("lavarock")) total_lavarock += (float)(real_t)specific_weights["lavarock"];
+                    
+                    samples_count++;
+                }
+            }
+        }
+        
+        // Calculate the total weight
+        float total_weight = total_corral + total_sand + total_rock + total_kelp + total_lavarock;
+        
+        // Calculate percentages (avoid division by zero)
+        if (total_weight > 0.001f) {
+            float corral_pct = (total_corral / total_weight) * 100.0f;
+            float sand_pct = (total_sand / total_weight) * 100.0f;
+            float rock_pct = (total_rock / total_weight) * 100.0f;
+            float kelp_pct = (total_kelp / total_weight) * 100.0f;
+            float lavarock_pct = (total_lavarock / total_weight) * 100.0f;
+            
+            // Only print biomes with significant presence (> 1%)
+            String biome_info = "📊 Chunk(" + String::num_int64(cx) + "," + String::num_int64(cy) + ") Biomes: ";
+            if (corral_pct > 1.0f) biome_info += "Corral:" + String::num(corral_pct, 1) + "% ";
+            if (sand_pct > 1.0f) biome_info += "Sand:" + String::num(sand_pct, 1) + "% ";
+            if (rock_pct > 1.0f) biome_info += "Rock:" + String::num(rock_pct, 1) + "% ";
+            if (kelp_pct > 1.0f) biome_info += "Kelp:" + String::num(kelp_pct, 1) + "% ";
+            if (lavarock_pct > 1.0f) biome_info += "Lavarock:" + String::num(lavarock_pct, 1) + "% ";
+            
+            godot::print_line(biome_info);
+        }
+    }
 }
 
 
