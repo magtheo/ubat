@@ -4,8 +4,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/color.hpp>
-#include <vector>
-#include <string>
+#include <godot_cpp/classes/timer.hpp>
 #include "godot_cpp/classes/fast_noise_lite.hpp"
 #include "godot_cpp/classes/node.hpp"
 #include "godot_cpp/variant/dictionary.hpp"
@@ -35,6 +34,7 @@ public:
 
     // Exposed methods.
     void initialize(int chunk_size);
+    void _ready();
     MeshInstance3D *generate_chunk_with_biome_data(int cx, int cy, const Dictionary &biome_data);
     Dictionary generate_biome_data(int cx, int cy, int chunk_size);
     void cleanup_chunk_caches(Vector2i min_chunk, Vector2i max_chunk);
@@ -75,6 +75,9 @@ private:
 
     bool load_resources();
     bool cache_resources();
+    void wait_for_texture_async(Ref<NoiseTexture2D> texture, String biome_key);
+    void on_texture_ready(Ref<NoiseTexture2D> texture, String biome_key, Timer* timer);
+
 
     Ref<NoiseTexture2D> create_noise_texture(const Ref<FastNoiseLite>& noise, int width, int height, bool seamless);
 

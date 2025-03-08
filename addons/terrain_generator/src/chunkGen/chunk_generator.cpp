@@ -16,6 +16,7 @@
 #include <godot_cpp/templates/hash_map.hpp>
 #include <godot_cpp/godot.hpp>
 #include <cmath>
+#include <godot_cpp/classes/timer.hpp>
 
 #include "../utils/SingletonAccessor.hpp"
 #include "../utils/ResourceLoaderHelper.hpp"
@@ -70,17 +71,17 @@ bool ChunkGenerator::load_resources() {
 
     if (corral_tex.is_null() || sand_tex.is_null() || rock_tex.is_null() ||
         kelp_tex.is_null() || lavarock_tex.is_null()) {
-        godot::print_line("❌ One or more biome textures failed to load.");
+        godot::print_line("ERROR One or more biome textures failed to load.");
     } else {
-        godot::print_line("✅ All biome textures loaded successfully.");
+        godot::print_line("SUCCESS All biome textures loaded successfully.");
     }
 
     // Load terrain shader
     m_terrainShader = ResourceLoaderHelper::load_cached<Shader>("res://project/terrain/shader/chunkShader.gdshader", "Terrain Shader");
     if (m_terrainShader.is_valid()) {
-        godot::print_line("✅ Terrain shader loaded once at initialization.");
+        godot::print_line("SUCCESS Terrain shader loaded once at initialization.");
     } else {
-        godot::print_line("❌ Failed to load terrain shader. Check your path.", m_terrainShader);
+        godot::print_line("ERROR Failed to load terrain shader. Check your path.", m_terrainShader);
     }
     
     return true;
@@ -92,13 +93,13 @@ Ref<NoiseTexture2D> ChunkGenerator::create_noise_texture(const Ref<FastNoiseLite
     texture.instantiate();
     
     if (!texture.is_valid()) {
-        godot::print_line("❌ Failed to instantiate NoiseTexture2D");
+        godot::print_line("ERROR Failed to instantiate NoiseTexture2D");
         return Ref<NoiseTexture2D>();
     }
     
     // Check if the noise resource is valid
     if (!noise.is_valid()) {
-        godot::print_line("❌ Provided FastNoiseLite is invalid, creating default noise");
+        godot::print_line("ERROR Provided FastNoiseLite is invalid, creating default noise");
         
         // Create a default noise if the provided one is invalid
         Ref<FastNoiseLite> default_noise;
@@ -121,10 +122,11 @@ Ref<NoiseTexture2D> ChunkGenerator::create_noise_texture(const Ref<FastNoiseLite
     // Force the texture to generate immediately to catch any issues
     texture->set_generate_mipmaps(true);
     
-    godot::print_line("✅ Successfully created noise texture");
+    godot::print_line("SUCCESS Successfully created noise texture");
     return texture;
 }
 
+// initialize() should only handle data-independent setup—things that don’t require the node to be inside the scene tree.
 void ChunkGenerator::initialize(int chunk_size) {
     m_chunkSize = chunk_size;
     godot::print_line("ChunkGenerator initialized with chunk size: ", m_chunkSize);
@@ -134,42 +136,52 @@ void ChunkGenerator::initialize(int chunk_size) {
         godot::print_line("resources failed to load");
     }
 
-    bool resources_cached = cache_resources(); // TODO: test and ask gpt: forbedringer/tanker
-    if (!resources_cached) {
-        godot::print_line("resources failed to cache");
-    }
-
+    // bool resources_cached = cache_resources(); // TODO: test and ask gpt: forbedringer/tanker
+    // if (!resources_cached) {
+    //     godot::print_line("resources failed to cache");
+    // }
     
      
     // Get BiomeManager and BiomeMask singletons
     biome_manager_node = SingletonAccessor::get_singleton("BiomeManager");
     if (!biome_manager_node) {
-        godot::print_line("❌ ChunkGenerator: BiomeManager not found at initialization!");
+        godot::print_line("ERROR ChunkGenerator: BiomeManager not found at initialization!");
     }
 
     biome_mask_node = SingletonAccessor::get_singleton("BiomeMask");
     if (!biome_mask_node) {
-        godot::print_line("❌ ChunkGenerator: BiomeMask not found at initialization!");
+        godot::print_line("ERROR ChunkGenerator: BiomeMask not found at initialization!");
     } else {
         bool ready = biome_mask_node->is_node_ready();
         if (ready == false ) {
-            godot::print_line("❌ BiomeMask is not ready. Terrain generation should wait.");
+            godot::print_line("ERROR BiomeMask is not ready. Terrain generation should wait.");
         } else {
-            godot::print_line("✅ BiomeMask is ready for use.");
+            godot::print_line("SUCCESS BiomeMask is ready for use.");
         }
     }
 }
 
-bool ChunkGenerator::cache_resources(){
+void ChunkGenerator::_ready() {
+    godot::print_line("✅ ChunkGenerator is now inside the scene tree!");
+
+    // Ensure biome mask is ready before caching resources
+    if (!biome_mask_node || !biome_mask_node->is_node_ready()) {
+        godot::print_line("⚠️ BiomeMask is not ready in _ready(), terrain generation should wait.");
+        return;
+    }
+
+    // Now it's safe to cache resources (uses timers inside scene tree)
+    bool resources_cached = cache_resources();
+    if (!resources_cached) {
+        godot::print_line("❌ Resources failed to cache in _ready()!");
+    }
+}
+
+
+bool ChunkGenerator::cache_resources() {
     // Cache blend noise image
     if (m_noiseBlend.is_valid()) {
-        m_blendNoiseImage = m_noiseBlend->get_image();
-        if (m_blendNoiseImage.is_valid()) {
-            godot::print_line("✅ Cached blend noise image, size: ",
-                m_blendNoiseImage->get_width(), "x", m_blendNoiseImage->get_height());
-        } else {
-            godot::print_line("❌ Failed to cache blend noise image - null image");
-        }
+        wait_for_texture_async(m_noiseBlend, "blend");
     } else {
         godot::print_line("❌ m_noiseBlend is not valid");
     }
@@ -178,19 +190,59 @@ bool ChunkGenerator::cache_resources(){
     for (KeyValue<String, Ref<NoiseTexture2D>> &E : m_biomeNoises) {
         String key = E.key;
         Ref<NoiseTexture2D> noise_tex = E.value;
+
         if (noise_tex.is_valid()) {
-            Ref<Image> noise_img = noise_tex->get_image();
-            if (noise_img.is_valid()) {
-                m_cachedBiomeNoiseImages[key] = noise_img;
-                godot::print_line("✅ Cached biome noise image for: ", key,
-                    " size: ", noise_img->get_width(), "x", noise_img->get_height());
-            } else {
-                godot::print_line("❌ Failed to cache biome noise image for: ", key, " - null image");
-            }
+            wait_for_texture_async(noise_tex, key);
         }
     }
     return true;
 }
+
+
+void ChunkGenerator::wait_for_texture_async(Ref<NoiseTexture2D> texture, String biome_key) {
+    Timer* timer = memnew(Timer);
+    timer->set_wait_time(0.1);  // Check every 100ms
+    timer->set_one_shot(false); // Keep checking until texture is ready
+    
+    if (is_inside_tree()) {
+        add_child(timer);
+    } else {
+        godot::print_line("⚠️ Timer not added to scene tree because ChunkGenerator is not inside the tree yet!");
+    }
+
+    timer->connect("timeout", callable_mp(this, &ChunkGenerator::on_texture_ready).bind(texture, biome_key));
+    
+    add_child(timer); // Add timer to scene tree
+    timer->start();
+}
+
+void ChunkGenerator::on_texture_ready(Ref<NoiseTexture2D> texture, String biome_key, Timer* timer) {
+    if (!texture.is_valid()) {
+        godot::print_line("❌ Invalid noise texture: ", biome_key);
+        return;
+    }
+    
+    Ref<Image> noise_img = texture->get_image();
+    if (noise_img.is_valid()) {
+        // Store it in cache
+        if (biome_key == "blend") {
+            m_blendNoiseImage = noise_img;
+        } else {
+            m_cachedBiomeNoiseImages[biome_key] = noise_img;
+        }
+
+        godot::print_line("✅ Cached biome noise image for: ", biome_key,
+            " size: ", noise_img->get_width(), "x", noise_img->get_height());
+
+        // Stop the timer and remove it
+        timer->stop();
+        remove_child(timer);
+        timer->queue_free();
+    } else {
+        godot::print_line("⏳ Waiting for noise texture to be generated for: ", biome_key);
+    }
+}
+
 
 void ChunkGenerator::_bind_methods() {
     // Register public functions so they can be called from GDScript
@@ -235,20 +287,21 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
     for (int z = 0; z <= resolution; z++) {
         for (int x = 0; x <= resolution; x++) {
             float xpos = float(x) / resolution * m_chunkSize;
-        float zpos = float(z) / resolution * m_chunkSize;
+            float zpos = float(z) / resolution * m_chunkSize;
 
-        float worldX = cx * m_chunkSize + xpos;
-        float worldZ = cy * m_chunkSize + zpos;
+            float worldX = cx * m_chunkSize + xpos;
+            float worldZ = cy * m_chunkSize + zpos;
 
-        // Sample biome color
-        Color biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
-        float height = compute_height(worldX, worldZ, biomeColor, biome_data);
+            // Sample biome color
+            Color biomeColor = get_biome_color_from_data(worldX, worldZ, biome_data);
+            float height = compute_height(worldX, worldZ, biomeColor, biome_data);
 
-        // Push vertex
-        vertices.push_back(Vector3(xpos, height * m_heightMultiplier, zpos));
+            // Push vertex        Color biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
 
-        // Push UV
-        uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
+            vertices.push_back(Vector3(xpos, height * m_heightMultiplier, zpos));
+
+            // Push UV
+            uvs.push_back(Vector2(float(x) / float(resolution), float(z) / float(resolution)));
         }
     }
 
@@ -310,7 +363,7 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
         material->set_shader_parameter("height_map",       height_map_texture);
         mesh_instance->set_material_override(material);
     } else {
-        godot::print_line("❌ Failed to create textures for chunk: ", cx, ", ", cy);
+        godot::print_line("ERROR Failed to create textures for chunk: ", cx, ", ", cy);
     }
 
     return mesh_instance;
@@ -322,7 +375,7 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
     Dictionary biome_weights;
 
     if (!biome_mask_node->is_node_ready()) {
-        godot::print_line("❌ Attempted to generate biome data before BiomeMask is ready.");
+        godot::print_line("ERROR Attempted to generate biome data before BiomeMask is ready.");
         return Dictionary();  // Return empty to prevent bad data
     }
 
@@ -339,6 +392,7 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
 
             // Pre-compute and store weights under a string key
             Dictionary weights = get_biome_weights(biome_color);
+            // godot::print_line("Boime weights for: ", cy, ":", cy, ": ", weights);
             String weights_key = String("weights_") + String::num_int64(x) + "_" + String::num_int64(y);
             biome_weights[weights_key] = weights;
         }
@@ -353,12 +407,12 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
 
 
 Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx, int cy, const Dictionary &biome_data) {
-    godot::print_line("Creating biome blend texture for chunk: ", cx, ", ", cy);
+    godot::print_line("Creating biome blend texture for chunk: ", cx, ", ", cy);//,  "| BiomeData: weight:", biome_data["weights"], "color:", biome_data["color"]);
     
     // Check for cached texture first
     Vector2i chunk_pos(cx, cy);
     if (m_biomeBlendTextureCache.has(chunk_pos)) {
-        godot::print_line("✅ Using cached biome blend texture for chunk: ", cx, ", ", cy);
+        godot::print_line("SUCCESS Using cached biome blend texture for chunk: ", cx, ", ", cy);
         return m_biomeBlendTextureCache[chunk_pos];
     }
     
@@ -410,7 +464,7 @@ Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture_with_data(int cx, i
     // Check for cached texture first
     Vector2i chunk_pos(cx, cy);
     if (m_heightmapTextureCache.has(chunk_pos)) {
-        godot::print_line("✅ Using cached heightmap texture for chunk: ", cx, ", ", cy);
+        godot::print_line("SUCCESS Using cached heightmap texture for chunk: ", cx, ", ", cy);
         return m_heightmapTextureCache[chunk_pos];
     }
     
@@ -627,9 +681,9 @@ bool ChunkGenerator::is_boss_area(const Color &color) {
 //     // godot::print_line("chunk_generator: loading shader");
 //     Ref<Shader> shader = ResourceLoader::get_singleton()->load(shader_path);
 //     if (shader.is_null()) {
-//         godot::print_line("❌ Failed to load shader: " + shader_path);
+//         godot::print_line("ERROR Failed to load shader: " + shader_path);
 //     } else {
-//         godot::print_line("✅ Shader loaded successfully: " + shader_path);
+//         godot::print_line("SUCCESS Shader loaded successfully: " + shader_path);
 //     }
 //     return shader;
 // }
