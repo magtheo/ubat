@@ -19,6 +19,9 @@ var biome_sections = {
 	},
 	"section3": {
 		"biomes": {"rock": 0.5, "lavarock": 0.5}
+	},
+	"section_boss": {
+		"biomes": {}  # No blending for boss area
 	}
 }
 
@@ -67,15 +70,17 @@ func is_boss_area(color: Color) -> bool:
 # For this example, we use a simple heuristic based on the red channel.
 # Adjust the logic to match your biome mask image design.
 # -----------------------------------------------------------------------------
+
 func _get_section_from_color(color: Color) -> String:
-	if color.r > 0.7:
-		return "section1"
-	elif color.r > 0.4:
+	var slack = 0.05  # Allow a bit more slack in the color match
+	if abs(color.r - 0.8) < slack and abs(color.g - 0.8) < slack and abs(color.b - 0.8) < slack:
+		return "section1"  # Corral/Sand mix
+	elif color.r > 0.7:
 		return "section2"
 	else:
 		return "section3"
 
 
 func _ready():
-	emit_signal("biome_mask_ready")
+	emit_signal("biome_manager_ready")
 	print("✅ BiomeManager is fully loaded and ready.")
