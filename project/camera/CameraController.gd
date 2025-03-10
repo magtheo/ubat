@@ -38,7 +38,7 @@ func _input(event):
 		lights_on = !lights_on
 		omni_light_3d.visible = lights_on
 		spot_light_3d.visible = lights_on
-		print("Lights toggled:", lights_on)  # Debugging output
+		print("Lights toggled:", lights_on)  # TODO Debugging output
 
 
 func _physics_process(_delta):
