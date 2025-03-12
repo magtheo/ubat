@@ -98,7 +98,8 @@ private:
     Ref<Shader> m_terrainShader;
 
     // Helper to compute height from biome noise.
-    float compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data);
+    float compute_height(float world_x, float world_y, const Dictionary &biome_data);
+    
     Ref<ImageTexture> generate_biome_blend_texture_with_data(int cx, int cy, const Dictionary &biome_data);
     Ref<ImageTexture> generate_heightmap_texture_with_data(int cx, int cy, const Dictionary &biome_data);
     int find_chunk_size_from_data(const Dictionary &biome_data);

@@ -294,7 +294,7 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
 
             // Sample biome color
             Color biomeColor = get_biome_color_from_data(worldX, worldZ, biome_data);
-            float height = compute_height(worldX, worldZ, biomeColor, biome_data);
+            float height = compute_height(worldX, worldZ, biome_data);
 
             // Push vertex        Color biomeColor = get_biome_color_from_data(xpos, zpos, biome_data);
 
@@ -347,7 +347,9 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
     // Example shader parameters
     material->set_shader_parameter("height_scale",     10.0f);
     material->set_shader_parameter("texture_scale",    0.1f);
-    material->set_shader_parameter("blend_sharpness",  5.0f);
+
+    material->set_shader_parameter("blend_min", 0.4f);  // Below this value, use biome 1 only
+    material->set_shader_parameter("blend_max", 0.6f);  // Above this value, use biome 2 only
 
     // Assign the textures you loaded once in initialize()
     material->set_shader_parameter("corral_texture",   corral_tex);
@@ -356,7 +358,7 @@ MeshInstance3D *ChunkGenerator::generate_chunk_with_biome_data(int cx, int cy, c
     material->set_shader_parameter("kelp_texture",     kelp_tex);
     material->set_shader_parameter("lavarock_texture", lavarock_tex);
 
-    material->set_shader_parameter("debug_mode", false);
+    material->set_shader_parameter("debug_mode", 0);
 
     if (biome_blend_texture.is_valid() && height_map_texture.is_valid()) {
         material->set_shader_parameter("biome_blend_map", biome_blend_texture);
@@ -406,14 +408,13 @@ Dictionary ChunkGenerator::generate_biome_data(int cx, int cy, int chunk_size) {
     return biome_data;
 }
 
-
 Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx, int cy, const Dictionary &biome_data) {
-    godot::print_line("Creating biome blend texture for chunk: ", cx, ", ", cy);//,  "| BiomeData: weight:", biome_data["weights"], "color:", biome_data["color"]);
+    godot::print_line("Creating biome blend texture for chunk: ", cx, ", ", cy);
     
     // Check for cached texture first
     Vector2i chunk_pos(cx, cy);
     if (m_biomeBlendTextureCache.has(chunk_pos)) {
-        godot::print_line("SUCCESS Using cached biome blend texture for chunk: ", cx, ", ", cy);
+        godot::print_line("Using cached biome blend texture for chunk: ", cx, ", ", cy);
         return m_biomeBlendTextureCache[chunk_pos];
     }
     
@@ -428,64 +429,67 @@ Ref<ImageTexture> ChunkGenerator::generate_biome_blend_texture_with_data(int cx,
         return Ref<ImageTexture>(); // Return empty reference
     }
 
-    // Create a new image with explicit dimensions
-    // Ref<Image> image;
-    // image.instantiate();
-    
-    godot::print_line("Chunksize:", m_chunkSize);
-    // IMPORTANT: Create the image with proper dimensions before using it
-    Ref<Image> image = image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGB8);
+    // Create a new image with RGBA8 format to store both section color and blend factor
+    Ref<Image> image = image->create(m_chunkSize, m_chunkSize, false, Image::FORMAT_RGBA8);
     
     godot::print_line("Biome blend image created with dimensions: ", 
         image->get_width(), "x", image->get_height());
     
-    Dictionary weights_data;
-    if (biome_data.has("weights")) {
-        Variant weights_var = biome_data["weights"];
-        if (weights_var.get_type() == Variant::DICTIONARY) {
-            weights_data = (Dictionary)weights_var;
-        } else {
-            godot::print_line("Error: 'weights' is not a Dictionary");
-            return Ref<ImageTexture>();
-        }
+    // Extract biome colors and data
+    Dictionary colors_data;
+    if (biome_data.has("colors")) {
+        colors_data = (Dictionary)biome_data["colors"];
     } else {
-        godot::print_line("Error: 'weights' dictionary missing from biome data");
+        godot::print_line("Error: 'colors' dictionary missing from biome data");
         return Ref<ImageTexture>();
     }
+    
+    // Ensure we have blend noise image
+    if (!m_blendNoiseImage.is_valid() && m_noiseBlend.is_valid()) {
+        m_blendNoiseImage = m_noiseBlend->get_image();
+    }
 
-    // Set pixel values using pre-generated biome data
+    // Debug output to verify blend noise
+    if (m_blendNoiseImage.is_valid()) {
+        godot::print_line("SUCCESS: Blend noise image is valid, dimensions: ", 
+            m_blendNoiseImage->get_width(), "x", m_blendNoiseImage->get_height());
+    } else {
+        godot::print_line("WARNING: Blend noise image is NOT valid");
+    }
+    
+    // Set pixel values
     for (int y = 0; y < m_chunkSize; y++) {
         for (int x = 0; x < m_chunkSize; x++) {
-            // Get the dictionary of weights for this pixel
-            String weights_key = String("weights_") + String::num_int64(x) + "_" + String::num_int64(y);
+            // Get the biome color for this pixel (identifies the section)
+            Vector2i color_key(x, y);
+            Color biome_color = Color(1.0, 1.0, 1.0); // Default white
             
-            // Default to zero for all weights
-            float corral_weight = 0.0f;
-            float sand_weight = 0.0f;
-            float rock_weight = 0.0f;
-            float kelp_weight = 0.0f;
-            float lavarock_weight = 0.0f;
-            
-            // Access the specific weights dictionary
-            if (weights_data.has(weights_key)) {
-                Variant specific_weights_var = weights_data[weights_key];
-                if (specific_weights_var.get_type() == Variant::DICTIONARY) {
-                    Dictionary specific_weights = (Dictionary)specific_weights_var;
-                    
-                    // Extract weights for each biome
-                    if (specific_weights.has("corral")) corral_weight = (float)(real_t)specific_weights["corral"];
-                    if (specific_weights.has("sand")) sand_weight = (float)(real_t)specific_weights["sand"];
-                    if (specific_weights.has("rock")) rock_weight = (float)(real_t)specific_weights["rock"];
-                    if (specific_weights.has("kelp")) kelp_weight = (float)(real_t)specific_weights["kelp"];
-                }
+            if (colors_data.has(color_key)) {
+                biome_color = (Color)colors_data[color_key];
             }
             
-            // Encode in RGBA (you can use all 4 channels)
-            Color pixel_color(corral_weight, sand_weight, rock_weight, kelp_weight);
-            image->set_pixel(x, y, pixel_color);
+            // Sample blend noise for this world position
+            float world_x = cx * m_chunkSize + x;
+            float world_y = cy * m_chunkSize + y;
+            float blend_factor = 0.5f; // Default middle value
             
-            // Note: we can only encode 4 weights in RGBA, so lavarock would need special handling
-            // if all 5 biomes can be blended simultaneously
+            // Sample from blend noise texture if available
+            if (m_blendNoiseImage.is_valid()) {
+                int img_width = m_blendNoiseImage->get_width();
+                int img_height = m_blendNoiseImage->get_height();
+                
+                // Ensure we wrap properly and avoid index errors
+                int sample_x = ((int)world_x % img_width + img_width) % img_width;
+                int sample_y = ((int)world_y % img_height + img_height) % img_height;
+                
+                // Get noise value from the blend noise texture
+                Color noise_pixel = m_blendNoiseImage->get_pixel(sample_x, sample_y);
+                blend_factor = noise_pixel.r; // Use red channel for noise value
+            }
+            
+            // Store section color in RGB channels, blend factor in alpha channel
+            Color pixel_color(biome_color.r, biome_color.g, biome_color.b, blend_factor);
+            image->set_pixel(x, y, pixel_color);
         }
     }
     
@@ -592,8 +596,7 @@ Ref<ImageTexture> ChunkGenerator::generate_heightmap_texture_with_data(int cx, i
     // Set pixel values using pre-generated biome data
     for (int y = 0; y < m_chunkSize; y++) {
         for (int x = 0; x < m_chunkSize; x++) {
-            Color biomeColor = get_biome_color_from_data(x, y, biome_data);
-            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, biomeColor, biome_data);
+            float height = compute_height(cx * m_chunkSize + x, cy * m_chunkSize + y, biome_data);
             image->set_pixel(x, y, Color(height, height, height));
         }
     }
@@ -649,92 +652,149 @@ Color ChunkGenerator::get_biome_color_from_data(int x, int y, const Dictionary &
     return Color(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
-
-float ChunkGenerator::compute_height(float world_x, float world_y, const Color &biomeColor, const Dictionary &biome_data) {
-    // Ensure local coordinates are always in [0, m_chunkSize)
+float ChunkGenerator::compute_height(float world_x, float world_y, const Dictionary &biome_data) {
+    // Adjust for local chunk coordinates
     int local_x = ((int)world_x % m_chunkSize + m_chunkSize) % m_chunkSize;
     int local_y = ((int)world_y % m_chunkSize + m_chunkSize) % m_chunkSize;
     
-    // Build the key using these positive coordinates.
-    String weights_key = String("weights_") + String::num_int64(local_x) + "_" + String::num_int64(local_y);
+    // Get the biome color - used for section identification
+    Vector2i color_key(local_x, local_y);
+    Color biome_color;
     
-    Dictionary biome_weights_dict;
-    if (biome_data.has("weights")) {
-        Dictionary weights_data = (Dictionary)biome_data["weights"];
-        if (weights_data.has(weights_key)) {
-            biome_weights_dict = weights_data[weights_key];
+    // Get from colors dict if available
+    if (biome_data.has("colors")) {
+        Dictionary colors = (Dictionary)biome_data["colors"];
+        if (colors.has(color_key)) {
+            biome_color = (Color)colors[color_key];
         } else {
-            godot::print_line("Warning: No pre-computed weights found for local coordinate: ", local_x, ", ", local_y);
-            return 0.0f;
+            // Fallback to white if color not found
+            biome_color = Color(1.0f, 1.0f, 1.0f);
         }
     } else {
-        godot::print_line("Warning: 'weights' dictionary missing from biome data.");
-        return 0.0f;
+        // Another fallback if colors dict missing
+        biome_color = Color(1.0f, 1.0f, 1.0f);
     }
     
-    // Sample blend noise from the cached blend noise image
-    float blendNoise = 1.0f;  // fallback
-    if (m_noiseBlend.is_valid()) {
-        if (!m_blendNoiseImage.is_valid()) {
-            m_blendNoiseImage = m_noiseBlend->get_image();
-        }
-        if (m_blendNoiseImage.is_valid()) {
-            int img_width = m_blendNoiseImage->get_width();
-            int img_height = m_blendNoiseImage->get_height();
-            int sample_x = ((int)world_x % img_width + img_width) % img_width;
-            int sample_y = ((int)world_y % img_height + img_height) % img_height;
-            Color pixel = m_blendNoiseImage->get_pixel(sample_x, sample_y);
-            blendNoise = pixel.r; // Assuming noise value is stored in the red channel
-        }
+    // Get blend factor from blend noise
+    float blend_factor = 0.5f;  // Default mid value
+    
+    if (m_blendNoiseImage.is_valid()) {
+        int img_width = m_blendNoiseImage->get_width();
+        int img_height = m_blendNoiseImage->get_height();
+        
+        // Ensure we wrap properly and avoid index errors
+        int sample_x = ((int)world_x % img_width + img_width) % img_width;
+        int sample_y = ((int)world_y % img_height + img_height) % img_height;
+        
+        // Make absolutely sure we're not out of bounds
+        sample_x = Math::clamp(sample_x, 0, img_width - 1);
+        sample_y = Math::clamp(sample_y, 0, img_height - 1);
+        
+        Color noise_pixel = m_blendNoiseImage->get_pixel(sample_x, sample_y);
+        blend_factor = noise_pixel.r;
     }
     
-    float blendedHeight = 0.0f;
-    float totalWeight = 0.0f;
+    // Apply stepped blending logic
+    float blend_min = 0.4f;
+    float blend_max = 0.6f;
+    float weight;
     
-    // Iterate through the biome weights dictionary keys
-    Array keys = biome_weights_dict.keys();
-    for (int i = 0; i < keys.size(); i++) {
-        String biome_name = keys[i];
-        float weight = (float)biome_weights_dict[biome_name];
-        
-        // Skip negligible weights
-        if (weight < 0.001f) continue;
-        
-        if (m_biomeNoises.has(biome_name)) {
-            Ref<NoiseTexture2D> biome_tex = m_biomeNoises[biome_name];
-            if (biome_tex.is_valid()) {
-                // Try to fetch a cached image for this biome noise
-                Ref<Image> noise_image;
-                if (m_cachedBiomeNoiseImages.has(biome_name)) {
-                    noise_image = m_cachedBiomeNoiseImages[biome_name];
-                } else {
-                    noise_image = biome_tex->get_image();
-                    if (noise_image.is_valid()) {
-                        m_cachedBiomeNoiseImages.insert(biome_name, noise_image);
-                    }
-                }
+    if (blend_factor < blend_min) {
+        weight = 0.0f; // 100% biome 1
+    } else if (blend_factor > blend_max) {
+        weight = 1.0f; // 100% biome 2
+    } else {
+        weight = (blend_factor - blend_min) / (blend_max - blend_min);
+    }
+    
+    // Determine which biomes to blend based on the section color
+    String biome1, biome2;
+    
+    // Identify section based on color - this must match the shader and BiomeManager logic!
+    float tolerance = 0.2f;
+    if (std::sqrt(std::pow(biome_color.r - 0.8f, 2) + 
+                 std::pow(biome_color.g - 0.8f, 2) + 
+                 std::pow(biome_color.b - 0.8f, 2)) < tolerance) {
+        // Section 1: Corral + Sand
+        biome1 = "corral";
+        biome2 = "sand";
+    } else if (biome_color.r > 0.7f) {
+        // Section 2: Rock + Kelp
+        biome1 = "rock";
+        biome2 = "kelp";
+    } else {
+        // Section 3: Rock + Lavarock
+        biome1 = "rock";
+        biome2 = "lavarock";
+    }
+    
+    // Sample height for biome 1
+    float height1 = 0.0f;
+    if (m_biomeNoises.has(biome1)) {
+        Ref<NoiseTexture2D> biome_tex = m_biomeNoises[biome1];
+        if (biome_tex.is_valid()) {
+            Ref<Image> noise_image;
+            if (m_cachedBiomeNoiseImages.has(biome1)) {
+                noise_image = m_cachedBiomeNoiseImages[biome1];
+            } else if (biome_tex->get_image().is_valid()) {
+                noise_image = biome_tex->get_image();
+                m_cachedBiomeNoiseImages.insert(biome1, noise_image);
+            }
+            
+            if (noise_image.is_valid()) {
+                int img_width = noise_image->get_width();
+                int img_height = noise_image->get_height();
                 
-                if (noise_image.is_valid()) {
-                    int img_width = noise_image->get_width();
-                    int img_height = noise_image->get_height();
-                    int sample_x = ((int)world_x % img_width + img_width) % img_width;
-                    int sample_y = ((int)world_y % img_height + img_height) % img_height;
-                    Color pixel = noise_image->get_pixel(sample_x, sample_y);
-                    float biomeNoise = pixel.r; // Use the red channel as the noise value
-
-                    blendedHeight += weight * biomeNoise * blendNoise;
-                    totalWeight += weight;
-                }
+                // Ensure proper wrapping and bounds checking
+                int sample_x = ((int)world_x % img_width + img_width) % img_width;
+                int sample_y = ((int)world_y % img_height + img_height) % img_height;
+                
+                // Extra bounds check
+                sample_x = Math::clamp(sample_x, 0, img_width - 1);
+                sample_y = Math::clamp(sample_y, 0, img_height - 1);
+                
+                Color pixel = noise_image->get_pixel(sample_x, sample_y);
+                height1 = pixel.r;
             }
         }
     }
     
-    if (totalWeight < 1e-6f) {
-        godot::print_line("⚠️ Flat height detected at world pos (", world_x, ", ", world_y, ") in chunk ", local_x, ", ", local_y);
-        return 0.0f;
+    // Sample height for biome 2
+    float height2 = 0.0f;
+    if (m_biomeNoises.has(biome2)) {
+        Ref<NoiseTexture2D> biome_tex = m_biomeNoises[biome2];
+        if (biome_tex.is_valid()) {
+            Ref<Image> noise_image;
+            if (m_cachedBiomeNoiseImages.has(biome2)) {
+                noise_image = m_cachedBiomeNoiseImages[biome2];
+            } else if (biome_tex->get_image().is_valid()) {
+                noise_image = biome_tex->get_image();
+                m_cachedBiomeNoiseImages.insert(biome2, noise_image);
+            }
+            
+            if (noise_image.is_valid()) {
+                int img_width = noise_image->get_width();
+                int img_height = noise_image->get_height();
+                
+                // Ensure proper wrapping and bounds checking
+                int sample_x = ((int)world_x % img_width + img_width) % img_width;
+                int sample_y = ((int)world_y % img_height + img_height) % img_height;
+                
+                // Extra bounds check
+                sample_x = Math::clamp(sample_x, 0, img_width - 1);
+                sample_y = Math::clamp(sample_y, 0, img_height - 1);
+                
+                Color pixel = noise_image->get_pixel(sample_x, sample_y);
+                height2 = pixel.r;
+            }
+        }
     }
-    return blendedHeight / totalWeight;
+    
+    // Blend heights using the calculated weight
+    float final_height = height1 * (1.0f - weight) + height2 * weight;
+    return final_height;
 }
+
 
 void ChunkGenerator::cleanup_chunk_caches(Vector2i min_chunk, Vector2i max_chunk) {
     // Clean up textures for chunks outside the given range
