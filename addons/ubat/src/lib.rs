@@ -1,12 +1,12 @@
 use godot::prelude::*;
 
-mod Core;
-mod Networking;
-mod Resource;
-mod Terrain;
+mod core;
+mod networking;
+mod resource;
+mod terrain;
 
 // Bring your main classes into scope.
-use Core::game_manager::GameManager;
+use core::game_manager::GameManager;
 use Networking::network_manager::NetworkManager;
 use Networking::object_manager::ObjectManager;
 use Networking::physics_manager::PhysicsManager;
