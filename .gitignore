@@ -64,3 +64,16 @@ desktop.ini
 
 # Godot cache files (optional)
 .cache/
+
+
+## Rust
+/target/                # Rust build output
+**/*.rs.bk              # Rust backup files
+
+# Cargo package manager
+Cargo.lock              # Lock file (optional, keep if you're publishing a library)
+.cargo/
+
+# Rust dependencies cache (optional)
+/vendor/                # If using cargo vendor
+Cargo.toml.orig         # Cargo.toml merge conflict leftovers
