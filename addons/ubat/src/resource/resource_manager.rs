@@ -176,4 +176,19 @@ pub mod resource_manager {
         });
         result
     }
+
+    /// Generic function that can load any resource type
+    pub fn load_and_cast<T>(path: GString) -> Option<Gd<T>> 
+    where 
+        T: GodotClass + Inherits<Resource>
+    {
+        get().map(|mut m| {
+            // Access the resource through the public methods
+            if let Some(resource) = m.bind_mut().load_resource(path) {
+                resource.try_cast::<T>().ok()
+            } else {
+                None
+            }
+        }).flatten()
+    }
 }
