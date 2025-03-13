@@ -1,219 +1,204 @@
 use godot::prelude::*;
-use godot::classes::{Node, CharacterBody2D, Camera2D};
-use std::collections::HashSet;
+use godot::classes::Node;
+use std::collections::HashMap;
 
-use crate::terrain::SectionReader;
-// This will be defined in the future
-use crate::world::chunk_handler::ChunkHandler;
+/// There is a hight chance all of this needs to be remade
 
-/// Configuration for PlayerReader
-#[derive(Clone, Copy)]
-struct PlayerReaderConfig {
-    /// How far in chunks to load around player
-    chunk_load_distance: i32,
-    /// How far the player needs to move (in world units) to trigger a position update
-    position_update_threshold: f32,
-    /// Size of each chunk in world units
-    chunk_size: f32,
+/// Structure to hold chunk data
+struct ChunkData {
+    // Position data
+    chunk_x: i32,
+    chunk_y: i32,
+    
+    // Biome information
+    biome_color: Color,
+    
+    // Chunk state
+    is_fully_loaded: bool,
+    
+    // Reference to the actual chunk node (if instantiated)
+    chunk_instance: Option<Gd<Node>>,
 }
 
-/// PlayerReader monitors player position and manages chunk loading
+/// ChunkHandler manages loading, generation and unloading of world chunks
 #[derive(GodotClass)]
 #[class(base=Node)]
-pub struct PlayerReader {
+pub struct ChunkHandler {
     #[base]
     base: Base<Node>,
     
-    // Config
-    config: PlayerReaderConfig,
+    // Map of loaded chunks by coordinates
+    chunks: HashMap<(i32, i32), ChunkData>,
     
-    // References to other nodes
-    player: Option<Gd<CharacterBody2D>>,
-    camera: Option<Gd<Camera2D>>,
-    biome_mask: Option<Gd<BiomeMask>>,
-    chunk_handler: Option<Gd<ChunkHandler>>,
-    
-    // State tracking
-    last_player_position: Vector2,
-    loaded_chunk_coords: HashSet<(i32, i32)>,
-    current_biome_color: Color,
+    // Configuration
+    chunk_size: f32,
+    chunk_scene: Gd<PackedScene>,
+    max_concurrent_loads: i32,
+    pending_loads: Vec<(i32, i32)>,
 }
 
 #[godot_api]
-impl INode for PlayerReader {
+impl INode for ChunkHandler {
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
-            config: PlayerReaderConfig {
-                chunk_load_distance: 3,
-                position_update_threshold: 10.0,
-                chunk_size: 256.0,
-            },
-            player: None,
-            camera: None,
-            biome_mask: None,
-            chunk_handler: None,
-            last_player_position: Vector2::ZERO,
-            loaded_chunk_coords: HashSet::new(),
-            current_biome_color: Color::from_rgba(0.0, 0.0, 0.0, 1.0),
+            chunks: HashMap::new(),
+            chunk_size: 256.0,
+            // This will be set in _ready from an exported property
+            chunk_scene: PackedScene::new_gd(),
+            max_concurrent_loads: 3,
+            pending_loads: Vec::new(),
         }
     }
 
     fn ready(&mut self) {
-        // Find required nodes
-        self.player = self.base.get_node_as::<CharacterBody2D>("../Player");
-        self.camera = self.base.get_node_as::<Camera2D>("../Player/Camera2D");
-        self.biome_mask = self.base.get_node_as::<BiomeMask>("../BiomeMask");
-        self.chunk_handler = self.base.get_node_as::<ChunkHandler>("../ChunkHandler");
-        
-        // Log initialization status
-        if self.player.is_some() && self.biome_mask.is_some() && self.chunk_handler.is_some() {
-            godot_print!("PlayerReader initialized successfully");
-        } else {
-            godot_error!("PlayerReader failed to find required nodes");
-            if self.player.is_none() { godot_error!("Player node not found"); }
-            if self.biome_mask.is_none() { godot_error!("BiomeMask node not found"); }
-            if self.chunk_handler.is_none() { godot_error!("ChunkHandler node not found"); }
-        }
-        
-        // Set initial player position
-        if let Some(player) = &self.player {
-            self.last_player_position = player.bind().get_global_position();
-            self.update_chunks(true); // Force initial chunk loading
-        }
+        // Load chunk scene from export property
+        // For now, we just create a new one
+        godot_print!("ChunkHandler initialized");
     }
-
+    
     fn process(&mut self, _delta: f64) {
-        self.check_player_position();
+        // Process any pending chunk loads
+        self.process_pending_loads();
     }
 }
 
 #[godot_api]
-impl PlayerReader {
+impl ChunkHandler {
+    /// Load a new chunk at the specified coordinates with the given biome color
     #[func]
-    fn check_player_position(&mut self) {
-        if let Some(player) = &self.player {
-            let current_position = player.bind().get_global_position();
-            
-            // Check if player has moved enough to trigger an update
-            let distance_moved = current_position.distance_to(self.last_player_position);
-            if distance_moved > self.config.position_update_threshold {
-                self.last_player_position = current_position;
-                self.update_chunks(false);
-                self.update_biome_info();
+    pub fn load_chunk(&mut self, chunk_x: i32, chunk_y: i32, biome_color: Color) {
+        // Skip if already loaded or pending
+        let chunk_key = (chunk_x, chunk_y);
+        if self.chunks.contains_key(&chunk_key) {
+            return;
+        }
+        
+        // Add to pending loads if not already there
+        if !self.pending_loads.contains(&chunk_key) {
+            self.pending_loads.push(chunk_key);
+            godot_print!("Queued chunk ({}, {}) for loading", chunk_x, chunk_y);
+        }
+        
+        // Create initial chunk data entry
+        let chunk_data = ChunkData {
+            chunk_x,
+            chunk_y,
+            biome_color,
+            is_fully_loaded: false,
+            chunk_instance: None,
+        };
+        
+        // Add to chunks map
+        self.chunks.insert(chunk_key, chunk_data);
+    }
+    
+    /// Unload a chunk at the specified coordinates
+    #[func]
+    pub fn unload_chunk(&mut self, chunk_x: i32, chunk_y: i32) {
+        let chunk_key = (chunk_x, chunk_y);
+        
+        // Remove from pending loads if present
+        if let Some(index) = self.pending_loads.iter().position(|&x| x == chunk_key) {
+            self.pending_loads.remove(index);
+        }
+        
+        // Remove from loaded chunks and free the instance
+        if let Some(chunk_data) = self.chunks.remove(&chunk_key) {
+            if let Some(chunk_instance) = chunk_data.chunk_instance {
+                chunk_instance.queue_free();
+            }
+            godot_print!("Unloaded chunk ({}, {})", chunk_x, chunk_y);
+        }
+    }
+    
+    /// Process any pending chunk loads up to the concurrent load limit
+    #[func]
+    fn process_pending_loads(&mut self) {
+        // Count how many chunks are currently being loaded
+        let active_loads = self.chunks
+            .values()
+            .filter(|chunk| !chunk.is_fully_loaded && chunk.chunk_instance.is_some())
+            .count() as i32;
+        
+        // Calculate how many new loads we can start
+        let available_slots = (self.max_concurrent_loads - active_loads).max(0);
+        
+        // Start new loads up to the limit
+        for _ in 0..available_slots {
+            if let Some(&chunk_key) = self.pending_loads.first() {
+                // Start loading this chunk
+                self.start_chunk_load(chunk_key.0, chunk_key.1);
+                self.pending_loads.remove(0);
+            } else {
+                break;
             }
         }
     }
     
+    /// Start loading a specific chunk
     #[func]
-    fn update_chunks(&mut self, force_reload: bool) {
-        if let (Some(player), Some(chunk_handler)) = (&self.player, &self.chunk_handler) {
-            let player_pos = player.bind().get_global_position();
-            
-            // Convert player position to chunk coordinates
-            let center_chunk_x = (player_pos.x / self.config.chunk_size).floor() as i32;
-            let center_chunk_y = (player_pos.y / self.config.chunk_size).floor() as i32;
-            
-            // Calculate which chunks should be loaded
-            let mut chunks_to_load = HashSet::new();
-            for x in -self.config.chunk_load_distance..=self.config.chunk_load_distance {
-                for y in -self.config.chunk_load_distance..=self.config.chunk_load_distance {
-                    let chunk_x = center_chunk_x + x;
-                    let chunk_y = center_chunk_y + y;
-                    chunks_to_load.insert((chunk_x, chunk_y));
-                }
-            }
-            
-            // Find chunks to unload (currently loaded but not in the new set)
-            if !force_reload {
-                let chunks_to_unload: Vec<(i32, i32)> = self.loaded_chunk_coords
-                    .difference(&chunks_to_load)
-                    .cloned()
-                    .collect();
+    fn start_chunk_load(&mut self, chunk_x: i32, chunk_y: i32) {
+        let chunk_key = (chunk_x, chunk_y);
+        
+        if let Some(chunk_data) = self.chunks.get_mut(&chunk_key) {
+            // Create instance from scene
+            let instance = self.chunk_scene.instantiate();
+            if let Some(instance) = instance {
+                // Add to scene tree
+                self.base.add_child(instance.clone().upcast::<Node>());
                 
-                // Unload chunks that are now too far away
-                for chunk_coords in chunks_to_unload {
-                    chunk_handler.bind_mut().unload_chunk(chunk_coords.0, chunk_coords.1);
-                    self.loaded_chunk_coords.remove(&chunk_coords);
-                }
-            }
-            
-            // Load new chunks
-            let mut chunk_handler = chunk_handler.bind_mut();
-            for chunk_coords in &chunks_to_load {
-                if !self.loaded_chunk_coords.contains(chunk_coords) || force_reload {
-                    // Get biome color for this chunk from BiomeMask
-                    let chunk_world_x = chunk_coords.0 as f32 * self.config.chunk_size;
-                    let chunk_world_y = chunk_coords.1 as f32 * self.config.chunk_size;
-                    
-                    let biome_color = if let Some(biome_mask) = &self.biome_mask {
-                        biome_mask.bind_mut().get_biome_color(chunk_world_x, chunk_world_y)
-                    } else {
-                        // Default color if biome mask isn't available
-                        Color::from_rgba(0.5, 0.5, 0.5, 1.0)
-                    };
-                    
-                    // Request chunk from ChunkHandler
-                    chunk_handler.load_chunk(
-                        chunk_coords.0, 
-                        chunk_coords.1, 
-                        biome_color
-                    );
-                    
-                    // Add to loaded chunks set
-                    self.loaded_chunk_coords.insert(*chunk_coords);
-                }
+                // Set position
+                let world_x = chunk_x as f32 * self.chunk_size;
+                let world_y = chunk_y as f32 * self.chunk_size;
+                instance.set("position", Vector2::new(world_x, world_y).to_variant());
+                
+                // Set biome color
+                instance.set("biome_color", chunk_data.biome_color.to_variant());
+                
+                // Update chunk data
+                chunk_data.chunk_instance = Some(instance.clone());
+                
+                godot_print!("Started loading chunk ({}, {})", chunk_x, chunk_y);
+                
+                // In a real implementation, you might connect signals from the chunk for load completion
+                // For now we'll just mark it as loaded immediately
+                chunk_data.is_fully_loaded = true;
+            } else {
+                godot_error!("Failed to instantiate chunk scene");
             }
         }
-    }
-    
-    #[func]
-    fn update_biome_info(&mut self) {
-        if let (Some(player), Some(biome_mask)) = (&self.player, &self.biome_mask) {
-            let player_pos = player.bind().get_global_position();
-            
-            // Get biome color at player's position
-            let biome_color = biome_mask.bind_mut().get_biome_color(player_pos.x, player_pos.y);
-            
-            // Only update if color changed
-            if self.current_biome_color != biome_color {
-                self.current_biome_color = biome_color;
-                
-                // Emit signal for biome change if needed
-                self.base.emit_signal("biome_changed".into(), &[Variant::from(biome_color)]);
-                
-                // Log biome change
-                godot_print!(
-                    "Player entered new biome: R={}, G={}, B={}", 
-                    biome_color.r, 
-                    biome_color.g, 
-                    biome_color.b
-                );
-            }
-        }
-    }
-    
-    // Configuration methods
-    #[func]
-    pub fn set_chunk_load_distance(&mut self, distance: i32) {
-        self.config.chunk_load_distance = distance;
-        self.update_chunks(false);
     }
     
     #[func]
     pub fn set_chunk_size(&mut self, size: f32) {
-        self.config.chunk_size = size;
-        self.update_chunks(true); // Force reload when chunk size changes
+        self.chunk_size = size;
     }
     
     #[func]
-    pub fn get_current_biome_color(&self) -> Color {
-        self.current_biome_color
+    pub fn get_chunk_size(&self) -> f32 {
+        self.chunk_size
     }
     
     #[func]
-    pub fn force_update(&mut self) {
-        self.update_chunks(true);
-        self.update_biome_info();
+    pub fn get_chunk_at_position(&self, world_x: f32, world_y: f32) -> Option<Gd<Node>> {
+        let chunk_x = (world_x / self.chunk_size).floor() as i32;
+        let chunk_y = (world_y / self.chunk_size).floor() as i32;
+        
+        if let Some(chunk_data) = self.chunks.get(&(chunk_x, chunk_y)) {
+            chunk_data.chunk_instance.clone()
+        } else {
+            None
+        }
+    }
+    
+    #[func]
+    pub fn get_loaded_chunk_count(&self) -> i32 {
+        self.chunks.len() as i32
+    }
+    
+    #[func]
+    pub fn get_pending_load_count(&self) -> i32 {
+        self.pending_loads.len() as i32
     }
 }
