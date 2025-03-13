@@ -4,6 +4,7 @@ use godot::prelude::*;
 // mod networking;
 mod resource;
 // mod terrain;
+mod player_reader;
 
 // The entry point of your extension library.
 struct UbatExtension;
