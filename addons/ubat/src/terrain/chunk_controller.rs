@@ -130,7 +130,7 @@ impl ChunkController {
         
         // If disabling, clear all meshes
         if !enabled {
-            for (_, mesh) in self.chunk_meshes.drain() {
+            for (_, mut mesh) in self.chunk_meshes.drain() {
                 mesh.queue_free();
             }
         } else {
@@ -162,84 +162,88 @@ impl ChunkController {
     
     // Update the mesh visualization for chunks
     fn update_visualization(&mut self) {
+        // Collect all the chunks to process first
+        let mut chunks_to_process: Vec<(i32, i32, bool)> = Vec::new();
+        
         if let Some(ref chunk_mgr) = self.chunk_manager {
             let chunk_mgr_bind = chunk_mgr.bind();
             let player_chunk_x = (self.player_position.x / 32.0).floor() as i32;
             let player_chunk_z = (self.player_position.z / 32.0).floor() as i32;
             
-            // Track which chunks we've updated
-            let mut updated_chunks = HashSet::new();
-            
-            // Create or update meshes for chunks in render distance
+            // Collect chunks in render distance
             for x in (player_chunk_x - self.render_distance)..=(player_chunk_x + self.render_distance) {
                 for z in (player_chunk_z - self.render_distance)..=(player_chunk_z + self.render_distance) {
-                    updated_chunks.insert((x, z));
-                    
-                    // Only create mesh if chunk is ready
-                    if chunk_mgr_bind.is_chunk_ready(x, z) {
-                        self.create_or_update_chunk_mesh(x, z);
-                    }
+                    let is_ready = chunk_mgr_bind.is_chunk_ready(x, z);
+                    chunks_to_process.push((x, z, is_ready));
                 }
             }
+        }
+        
+        // Now process chunks without holding the immutable borrow
+        let mut updated_chunks = HashSet::new();
+        
+        for (x, z, is_ready) in chunks_to_process {
+            updated_chunks.insert((x, z));
             
-            // Remove meshes for chunks that are no longer in render distance
-            let keys_to_remove: Vec<(i32, i32)> = self.chunk_meshes.keys()
-                .filter(|&&key| !updated_chunks.contains(&key))
-                .cloned()
-                .collect();
+            // Only create mesh if chunk is ready
+            if is_ready {
+                self.create_or_update_chunk_mesh(x, z);
+            }
+        }
+        
+        // Remove meshes that are no longer in render distance
+        let keys_to_remove: Vec<(i32, i32)> = self.chunk_meshes.keys()
+            .filter(|&&key| !updated_chunks.contains(&key))
+            .cloned()
+            .collect();
                 
-            for key in keys_to_remove {
-                if let Some(mesh) = self.chunk_meshes.remove(&key) {
-                    mesh.queue_free();
-                }
+        for key in keys_to_remove {
+            if let Some(mut mesh) = self.chunk_meshes.remove(&key) {
+                mesh.queue_free();
             }
         }
     }
     
     // Create or update a mesh for a specific chunk
     fn create_or_update_chunk_mesh(&mut self, chunk_x: i32, chunk_z: i32) {
-        if let Some(ref chunk_mgr) = self.chunk_manager {
-            let chunk_mgr_bind = chunk_mgr.bind();
-            
-            // Get heightmap data
-            let heightmap = chunk_mgr_bind.get_chunk_heightmap(chunk_x, chunk_z);
+        // First get all the data we need from the immutable borrow
+        let heightmap = if let Some(ref chunk_mgr) = self.chunk_manager {
+            let heightmap = chunk_mgr.bind().get_chunk_heightmap(chunk_x, chunk_z);
             if heightmap.is_empty() {
                 return;
             }
+            heightmap
+        } else {
+            return;
+        };
+        
+        let chunk_key = (chunk_x, chunk_z);
+        
+        // Now no immutable borrows are active, so we can do mutable operations
+        if !self.chunk_meshes.contains_key(&chunk_key) {
+            let mut mesh_instance = MeshInstance3D::new_alloc();
+            mesh_instance.set_position(Vector3::new(
+                chunk_x as f32 * 32.0, 
+                0.0, 
+                chunk_z as f32 * 32.0
+            ));
             
-            let chunk_key = (chunk_x, chunk_z);
+            // Now we can safely call base_mut()
+            let node = mesh_instance.clone().upcast::<Node>();
+            self.base_mut().add_child(&node);
             
-            // Create a new mesh if it doesn't exist
-            if !self.chunk_meshes.contains_key(&chunk_key) {
-                let mesh_instance = MeshInstance3D::new_alloc();
-                mesh_instance.set_position(Vector3::new(
-                    chunk_x as f32 * 32.0, 
-                    0.0, 
-                    chunk_z as f32 * 32.0
-                ));
-                
-                self.base_mut().add_child(mesh_instance.clone().upcast());
-                self.chunk_meshes.insert(chunk_key, mesh_instance);
-            }
+            self.chunk_meshes.insert(chunk_key, mesh_instance);
+        }
+        
+        // Update existing mesh
+        if let Some(mesh_ref) = self.chunk_meshes.get(&chunk_key) {
+            let mut mesh_mut = mesh_ref.clone();
             
-            // Get the mesh instance
-            if let Some(mesh_instance) = self.chunk_meshes.get_mut(&chunk_key) {
-                // Create a new ArrayMesh
-                let array_mesh = ArrayMesh::new_gd();
-                
-                let mut mesh_mut = mesh_instance.clone();
-
-                // TODO: Generate proper mesh from heightmap
-                // This is a simplified version - in a real implementation, 
-                // you would generate a proper terrain mesh with normals, UVs, etc.
-                
-                // For simplicity, we're just updating the position
-                mesh_mut.set_position(Vector3::new(
-                    chunk_x as f32 * 32.0, 
-                    0.0, 
-                    chunk_z as f32 * 32.0
-                ));
-            }
+            mesh_mut.set_position(Vector3::new(
+                chunk_x as f32 * 32.0, 
+                0.0, 
+                chunk_z as f32 * 32.0
+            ));
         }
     }
 }

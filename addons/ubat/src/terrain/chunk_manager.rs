@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use serde::{Serialize, Deserialize};
+
 use crate::terrain::BiomeManager;
 use crate::terrain::ChunkStorage;
 use crate::terrain::ThreadPool;
@@ -13,7 +15,7 @@ const CHUNK_SIZE: u32 = 32; // Size of a chunk in world units
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(30); // Time before unloading inactive chunks
 
 // Unique identifier for a chunk based on its position
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkPosition {
     pub x: i32,
     pub z: i32,
@@ -89,13 +91,9 @@ impl INode for ChunkManager {
         let parent = self.base().get_parent();
         if let Some(parent) = parent {
             // Try to find BiomeManager as a sibling node
-            let biome_manager = parent.try_get_node_as::<BiomeManager>("BiomeManager");
-            if let Ok(manager) = biome_manager {
-                self.biome_manager = Some(manager);
-                godot_print!("ChunkManager found BiomeManager node");
-            } else {
-                godot_error!("ChunkManager couldn't find BiomeManager node");
-            }
+            let biome_manager = parent.get_node_as::<BiomeManager>("BiomeManager");
+            self.biome_manager = Some(biome_manager);
+            godot_print!("ChunkManager: Got BiomeManager node as {:?}", self.biome_manager);
         }
     }
 }
@@ -337,7 +335,7 @@ impl ChunkManager {
         if let Some(chunk) = self.chunks.lock().unwrap().get(&position) {
             if let Ok(chunk_guard) = chunk.lock() {
                 if chunk_guard.state == ChunkState::Active {
-                    return PackedFloat32Array::from(&chunk_guard.heightmap);
+                    return PackedFloat32Array::from(&chunk_guard.heightmap[..]);
                 }
             }
         }
@@ -360,7 +358,7 @@ impl ChunkManager {
                         .map(|&id| id as i32)
                         .collect();
                     
-                    return PackedInt32Array::from(&biomes_i32);
+                    return PackedInt32Array::from(&biomes_i32[..]);
                 }
             }
         }

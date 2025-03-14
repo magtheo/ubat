@@ -1,11 +1,12 @@
 use std::fs;
 use std::path::Path;
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
-use crate::chunk_manager::ChunkPosition;
+use crate::terrain::chunk_manager::ChunkPosition;
 
 // Data structure for serializing chunk data
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ChunkData {
     pub position: ChunkPosition,
     pub heightmap: Vec<f32>,
