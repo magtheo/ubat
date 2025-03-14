@@ -161,9 +161,8 @@ impl ChunkManager {
         storage: Arc<ChunkStorage>,
         biome_manager: Option<Gd<BiomeManager>>
     ) {
-        if let Ok(mut chunk_guard) = chunk.lock() {
-            chunk_guard.state = ChunkState::Generating;
-        }
+        // Clone biome manager safely
+        let biome_mgr_clone = biome_manager.clone();
         
         // Generate heightmap
         let mut heightmap = vec![0.0; (CHUNK_SIZE * CHUNK_SIZE) as usize];
@@ -174,17 +173,17 @@ impl ChunkManager {
                 let world_x = position.x as f32 * CHUNK_SIZE as f32 + x as f32;
                 let world_z = position.z as f32 * CHUNK_SIZE as f32 + z as f32;
                 
-                // Get biome from BiomeManager if available
-                let biome_id = if let Some(ref biome_mgr) = biome_manager {
+                // Safely use biome manager if available
+                let biome_id = if let Some(ref biome_mgr) = biome_mgr_clone {
                     let color = biome_mgr.bind().get_biome_color(world_x, world_z);
                     // Simple mapping from color to biome ID
                     ((color.r * 5.0) as u8) % 5
                 } else {
-                    // Default heightmap generation if no BiomeManager
+                    // Default generation if no BiomeManager
                     ((world_x.cos() * 0.5 + world_z.sin() * 0.5) * 2.0) as u8
                 };
                 
-                // Simple example noise function - would be more sophisticated in real implementation
+                // Simple example noise function
                 let height = (world_x.cos() * 0.5 + world_z.sin() * 0.5) * 10.0;
                 let idx = (z * CHUNK_SIZE + x) as usize;
                 
@@ -193,6 +192,11 @@ impl ChunkManager {
             }
         }
         
+        // Clone data before potential move
+        let saved_heightmap = heightmap.clone();
+        let saved_biome_ids = biome_ids.clone();
+        
+        // Update chunk data
         if let Ok(mut chunk_guard) = chunk.lock() {
             chunk_guard.heightmap = heightmap;
             chunk_guard.biome_ids = biome_ids;
@@ -200,12 +204,12 @@ impl ChunkManager {
         }
         
         // Save to storage
-        storage.save_chunk(position, &heightmap, &biome_ids);
+        storage.save_chunk(position, &saved_heightmap, &saved_biome_ids);
     }
     
     // Update chunks based on player position
     #[func]
-    pub fn update(&self, player_x: f32, player_y: f32, player_z: f32) {
+    pub fn update(&self, player_x: f32, _player_y: f32, player_z: f32) {
         let player_chunk_x = (player_x / CHUNK_SIZE as f32).floor() as i32;
         let player_chunk_z = (player_z / CHUNK_SIZE as f32).floor() as i32;
         

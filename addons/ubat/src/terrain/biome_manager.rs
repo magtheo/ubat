@@ -4,6 +4,7 @@ use godot::classes::RandomNumberGenerator;
 use godot::builtin::{Color, Rect2, Vector2, Vector2i};
 use std::collections::HashMap;
 use std::cmp::Ordering;
+use std::sync::{Arc, Mutex};
 
 use crate::resource::resource_manager::resource_manager;
 
@@ -38,9 +39,9 @@ pub struct BiomeManager {
     world_height: f32,
     
     // Performance Cache
-    color_cache: HashMap<String, Color>,
-    section_cache: HashMap<String, u8>,
-    biome_cache: HashMap<String, u8>,
+    color_cache: Arc<Mutex<HashMap<String, Color>>>,
+    section_cache: Arc<Mutex<HashMap<String, u8>>>,
+    biome_cache: Arc<Mutex<HashMap<String, u8>>>,
     
     // Biome mask image path
     biome_mask_image_path: GString,
@@ -72,9 +73,9 @@ impl INode for BiomeManager {
             mask_height: 0,
             world_width: 10000.0,
             world_height: 10000.0,
-            color_cache: HashMap::new(),
-            section_cache: HashMap::new(),
-            biome_cache: HashMap::new(),
+            color_cache: Arc::new(Mutex::new(HashMap::new())),
+            section_cache: Arc::new(Mutex::new(HashMap::new())),
+            biome_cache: Arc::new(Mutex::new(HashMap::new())),
             biome_mask_image_path: GString::from("res://textures/biomeMask_image.png"),
             noise_path: GString::from("res://resources/noise/biome_blend_noise.tres"),
             sections: Vec::new(),
@@ -248,33 +249,43 @@ impl BiomeManager {
         let key = format!("{}_{}", coords.x, coords.y);
         
         // Use Cache for Performance
-        if let Some(color) = self.color_cache.get(&key) {
-            return *color;
+        // Safe cache access
+        {
+            let cache = self.color_cache.lock().unwrap();
+            if let Some(color) = cache.get(&key) {
+                return *color;
+            }
         }
-        
+
         // Get pixel color and cache it
         match &self.biome_image {
             Some(image) => {
                 let color = image.get_pixel(coords.x, coords.y);
-                self.color_cache.insert(key, color);
+                
+                // Thread-safe cache insertion
+                {
+                    let mut cache = self.color_cache.lock().unwrap();
+                    cache.insert(key, color);
+                }
+                
                 color
             },
-            none => {
-                // Return a default color if image isn't loaded
-                Color::from_rgba(1.0, 0.0, 1.0, 1.0) // Magenta as error color
-            }
+            _none => Color::from_rgba(1.0, 0.0, 1.0, 1.0) // Magenta as error color
         }
     }
-    
+    // TODO: this needs rework to allow for the secitons defined previously
     // Get the section ID from color
     #[func]
     pub fn get_section_id(&mut self, world_x: f32, world_y: f32) -> u8 {
         let key = format!("section_{}_{}", world_x as i32, world_y as i32);
         
-        // Check cache
-        if let Some(&section_id) = self.section_cache.get(&key) {
+        // Thread-safe cache check
+    {
+        let cache = self.section_cache.lock().unwrap();
+        if let Some(&section_id) = cache.get(&key) {
             return section_id;
         }
+    }
         
         // Get the color from the biome mask
         let color = self.get_biome_color(world_x, world_y);
@@ -304,9 +315,12 @@ impl BiomeManager {
             }
         };
         
-        // Cache the result
-        self.section_cache.insert(key, section_id);
-        
+        // Thread-safe cache insertion
+        {
+            let mut cache = self.section_cache.lock().unwrap();
+            cache.insert(key, section_id);
+        }
+
         section_id
     }
     
@@ -410,9 +424,10 @@ impl BiomeManager {
     // Clear Cache
     #[func]
     pub fn clear_cache(&mut self) {
-        self.color_cache.clear();
-        self.section_cache.clear();
-        self.biome_cache.clear();
+        // Thread-safe cache clearing
+        self.color_cache.lock().unwrap().clear();
+        self.section_cache.lock().unwrap().clear();
+        self.biome_cache.lock().unwrap().clear();
     }
     
     // Set world dimensions
