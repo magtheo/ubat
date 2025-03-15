@@ -1,9 +1,9 @@
 use godot::prelude::*;
 
-// mod core;
+mod core;
 // mod networking;
 mod resource;
-mod terrain;
+// mod terrain;
 
 // The entry point of your extension library.
 struct UbatExtension;

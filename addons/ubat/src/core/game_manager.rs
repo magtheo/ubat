@@ -1,93 +1,202 @@
-pub mod game_manager {
-    /// Main game session manager
-    pub struct GameSession {
-        world_manager: WorldManager,
-        player_manager: PlayerManager,
-        quest_system: QuestSystem,
-        network_system: NetworkSystem,
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
+// Core configuration structure
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GameConfiguration {
+    // World Generation Parameters
+    pub world_seed: u64,
+    pub world_size: WorldSize,
+    
+    // Networking Configuration
+    pub network: NetworkConfig,
+    
+    // Game Mode Specific Settings
+    pub game_mode: GameModeConfig,
+    
+    // Custom configuration sections
+    pub custom_settings: HashMap<String, ConfigValue>,
+}
+
+// World size representation
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorldSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+// Network configuration
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkConfig {
+    pub max_players: u8,
+    pub server_port: u16,
+    pub connection_timeout: u32, // milliseconds
+}
+
+// Game mode specific configurations
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum GameModeConfig {
+    Standalone,
+    Host(HostConfig),
+    Client(ClientConfig),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HostConfig {
+    pub world_generation_seed: u64,
+    pub admin_password: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ClientConfig {
+    pub server_address: String,
+    pub username: String,
+}
+
+// Flexible configuration value
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ConfigValue {
+    String(String),
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
+    // Extensible for more complex types
+}
+
+// Configuration Manager
+pub struct ConfigurationManager {
+    current_config: GameConfiguration,
+    config_path: Option<String>,
+}
+
+impl ConfigurationManager {
+    // Create a new configuration manager
+    pub fn new(default_config: Option<GameConfiguration>) -> Self {
+        Self {
+            current_config: default_config.unwrap_or_else(|| Self::create_default_config()),
+            config_path: None,
+        }
     }
 
-    impl GameSession {
-        /// Create a new game session as host
-        pub fn host_new_game(game_settings: GameSettings) -> Self {
-            // Sets up a new game as host
-        }
-
-        /// Join an existing game as client
-        pub fn join_game(host_address: &str) -> Result<Self, ConnectionError> {
-            // Connects to host and initializes client
-        }
-
-        /// Main game update loop
-        pub fn update(&mut self, delta: f32) {
-            // Updates all game systems
-        }
-    }
-
-    /// Manages players and their state
-    pub struct PlayerManager {
-        local_player_id: PlayerId,
-        players: HashMap<PlayerId, Player>,
-        network_role: NetworkRole,
-    }
-
-    impl PlayerManager {
-        /// Handle player input based on role
-        pub fn handle_input(&mut self, player_id: PlayerId, input: PlayerInput) {
-            // Processes input based on network role
-        }
-
-        /// Spawn a player in the world
-        pub fn spawn_player(&mut self, player_id: PlayerId, spawn_point: Vector3) -> Player {
-            // Creates player entity
-        }
-
-        /// Host-specific player management
-        pub fn host_update(&mut self, delta: f32) {
-            // Authoritative player logic
-            // Broadcast player states
-        }
-
-        /// Client-specific player updates
-        pub fn client_update(&mut self, delta: f32) {
-            // Apply received player states
-            // Handle prediction/reconciliation
+    // Create a default configuration
+    fn create_default_config() -> GameConfiguration {
+        GameConfiguration {
+            world_seed: Self::generate_default_seed(),
+            world_size: WorldSize {
+                width: 10000,
+                height: 10000,
+            },
+            network: NetworkConfig {
+                max_players: 64,
+                server_port: 7878,
+                connection_timeout: 5000,
+            },
+            game_mode: GameModeConfig::Standalone,
+            custom_settings: HashMap::new(),
         }
     }
 
-    /// Handles combat mechanics
-    pub struct CombatSystem {
-        damage_calculator: DamageCalculator,
-        hit_detection: HitDetection,
-        network_role: NetworkRole,
+    // Generate a deterministic default seed
+    fn generate_default_seed() -> u64 {
+        // Use a combination of system time and some entropy
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
-    impl CombatSystem {
-        /// Process a weapon attack
-        pub fn process_attack(&mut self, 
-            attacker: EntityId, 
-            weapon: &Weapon, 
-            direction: Vector3
-        ) {
-            // Handles attack based on network role
-        }
+    // Load configuration from a file
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
+        let config_str = fs::read_to_string(path.as_ref())?;
+        let config: GameConfiguration = toml::from_str(&config_str)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        
+        Ok(Self {
+            current_config: config,
+            config_path: Some(path.as_ref().to_string_lossy().into_owned()),
+        })
+    }
 
-        /// Process projectile hit
-        pub fn process_projectile_hit(&mut self,
-            projectile: &Projectile,
-            hit_entity: Option<EntityId>,
-            hit_position: Vector3
-        ) {
-            // Handles projectile hit based on role
+    // Save configuration to file
+    pub fn save_to_file(&self) -> Result<(), std::io::Error> {
+        if let Some(path) = &self.config_path {
+            let toml_string = toml::to_string(&self.current_config)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            fs::write(path, toml_string)?;
         }
+        Ok(())
+    }
 
-        /// Host-specific hit validation
-        pub fn validate_hit(&self, 
-            attacker_position: Vector3,
-            target_position: Vector3,
-            weapon_range: f32
-        ) -> bool {
-            // Validates hit is legitimate
+    // Update configuration
+    pub fn update_config(&mut self, updates: GameConfiguration) {
+        self.current_config = updates;
+    }
+
+    // Get a specific configuration value
+    pub fn get<T: Clone>(&self, key: &str) -> Option<T> 
+    where ConfigValue: Into<T> {
+        self.current_config.custom_settings.get(key)
+            .and_then(|val| Some(val.clone().into()))
+    }
+
+    // Set a custom configuration value
+    pub fn set(&mut self, key: String, value: ConfigValue) {
+        self.current_config.custom_settings.insert(key, value);
+    }
+
+    // Validate configuration
+    pub fn validate(&self) -> Result<(), ConfigurationError> {
+        // Add validation logic
+        match &self.current_config.game_mode {
+            GameModeConfig::Host(host_config) => {
+                if host_config.world_generation_seed == 0 {
+                    return Err(ConfigurationError::InvalidSeed);
+                }
+            },
+            GameModeConfig::Client(client_config) => {
+                if client_config.server_address.is_empty() {
+                    return Err(ConfigurationError::InvalidServerAddress);
+                }
+            },
+            _ => {}
         }
+        Ok(())
+    }
+}
+
+// Custom error type for configuration errors
+#[derive(Debug)]
+pub enum ConfigurationError {
+    InvalidSeed,
+    InvalidServerAddress,
+    NetworkConfigError,
+}
+
+// Example usage
+fn demonstrate_configuration_management() {
+    // Create default configuration
+    let mut config_manager = ConfigurationManager::new(None);
+
+    // Modify configuration
+    config_manager.update_config(GameConfiguration {
+        game_mode: GameModeConfig::Host(HostConfig {
+            world_generation_seed: 12345,
+            admin_password: Some("admin123".to_string()),
+        }),
+        ..config_manager.current_config.clone()
+    });
+
+    // Save configuration
+    config_manager.save_to_file().unwrap();
+
+    // Load configuration
+    let loaded_config = ConfigurationManager::load_from_file("config.toml").unwrap();
+
+    // Validate configuration
+    if let Err(e) = loaded_config.validate() {
+        println!("Configuration error: {:?}", e);
     }
 }
