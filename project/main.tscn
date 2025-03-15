@@ -17,12 +17,13 @@ script = ExtResource("1_c00og")
 script = ExtResource("2_t1lqj")
 
 [node name="CSGBox3D" type="CSGBox3D" parent="World"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.204346, 0.185608, -6.68032)
-size = Vector3(6.19775, 1.37122, 1)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.228494, 6.578, -6.61919)
+size = Vector3(6.19775, 8.35993, 1)
 
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("14_idsun")]
 script = ExtResource("15_nngca")
 speed = 1
 
 [node name="Preformance node" type="Node2D" parent="."]
+position = Vector2(0, 304)
 script = ExtResource("4_lltm8")

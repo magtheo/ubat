@@ -3,8 +3,12 @@ extends CharacterBody3D
 @onready var rotator: Node3D = $rotator
 @onready var camera_3d: Camera3D = $rotator/Camera3D
 
-var SPEED = 0.1
-var MOUSE_SENSITIVITY = 0.1
+@onready var omni_light_3d: OmniLight3D = $rotator/OmniLight3D
+@onready var spot_light_3d: SpotLight3D = $rotator/SpotLight3D
+
+var lights_on: bool = true
+var SPEED = 0.08
+var MOUSE_SENSITIVITY = 0.05
 
 const FORWARD = Vector3(0, 1, 0)
 const BACK = Vector3(0, -1, 0)
@@ -24,24 +28,18 @@ func _unhandled_input(event):
 
 func _input(event):
 	if event is InputEventMouseMotion:
-		var mouse_motion = Vector3()
-		mouse_motion.x = event.relative.x * 0.1
-		mouse_motion.y = event.relative.y * 0.1
-		# You would need to get the z component of the mouse motion here, depending on your setup
+		var mouse_motion_x = event.relative.x * MOUSE_SENSITIVITY
+		var mouse_motion_y = event.relative.y * MOUSE_SENSITIVITY
 
-		# Constrain yaw and pitch
-		var target_yaw = clamp(rotator.rotation.y + mouse_motion.x, -180, 180)
-		rotator.rotate_y(deg_to_rad(target_yaw))
+		rotator.rotation_degrees.y -= mouse_motion_x
+		rotator.rotation_degrees.x = clamp(rotator.rotation_degrees.x - mouse_motion_y, -90, 90)
 
-		# Keep the camera's up direction aligned with the world's up direction
-		var target_pitch = deg_to_rad(fmod(rotator.rotation.x + mouse_motion.y, PI))
-		if abs(target_pitch) < 0.05:
-			target_pitch = 0
-		elif target_pitch > 0:
-			target_pitch = clamp(target_pitch, 0, deg_to_rad(PI/2))
-		elif target_pitch < 0:
-			target_pitch = clamp(target_pitch, -deg_to_rad(PI/2), 0)
-		rotator.rotate_x(deg_to_rad(target_pitch))
+	if event is InputEventKey and event.pressed and event.keycode == KEY_L:
+		lights_on = !lights_on
+		omni_light_3d.visible = lights_on
+		spot_light_3d.visible = lights_on
+		print("Lights toggled:", lights_on)  # TODO Debugging output
+
 
 func _physics_process(_delta):
 	# Movement
