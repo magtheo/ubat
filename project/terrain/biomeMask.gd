@@ -9,15 +9,26 @@ var mask_height: int = 0
 var world_width: float = 10000.0
 var world_height: float = 10000.0
 
+var is_ready: bool = false
+
 # ⚙️ Performance Cache
 var color_cache := {}
+var colorMutex = Mutex.new()
 
+signal biome_mask_ready
+
+# TODO: how is this image actualy placed in the world and on the and used to define the sections, is it infinate??
 # 🗺️ Biome mask image path
 const BIOME_MASK_IMAGE = "res://textures/biomeMask_image.png"
 
 # 🚀 Initialize
 func _ready():
-	load_mask(BIOME_MASK_IMAGE)
+	if load_mask(BIOME_MASK_IMAGE):
+		is_ready = true
+		emit_signal("biome_mask_ready")
+		print("✅ BiomeMask is fully loaded and ready.")
+	else:
+		push_error("❌ BiomeMask failed to load.")
 
 # 📂 Load Biome Mask
 func load_mask(path: String) -> bool:
@@ -48,11 +59,15 @@ func get_biome_color(world_x: float, world_y: float) -> Color:
 	var key = str(coords.x) + "_" + str(coords.y)
 
 	# 🚀 Use Cache for Performance
+	colorMutex.lock()
 	if key in color_cache:
-		return color_cache[key]
+		var cached_color = color_cache[key]
+		colorMutex.unlock()
+		return cached_color
 
 	var color = biome_image.get_pixel(coords.x, coords.y)
 	color_cache[key] = color
+	colorMutex.unlock()
 	return color
 
 # 📏 Get World Boundaries

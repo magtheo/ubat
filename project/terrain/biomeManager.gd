@@ -1,6 +1,7 @@
 # BiomeManager.gd
 extends Node
 
+signal biome_manager_ready
 # -----------------------------------------------------------------------------
 # This dictionary defines biome sections.
 # Each entry maps a section key to a dictionary that includes:
@@ -9,15 +10,20 @@ extends Node
 # -----------------------------------------------------------------------------
 var biome_sections = {
 	"section1": {
-		# For Section 1, you may have a predefined color (optional)
-		# "color": Color(0.8, 0.8, 0.8, 1.0),
-		"biomes": {"Corral": 0.5, "Sand": 0.5}
+		"color": Color(0.8, 0.8, 0.8, 1.0),
+		"biomes": ["corral", "sand"]
 	},
 	"section2": {
-		"biomes": {"Rock": 0.5, "Kelp": 0.5}
+		"color": Color(0.8, 0.5, 0.5, 1.0),
+		"biomes": ["rock", "kelp"]
 	},
 	"section3": {
-		"biomes": {"Rock": 0.5, "Lavarock": 0.5}
+		"color": Color(0.5, 0.5, 0.5, 1.0),
+		"biomes": ["rock", "lavarock"]
+	},
+	"section_boss": {
+		"color": Color(1.0, 0.0, 0.0, 1.0),  # Boss area is pure red
+		"biomes": []  # No blending for boss area
 	}
 }
 
@@ -46,12 +52,25 @@ func get_biome_name(color: Color) -> String:
 # -----------------------------------------------------------------------------
 func get_biome_weights(color: Color) -> Dictionary:
 	if is_boss_area(color):
-		# Boss areas might not blend; return an empty dictionary.
+		# Boss areas don't blend
 		return {}
-	# Use a helper function to determine which section the color belongs to.
+	
 	var section = _get_section_from_color(color)
-	# Return a copy of the weights (to avoid accidental modifications).
-	return biome_sections[section]["biomes"].duplicate()
+	if section.is_empty() or not biome_sections.has(section):
+		return {}
+	
+	var weights = {}
+	var biome_list = biome_sections[section]["biomes"]
+	
+	# Return weights of 0.5 for both biomes - actual blending will be done
+	# using noise in the shader and height calculation
+	if biome_list.size() >= 2:
+		weights[biome_list[0]] = 0.5
+		weights[biome_list[1]] = 0.5
+	elif biome_list.size() == 1:
+		weights[biome_list[0]] = 1.0
+	
+	return weights
 
 # -----------------------------------------------------------------------------
 # Returns true if the given color corresponds to the boss area.
@@ -66,10 +85,39 @@ func is_boss_area(color: Color) -> bool:
 # For this example, we use a simple heuristic based on the red channel.
 # Adjust the logic to match your biome mask image design.
 # -----------------------------------------------------------------------------
+
 func _get_section_from_color(color: Color) -> String:
-	if color.r > 0.7:
-		return "section1"
-	elif color.r > 0.4:
-		return "section2"
-	else:
-		return "section3"
+	var closest_section = ""
+	var closest_distance = 1.0  # Max possible distance
+	var match_threshold = 0.15  # Threshold for matching colors
+	
+	for section_key in biome_sections:
+		if section_key == "section_boss":
+			continue  # Skip boss section, handled separately in is_boss_area
+		
+		if biome_sections[section_key].has("color"):
+			var section_color = biome_sections[section_key]["color"]
+			# Calculate color distance using RGB components
+			var distance = sqrt(
+				pow(color.r - section_color.r, 2) +
+				pow(color.g - section_color.g, 2) +
+				pow(color.b - section_color.b, 2)
+			)
+			
+			if distance < match_threshold and distance < closest_distance:
+				closest_distance = distance
+				closest_section = section_key
+	
+	# Fallback logic if no section color was close enough
+	if closest_section.is_empty():
+		# Default fallback based on the red channel
+		if color.r > 0.7:
+			return "section2"
+		else:
+			return "section3"
+	
+	return closest_section
+	
+func _ready():
+	emit_signal("biome_manager_ready")
+	print("✅ BiomeManager is fully loaded and ready.")
