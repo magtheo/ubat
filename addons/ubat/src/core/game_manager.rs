@@ -176,27 +176,27 @@ pub enum ConfigurationError {
 }
 
 // Example usage
-fn demonstrate_configuration_management() {
-    // Create default configuration
-    let mut config_manager = ConfigurationManager::new(None);
+// fn demonstrate_configuration_management() {
+//     // Create default configuration
+//     let mut config_manager = ConfigurationManager::new(None);
 
-    // Modify configuration
-    config_manager.update_config(GameConfiguration {
-        game_mode: GameModeConfig::Host(HostConfig {
-            world_generation_seed: 12345,
-            admin_password: Some("admin123".to_string()),
-        }),
-        ..config_manager.current_config.clone()
-    });
+//     // Modify configuration
+//     config_manager.update_config(GameConfiguration {
+//         game_mode: GameModeConfig::Host(HostConfig {
+//             world_generation_seed: 12345,
+//             admin_password: Some("admin123".to_string()),
+//         }),
+//         ..config_manager.current_config.clone()
+//     });
 
-    // Save configuration
-    config_manager.save_to_file().unwrap();
+//     // Save configuration
+//     config_manager.save_to_file().unwrap();
 
-    // Load configuration
-    let loaded_config = ConfigurationManager::load_from_file("config.toml").unwrap();
+//     // Load configuration
+//     let loaded_config = ConfigurationManager::load_from_file("config.toml").unwrap();
 
-    // Validate configuration
-    if let Err(e) = loaded_config.validate() {
-        println!("Configuration error: {:?}", e);
-    }
-}
+//     // Validate configuration
+//     if let Err(e) = loaded_config.validate() {
+//         println!("Configuration error: {:?}", e);
+//     }
+// }
