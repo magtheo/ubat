@@ -16,13 +16,13 @@ use std::sync::{Arc, Mutex};
 // Network connection established
 // Configuration changed
 
+// Boxed event handler type
+type BoxedHandler = Arc<dyn Fn(&dyn Any) + Send + Sync>;
+
 // Trait for event handling
-trait EventHandler: Send + Sync {
+trait EventHandler {
     fn handle_event(&self, event: &dyn Any);
 }
-
-// Boxed event handler type
-type BoxedHandler = Arc<dyn EventHandler>;
 
 // Generic event bus for type-safe event handling
 pub struct EventBus {
@@ -37,8 +37,11 @@ impl EventBus {
     }
 
     // Subscribe to a specific event type
-    pub fn subscribe<T: 'static>(&self, handler: Arc<dyn Fn(&T)>) 
-    where T: Send + Sync {
+    pub fn subscribe<T: 'static>(&self, handler: Arc<dyn Fn(&T) + Send + Sync + 'static>) 
+    where
+        T: Send + Sync
+    {
+
         let mut handlers = self.handlers.lock().unwrap();
         
         let type_id = TypeId::of::<T>();
@@ -62,7 +65,7 @@ impl EventBus {
         
         if let Some(event_handlers) = handlers.get(&type_id) {
             for handler in event_handlers {
-                handler.handle_event(&event);
+                handler(&event);
             }
         }
     }
