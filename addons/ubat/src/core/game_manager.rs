@@ -116,7 +116,7 @@ impl GameManager {
         let config = {
             let config_manager = self.config_manager.lock()
                 .map_err(|_| GameError::SystemError("Failed to lock config manager".into()))?;
-            config_manager.current_config.clone()
+            config_manager.get_config().clone()
         };
         
         // Set up network based on game mode
@@ -165,7 +165,9 @@ impl GameManager {
         };
         
         // Only create network handler if not in standalone mode
-        if network_config.mode != NetworkMode::Standalone {
+        // Using matches! is a more idiomatic way to check enum variants in Rust
+        // This checks if network_config.mode matches the NetworkMode::Standalone pattern
+        if !matches!(network_config.mode, NetworkMode::Standalone) {
             let handler = NetworkHandler::new(network_config)
                 .map_err(|e| GameError::NetworkError(format!("Failed to initialize network: {:?}", e)))?;
             
@@ -295,6 +297,9 @@ impl GameManager {
     fn handle_network_event(&self, event: NetworkEvent) -> Result<(), GameError> {
         match event {
             NetworkEvent::Connected(peer_id) => {
+                // Clone peer_id before moving it into the event
+                let peer_id_clone = peer_id.clone();
+
                 // Publish player connected event
                 self.event_bus.publish(PlayerConnectedEvent {
                     player_id: peer_id,
@@ -312,7 +317,7 @@ impl GameManager {
                     let handler = network_handler.lock()
                         .map_err(|_| GameError::SystemError("Failed to lock network handler".into()))?;
                     
-                    handler.send_to_peer(&peer_id, "world_state", &serialized_state)
+                    handler.send_to_peer(&peer_id_clone, "world_state", &serialized_state)
                         .map_err(|e| GameError::NetworkError(format!("Failed to send world state: {:?}", e)))?;
                 }
             },

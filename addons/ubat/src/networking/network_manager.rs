@@ -17,10 +17,10 @@ pub enum NetworkEvent {
 }
 
 // Unique identifier for network peers
-type PeerId = String;
+pub type PeerId = String;
 
 // Possible network modes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NetworkMode {
     Standalone,
     Host,

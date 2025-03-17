@@ -25,9 +25,9 @@ trait WorldEntity: Send + Sync {
 // World state configuration
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WorldStateConfig {
-    seed: u64,
-    world_size: (u32, u32),
-    generation_parameters: GenerationRules,
+    pub seed: u64,
+    pub world_size: (u32, u32),
+    pub generation_parameters: GenerationRules,
 }
 
 // Comprehensive world state management
@@ -48,7 +48,7 @@ pub struct WorldStateManager {
 
 impl WorldStateManager {
     // Create a new world state
-    fn new(config: WorldStateConfig) -> Self {
+    pub fn new(config: WorldStateConfig) -> Self {
         Self {
             entities: Arc::new(RwLock::new(HashMap::new())),
             config: config.clone(),
@@ -58,7 +58,7 @@ impl WorldStateManager {
     }
 
     // Generate initial world state
-    fn generate_initial_world(&mut self) {
+    pub fn generate_initial_world(&mut self) {
         // Generate terrain
         let terrain = self.terrain_generator.generate_world();
         
@@ -94,7 +94,7 @@ impl WorldStateManager {
     }
 
     // Serialize world state for network transmission
-    fn serialize_world_state(&self) -> Vec<u8> {
+    pub fn serialize_world_state(&self) -> Vec<u8> {
         let entities = self.entities.read().unwrap();
         
         // Serialize entities and world state
