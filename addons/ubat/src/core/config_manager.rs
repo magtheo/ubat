@@ -142,6 +142,12 @@ impl ConfigurationManager {
             .and_then(|val| Some(val.clone().into()))
     }
 
+    // Get all config values
+    pub fn get_config(&self) -> &GameConfiguration {
+        &self.current_config
+    }
+
+
     // Set a custom configuration value
     pub fn set(&mut self, key: String, value: ConfigValue) {
         self.current_config.custom_settings.insert(key, value);

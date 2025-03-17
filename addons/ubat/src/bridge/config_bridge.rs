@@ -3,13 +3,23 @@ use godot::prelude::*;
 use std::sync::{Arc, Mutex};
 
 use crate::core::config_manager::{ConfigurationManager};
-
+use crate::bridge::EventBridge;
 
 #[derive(GodotClass)]
 #[class(base=RefCounted)]
 pub struct ConfigBridge {
     base: Base<RefCounted>,
     config_manager: Option<Arc<Mutex<ConfigurationManager>>>,
+}
+
+#[godot_api]
+impl IRefCounted for ConfigBridge {
+    fn init(base: Base<RefCounted>) -> Self {
+        Self {
+            base,
+            config_manager: None,
+        }
+    }
 }
 
 #[godot_api]
@@ -32,11 +42,14 @@ impl ConfigBridge {
     fn get_world_seed(&self) -> i64 {
         if let Some(config) = &self.config_manager {
             if let Ok(config) = config.lock() {
-                return config.current_config.world_seed as i64;
+                return config.get_config().world_seed as i64;
             }
         }
         0
     }
+
+    // TODO: add more getter funcitons when needed
+    
     
     // Add getters/setters for other important configuration values
 }

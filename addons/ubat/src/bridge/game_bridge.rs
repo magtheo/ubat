@@ -1,6 +1,8 @@
 use godot::prelude::*;
 
-use crate::core::GameManager;
+use crate::core::game_manager::{GameManager, GameState};
+use crate::bridge::EventBridge;
+use std::sync::{Arc, Mutex};
 
 
 #[derive(GodotClass)]
@@ -11,6 +13,30 @@ pub struct GameManagerBridge {
     
     // Internal reference to your game manager
     game_manager: Option<GameManager>,
+
+    event_bridge: Option<Gd<EventBridge>>,
+}
+
+#[godot_api]
+impl INode for GameManagerBridge {
+    fn init(base: Base<Node>) -> Self {
+        Self {
+            base,
+            game_manager: None,
+            event_bridge: None,
+        }
+    }
+    
+    fn ready(&mut self) {
+        // Try to find the event bridge in the scene tree
+        if let Some(tree) = self.base().get_tree() {
+            if let Some(root) = tree.get_root() {
+                // Using get_node_as_safe which returns Option<Gd<T>>
+                self.event_bridge = Some(root.get_node_as::<EventBridge>("EventBridge"));
+                // error might appare here
+            }
+        }
+    }
 }
 
 #[godot_api]
