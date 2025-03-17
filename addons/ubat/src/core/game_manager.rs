@@ -3,16 +3,10 @@ use std::time::{Duration, Instant};
 use std::thread;
 use std::path::Path;
 
-// Import our game subsystems
-mod config_manager;
-mod event_bus;
-mod world_manager;
-mod network_manager;
-
-use config_manager::{ConfigurationManager, GameConfiguration, GameModeConfig};
-use event_bus::{EventBus, PlayerConnectedEvent, WorldGeneratedEvent};
-use world_manager::{WorldStateManager, WorldStateConfig};
-use network_manager::{NetworkHandler, NetworkConfig, NetworkMode, NetworkEvent, PeerId};
+use crate::core::config_manager::{ConfigurationManager, GameConfiguration, GameModeConfig};
+use crate::core::event_bus::{EventBus, PlayerConnectedEvent, WorldGeneratedEvent};
+use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
+use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode, NetworkEvent, PeerId};
 
 // Game state enum
 #[derive(Debug, Clone, PartialEq)]

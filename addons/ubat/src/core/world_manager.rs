@@ -24,14 +24,14 @@ trait WorldEntity: Send + Sync {
 
 // World state configuration
 #[derive(Clone, Serialize, Deserialize)]
-struct WorldStateConfig {
+pub struct WorldStateConfig {
     seed: u64,
     world_size: (u32, u32),
     generation_parameters: GenerationRules,
 }
 
 // Comprehensive world state management
-struct WorldStateManager {
+pub struct WorldStateManager {
     // Atomic, thread-safe world state
     entities: Arc<RwLock<HashMap<EntityId, Arc<dyn WorldEntity>>>>,
     
