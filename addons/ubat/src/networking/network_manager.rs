@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use serde::{Serialize, Deserialize};
 use bincode;
+use std::collections::HashMap;
+use std::io::Write;
 
 // Enum to represent different network events
 #[derive(Debug)]
@@ -106,12 +108,17 @@ impl NetworkHandler {
         let listener = TcpListener::bind(&address)
             .map_err(|_| ConnectionError::ConnectionFailed)?;
         
+        // Clone the listener for the thread
+        let thread_listener = listener.try_clone()
+            .map_err(|_| ConnectionError::ConnectionFailed)?;
+
+
         let peers = Arc::clone(&self.peers);
         let event_sender = self.event_sender.clone();
 
         // Spawn connection acceptance thread
         thread::spawn(move || {
-            for incoming in listener.incoming() {
+            for incoming in thread_listener.incoming() {
                 match incoming {
                     Ok(stream) => {
                         let peer_id = Self::generate_peer_id();
