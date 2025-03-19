@@ -232,21 +232,32 @@ impl EventBridge {
             // Try to receive all pending events
             while let Ok(player_id) = receiver.try_recv() {
                 // First emit the simple signal
-                self.base.emit_signal("player_connected".into(), &[player_id.clone().to_variant()]);
+                self.base_mut().emit_signal(
+                    &StringName::from("player_connected"), 
+                    &[player_id.clone().to_variant()]
+                );
                 
                 // Create and emit the structured data
-                let mut event_data = Gd::<EventData>::new_default();
-                {
-                    let mut data_mut = event_data.bind_mut();
-                    data_mut.event_type = "player_connected".into();
+                let event_data = Gd::from_init_fn(|base| {
+                    let mut event = EventData::init(base);
+                    event.event_type = GString::from("player_connected");
                     
                     let mut dict = Dictionary::new();
-                    dict.set("player_id".into(), player_id.clone().to_variant());
-                    data_mut.data = dict;
-                }
+                    // Convert to GString explicitly
+                    dict.set::<Variant, Variant>(
+                        GString::from("player_id").to_variant(), 
+                        player_id.clone().to_variant()
+                    );
+                    event.data = dict;
+                    
+                    event
+                });
                 
                 // Emit the structured data signal
-                self.base.emit_signal("player_connected_data".into(), &[event_data.to_variant()]);
+                self.base_mut().emit_signal(
+                    &StringName::from("player_connected_data"), 
+                    &[event_data.to_variant()]
+                );
                 
                 // Call the target callable if set
                 if let Some(target) = &self.player_connected_target {
@@ -260,33 +271,49 @@ impl EventBridge {
         }
     }
     
-    /// Process world generated events
     fn process_world_generated_events(&mut self) {
         if let Some(receiver) = &self.world_generated_receiver {
             // Try to receive all pending events
             while let Ok((seed, (width, height))) = receiver.try_recv() {
                 // First emit the simple signal
-                self.base.emit_signal("world_generated".into(), &[
-                    seed.to_variant(),
-                    width.to_variant(),
-                    height.to_variant()
-                ]);
+                self.base_mut().emit_signal(
+                    &StringName::from("world_generated"), 
+                    &[
+                        seed.to_variant(),
+                        width.to_variant(),
+                        height.to_variant()
+                    ]
+                );
                 
                 // Create and emit the structured data
-                let mut event_data = Gd::<EventData>::new_default();
-                {
-                    let mut data_mut = event_data.bind_mut();
-                    data_mut.event_type = "world_generated".into();
+                let event_data = Gd::from_init_fn(|base| {
+                    let mut event = EventData::init(base);
+                    event.event_type = GString::from("world_generated");
                     
                     let mut dict = Dictionary::new();
-                    dict.set("seed".into(), seed.to_variant());
-                    dict.set("width".into(), width.to_variant());
-                    dict.set("height".into(), height.to_variant());
-                    data_mut.data = dict;
-                }
+                    // Explicitly convert keys and values
+                    dict.set::<Variant, Variant>(
+                        GString::from("seed").to_variant(), 
+                        seed.to_variant()
+                    );
+                    dict.set::<Variant, Variant>(
+                        GString::from("width").to_variant(), 
+                        width.to_variant()
+                    );
+                    dict.set::<Variant, Variant>(
+                        GString::from("height").to_variant(), 
+                        height.to_variant()
+                    );
+                    event.data = dict;
+                    
+                    event
+                });
                 
                 // Emit the structured data signal
-                self.base.emit_signal("world_generated_data".into(), &[event_data.to_variant()]);
+                self.base_mut().emit_signal(
+                    &StringName::from("world_generated_data"), 
+                    &[event_data.to_variant()]
+                );
                 
                 // Call the target callable if set
                 if let Some(target) = &self.world_generated_target {
