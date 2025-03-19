@@ -228,22 +228,32 @@ impl EventBridge {
 
     /// Process player connected events
     fn process_player_connected_events(&mut self) {
-        if let Some(receiver) = &self.player_connected_receiver {
-            // Try to receive all pending events
+        // Create a local copy of the receiver to avoid borrowing conflicts
+        if let Some(receiver) = self.player_connected_receiver.take() {
+            let mut pending_events = Vec::new();
+
+            // Collect all events first
             while let Ok(player_id) = receiver.try_recv() {
-                // First emit the simple signal
+                pending_events.push(player_id);
+            }
+
+            // Restore the receiver
+            self.player_connected_receiver = Some(receiver);
+
+            // Process collected events
+            for player_id in pending_events {
+                // Emit simple signal
                 self.base_mut().emit_signal(
                     &StringName::from("player_connected"), 
                     &[player_id.clone().to_variant()]
                 );
                 
-                // Create and emit the structured data
+                // Create structured event data
                 let event_data = Gd::from_init_fn(|base| {
                     let mut event = EventData::init(base);
                     event.event_type = GString::from("player_connected");
                     
                     let mut dict = Dictionary::new();
-                    // Convert to GString explicitly
                     dict.set::<Variant, Variant>(
                         GString::from("player_id").to_variant(), 
                         player_id.clone().to_variant()
@@ -253,13 +263,13 @@ impl EventBridge {
                     event
                 });
                 
-                // Emit the structured data signal
+                // Emit structured data signal
                 self.base_mut().emit_signal(
                     &StringName::from("player_connected_data"), 
                     &[event_data.to_variant()]
                 );
                 
-                // Call the target callable if set
+                // Call target callable
                 if let Some(target) = &self.player_connected_target {
                     let _ = target.call(&[player_id.to_variant()]);
                 }
@@ -270,12 +280,23 @@ impl EventBridge {
             }
         }
     }
+
     
     fn process_world_generated_events(&mut self) {
-        if let Some(receiver) = &self.world_generated_receiver {
-            // Try to receive all pending events
+        if let Some(receiver) = self.world_generated_receiver.take() {
+            let mut pending_events = Vec::new();
+
+            // Collect events
             while let Ok((seed, (width, height))) = receiver.try_recv() {
-                // First emit the simple signal
+                pending_events.push((seed, width, height));
+            }
+
+            // Restore receiver
+            self.world_generated_receiver = Some(receiver);
+
+            // Process collected events
+            for (seed, width, height) in pending_events {
+                // Existing signal emission logic...
                 self.base_mut().emit_signal(
                     &StringName::from("world_generated"), 
                     &[
@@ -284,14 +305,13 @@ impl EventBridge {
                         height.to_variant()
                     ]
                 );
-                
-                // Create and emit the structured data
+
+                // Event data creation...
                 let event_data = Gd::from_init_fn(|base| {
                     let mut event = EventData::init(base);
                     event.event_type = GString::from("world_generated");
                     
                     let mut dict = Dictionary::new();
-                    // Explicitly convert keys and values
                     dict.set::<Variant, Variant>(
                         GString::from("seed").to_variant(), 
                         seed.to_variant()
