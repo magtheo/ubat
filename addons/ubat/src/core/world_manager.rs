@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 
+
 // World State Manager (Catalog/Blueprint)
 
 // Keeps track of everything in the world
@@ -27,7 +28,7 @@ trait WorldEntity: Send + Sync {
 pub struct WorldStateConfig {
     pub seed: u64,
     pub world_size: (u32, u32),
-    pub generation_parameters: GenerationRules,
+    pub generation_parameters: GenerationRules, // TODO: make generation rules
 }
 
 // Comprehensive world state management
