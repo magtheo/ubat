@@ -1,20 +1,83 @@
 use godot::prelude::*;
+use std::sync::{Arc, mpsc};
 
-use std::sync::{Arc};
+use crate::core::event_bus::{EventBus, PlayerConnectedEvent, WorldGeneratedEvent};
 
-use crate::core::event_bus::{EventBus, PlayerConnectedEvent};
+/// Event data resource for structured event information
+/// 
+/// This resource wraps event data in a format that can be easily
+/// passed to and from GDScript, with type information preserved.
+#[derive(GodotClass)]
+#[class(base=Resource)]
+pub struct EventData {
+    base: Base<Resource>,
+    
+    // The type of event, used for filtering
+    #[export]
+    pub event_type: GString,
+    
+    // Dictionary to store event-specific data
+    #[export]
+    pub data: Dictionary,
+}
 
+#[godot_api]
+impl IResource for EventData {
+    fn init(base: Base<Resource>) -> Self {
+        Self {
+            base,
+            event_type: "none".into(),
+            data: Dictionary::new(),
+        }
+    }
+}
 
+/// EventBridge connects the Rust EventBus system to Godot
+///
+/// This bridge acts as an interface between the Rust event system and Godot.
+/// It provides both signal-based and callable-based event forwarding mechanisms.
+///
+/// Usage:
+/// 1. Add to your scene tree as a node
+/// 2. Connect to signals in GDScript: connect("player_connected", self, "_on_player_connected")
+/// 3. Or register callbacks: register_player_connected_callback(Callable.new(self, "_on_player_connected"))
+/// 4. Call process_events() in your _process function or enable auto_process
+/// 5. Handle events in your GDScript callbacks
+///
+/// Example:
+/// ```gdscript
+/// func _ready():
+///     $EventBridge.connect("player_connected", self, "_on_player_connected")
+///     $EventBridge.connect("world_generated", self, "_on_world_generated")
+///
+/// func _on_player_connected(player_id):
+///     print("Player connected: ", player_id)
+///
+/// func _on_world_generated(seed, width, height):
+///     print("World generated with seed:", seed, " size:", width, "x", height)
+/// ```
 #[derive(GodotClass)]
 #[class(base=Node)]
 pub struct EventBridge {
     base: Base<Node>,
+    
+    // Core event bus
     event_bus: Option<Arc<EventBus>>,
 
-    player_connected_receiver: Option<std::sync::mpsc::Receiver<String>>,
-    player_connected_target: Option<Callable>,
+    // Channels for thread-safe event passing
+    player_connected_receiver: Option<mpsc::Receiver<String>>,
+    world_generated_receiver: Option<mpsc::Receiver<(u64, (u32, u32))>>,
     
-
+    // Direct callable targets
+    player_connected_target: Option<Callable>,
+    world_generated_target: Option<Callable>,
+    
+    // Configuration options
+    #[export]
+    auto_process: bool,
+    
+    #[export]
+    debug_mode: bool,
 }
 
 #[godot_api]
@@ -24,84 +87,251 @@ impl INode for EventBridge {
             base,
             event_bus: None,
             player_connected_receiver: None,
+            world_generated_receiver: None,
             player_connected_target: None,
-
+            world_generated_target: None,
+            auto_process: true,
+            debug_mode: false,
         }
     }
     
     fn ready(&mut self) {
-        // Initialize the event bus
-        self.event_bus = Some(Arc::new(EventBus::new()));
+        // Initialize the event bus if not already set
+        if self.event_bus.is_none() {
+            self.event_bus = Some(Arc::new(EventBus::new()));
+            
+            if self.debug_mode {
+                godot_print!("EventBridge: Created new EventBus");
+            }
+        }
+    }
+    
+    fn process(&mut self, _delta: f64) {
+        // Automatically process events each frame if enabled
+        if self.auto_process {
+            self.process_events();
+        }
     }
 }
 
 #[godot_api]
 impl EventBridge {
-    // Method to share the event bus with other Rust components
+    // Signal declarations for all event types
+    #[signal]
+    fn player_connected(player_id: GString);
+    
+    #[signal]
+    fn player_connected_data(event_data: Gd<EventData>);
+    
+    #[signal]
+    fn world_generated(seed: u64, width: u32, height: u32);
+    
+    #[signal]
+    fn world_generated_data(event_data: Gd<EventData>);
+    
+    /// Retrieves the internal event bus for other Rust components
+    /// 
+    /// This method allows sharing the EventBus across multiple Rust components
     pub fn get_event_bus(&self) -> Option<Arc<EventBus>> {
         self.event_bus.clone()
     }
 
-    // Method to set the event bus from another component
+    /// Sets the event bus from an external component
+    /// 
+    /// This method allows sharing an existing EventBus from elsewhere in the codebase
     pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
         self.event_bus = Some(event_bus);
-    }
-
-    
-    #[func]
-    fn register_player_connected_callback(&mut self, target: Callable) {
-        // Store the target first
-        self.player_connected_target = Some(target.clone());
-
-        // Now proceed with event bus subscription
-        if let Some(event_bus) = &self.event_bus {
-            // Create a channel to send events back to the main thread
-            let (sender, receiver) = std::sync::mpsc::channel();
-
-            // Store the receiver
-            self.player_connected_receiver = Some(receiver);
-
-            // Clone event bus and target for move closure
-            let event_bus_clone = event_bus.clone();
-
-            // Create a thread-safe handler that sends events through the channel
-            let handler = Arc::new(move |event: &PlayerConnectedEvent| {
-                let player_id = event.player_id.clone();
-                // Ignore send errors, as they can happen if the receiver is dropped
-                let _ = sender.send(player_id);
-            });
-
-            // Subscribe to the event
-            event_bus_clone.subscribe(handler);
+        
+        if self.debug_mode {
+            godot_print!("EventBridge: External EventBus set");
         }
     }
 
+    /// Register a callable to be called when a player connects
+    /// 
+    /// The callable will receive a GString with the player ID
     #[func]
-    fn process_events(&mut self) {
-        // Process any pending events from the channels
-        self.process_player_connected_events();
-    }
+    pub fn register_player_connected_callback(&mut self, target: Callable) {
+        // Store the target first
+        self.player_connected_target = Some(target);
 
-    // You'll need to add fields and methods to handle the receivers
-    fn store_event_receiver(&mut self, receiver: std::sync::mpsc::Receiver<String>) {
-        // Store the receiver in a field
-        self.player_connected_receiver = Some(receiver);
-    }
+        // Now set up the event subscription if needed
+        if self.player_connected_receiver.is_none() {
+            if let Some(event_bus) = &self.event_bus {
+                // Create a channel to send events back to the main thread
+                let (sender, receiver) = mpsc::channel();
 
-    fn process_player_connected_events(&mut self) {
-        // Check if we have a receiver and a target
-        if let (Some(receiver), Some(target)) = 
-            (&self.player_connected_receiver, &self.player_connected_target) {
-            // Try to receive all pending events
-            while let Ok(player_id) = receiver.try_recv() {
-                // Convert player ID to Godot variant
-                let player_id_gd = player_id.to_variant();
+                // Store the receiver
+                self.player_connected_receiver = Some(receiver);
+
+                // Subscribe to the event
+                let sender = sender.clone();
+                let handler = Arc::new(move |event: &PlayerConnectedEvent| {
+                    let player_id = event.player_id.clone();
+                    // Ignore send errors, as they can happen if the receiver is dropped
+                    let _ = sender.send(player_id);
+                });
+
+                // Subscribe to the event
+                event_bus.subscribe(handler);
                 
-                // Call the target with the player ID
-                let _ = target.call(&[player_id_gd]);
+                if self.debug_mode {
+                    godot_print!("EventBridge: Registered PlayerConnectedEvent handler");
+                }
+            }
+        }
+    }
+    
+    /// Register a callable to be called when the world is generated
+    /// 
+    /// The callable will receive the seed, width, and height parameters
+    #[func]
+    pub fn register_world_generated_callback(&mut self, target: Callable) {
+        // Store the target
+        self.world_generated_target = Some(target);
+        
+        // Set up the event subscription if needed
+        if self.world_generated_receiver.is_none() {
+            if let Some(event_bus) = &self.event_bus {
+                // Create a channel
+                let (sender, receiver) = mpsc::channel();
+                
+                // Store the receiver
+                self.world_generated_receiver = Some(receiver);
+                
+                // Subscribe to the event
+                let sender = sender.clone();
+                let handler = Arc::new(move |event: &WorldGeneratedEvent| {
+                    // Ignore send errors
+                    let _ = sender.send((event.seed, event.world_size));
+                });
+                
+                // Subscribe to the event
+                event_bus.subscribe(handler);
+                
+                if self.debug_mode {
+                    godot_print!("EventBridge: Registered WorldGeneratedEvent handler");
+                }
             }
         }
     }
 
-    // Add more event registrations as needed
+    /// Process all pending events
+    /// 
+    /// Call this method in your _process function if auto_process is disabled
+    #[func]
+    pub fn process_events(&mut self) {
+        // Process all event types
+        self.process_player_connected_events();
+        self.process_world_generated_events();
+    }
+
+    /// Process player connected events
+    fn process_player_connected_events(&mut self) {
+        if let Some(receiver) = &self.player_connected_receiver {
+            // Try to receive all pending events
+            while let Ok(player_id) = receiver.try_recv() {
+                // First emit the simple signal
+                self.base.emit_signal("player_connected".into(), &[player_id.clone().to_variant()]);
+                
+                // Create and emit the structured data
+                let mut event_data = Gd::<EventData>::new_default();
+                {
+                    let mut data_mut = event_data.bind_mut();
+                    data_mut.event_type = "player_connected".into();
+                    
+                    let mut dict = Dictionary::new();
+                    dict.set("player_id".into(), player_id.clone().to_variant());
+                    data_mut.data = dict;
+                }
+                
+                // Emit the structured data signal
+                self.base.emit_signal("player_connected_data".into(), &[event_data.to_variant()]);
+                
+                // Call the target callable if set
+                if let Some(target) = &self.player_connected_target {
+                    let _ = target.call(&[player_id.to_variant()]);
+                }
+                
+                if self.debug_mode {
+                    godot_print!("EventBridge: Processed PlayerConnectedEvent: {}", player_id);
+                }
+            }
+        }
+    }
+    
+    /// Process world generated events
+    fn process_world_generated_events(&mut self) {
+        if let Some(receiver) = &self.world_generated_receiver {
+            // Try to receive all pending events
+            while let Ok((seed, (width, height))) = receiver.try_recv() {
+                // First emit the simple signal
+                self.base.emit_signal("world_generated".into(), &[
+                    seed.to_variant(),
+                    width.to_variant(),
+                    height.to_variant()
+                ]);
+                
+                // Create and emit the structured data
+                let mut event_data = Gd::<EventData>::new_default();
+                {
+                    let mut data_mut = event_data.bind_mut();
+                    data_mut.event_type = "world_generated".into();
+                    
+                    let mut dict = Dictionary::new();
+                    dict.set("seed".into(), seed.to_variant());
+                    dict.set("width".into(), width.to_variant());
+                    dict.set("height".into(), height.to_variant());
+                    data_mut.data = dict;
+                }
+                
+                // Emit the structured data signal
+                self.base.emit_signal("world_generated_data".into(), &[event_data.to_variant()]);
+                
+                // Call the target callable if set
+                if let Some(target) = &self.world_generated_target {
+                    let _ = target.call(&[
+                        seed.to_variant(),
+                        width.to_variant(),
+                        height.to_variant()
+                    ]);
+                }
+                
+                if self.debug_mode {
+                    godot_print!("EventBridge: Processed WorldGeneratedEvent: seed={}, size={}x{}", 
+                        seed, width, height);
+                }
+            }
+        }
+    }
+    
+    /// Publish a player connected event from GDScript
+    #[func]
+    pub fn publish_player_connected(&self, player_id: GString) {
+        if let Some(event_bus) = &self.event_bus {
+            event_bus.publish(PlayerConnectedEvent {
+                player_id: player_id.to_string(),
+            });
+            
+            if self.debug_mode {
+                godot_print!("EventBridge: Published PlayerConnectedEvent: {}", player_id);
+            }
+        }
+    }
+    
+    /// Publish a world generated event from GDScript
+    #[func]
+    pub fn publish_world_generated(&self, seed: u64, width: u32, height: u32) {
+        if let Some(event_bus) = &self.event_bus {
+            event_bus.publish(WorldGeneratedEvent {
+                seed,
+                world_size: (width, height),
+            });
+            
+            if self.debug_mode {
+                godot_print!("EventBridge: Published WorldGeneratedEvent: seed={}, size={}x{}", 
+                    seed, width, height);
+            }
+        }
+    }
 }
