@@ -267,7 +267,7 @@ impl GameManager {
     }
     
     // Update game state
-    fn update(&mut self) -> Result<(), GameError> {
+    pub fn update(&mut self) -> Result<(), GameError> {
         // Process network events first
         if let Some(network_handler) = &self.network_handler {
             let handler = network_handler.lock()
@@ -291,6 +291,11 @@ impl GameManager {
         // Check for game state changes or exit conditions
         
         Ok(())
+    }
+
+    pub fn set_frame_rate(&mut self, fps: u32) {
+        self.frame_rate = fps;
+        println!("Game frame rate set to {}", fps);
     }
     
     // Handle network events
@@ -339,7 +344,7 @@ impl GameManager {
     }
     
     // Change game state with event notification
-    fn transition_state(&mut self, new_state: GameState) {
+    pub fn transition_state(&mut self, new_state: GameState) {
         let old_state = self.state.clone();
         self.state = new_state.clone();
         
