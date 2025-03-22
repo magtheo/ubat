@@ -1,0 +1,457 @@
+use godot::prelude::*;
+use std::sync::{Arc, Mutex};
+use std::path::Path;
+
+use crate::core::game_manager::{GameManager, GameState, GameError};
+use crate::bridge::EventBridge;
+
+
+#[derive(GodotClass)]
+#[class(base=Node)]
+pub struct GameManagerBridge {
+    // Base class must be first field
+    base: Base<Node>,
+    
+    // Internal reference to the game manager
+    game_manager: Option<Arc<Mutex<GameManager>>>,
+
+    // Reference to the event bridge
+    event_bridge: Option<Gd<EventBridge>>,
+    
+    // Configuration properties exposed to the editor
+    #[export]
+    config_path: GString,
+    
+    frame_rate: i32,
+    
+    #[export]
+    debug_mode: bool,
+    
+    // Current game state for property access
+    #[export]
+    current_state: i32,
+    
+    // Flag to control automatic updates
+    #[export]
+    auto_update: bool,
+}
+
+#[godot_api]
+impl INode for GameManagerBridge {
+    fn init(base: Base<Node>) -> Self {
+        Self {
+            base,
+            game_manager: None,
+            event_bridge: None,
+            config_path: "res://game_config.toml".into(),
+            frame_rate: 60,
+            debug_mode: false,
+            current_state: -1, // Not initialized
+            auto_update: true,
+        }
+    }
+    
+    fn ready(&mut self) {
+        // Find the event bridge in the scene tree
+        if let Some(tree) = self.base().get_tree() {
+            if let Some(root) = tree.get_root() {
+                // Using get_node_as which returns Option<Gd<T>>
+                self.event_bridge = Some(root.get_node_as::<EventBridge>("EventBridge"));
+                
+                if self.event_bridge.is_some() && self.debug_mode {
+                    godot_print!("GameManagerBridge: Found EventBridge");
+                }
+            }
+        }
+        
+        // Automatically initialize if config path is set
+        if !self.config_path.is_empty() && self.debug_mode {
+            godot_print!("GameManagerBridge: Config path set to {}", self.config_path);
+        }
+    }
+    
+    fn process(&mut self, delta: f64) {
+        // Update game state if running and auto-update is enabled
+        if self.auto_update {
+            self.update_game(delta);
+        }
+    }
+}
+
+#[godot_api]
+impl GameManagerBridge {
+    // Signal declarations
+    #[signal]
+    fn game_state_changed(old_state: i32, new_state: i32, state_name: GString);
+    
+    #[signal]
+    fn game_error(error_message: GString);
+    
+    /// Initialize the game with the given configuration file path
+    /// 
+    /// Returns true if initialization was successful, false otherwise
+    #[func]
+    // Replace the current implementation with this:
+    pub fn initialize(&mut self, config_path: GString) -> bool {
+        // Store the config path
+        self.config_path = config_path.clone();
+        
+        // Create and initialize the game manager
+        let (initialization_successful, error_msg) = match GameManager::init_from_config(config_path.to_string()) {
+            Ok(mut manager) => {
+                // Initialize the manager
+                match manager.initialize() {
+                    Ok(_) => {
+                        // Store the initialized manager in an Arc<Mutex>
+                        self.game_manager = Some(Arc::new(Mutex::new(manager)));
+                        (true, None)
+                    },
+                    Err(e) => {
+                        let error_msg = format!("Failed to initialize game: {:?}", e);
+                        godot_error!("{}", error_msg);
+                        (false, Some(error_msg))
+                    }
+                }
+            },
+            Err(e) => {
+                let error_msg = format!("Failed to create game manager: {:?}", e);
+                godot_error!("{}", error_msg);
+                (false, Some(error_msg))
+            }
+        };
+        
+        // Now handle the result and emit signals
+        if let Some(msg) = error_msg {
+            self.base_mut().emit_signal("game_error", &[msg.to_variant()]);
+        }
+        
+        if initialization_successful {
+            // Update the current state
+            self.update_state_property();
+            
+            if self.debug_mode {
+                godot_print!("GameManagerBridge: Game initialized successfully");
+            }
+        }
+        
+        initialization_successful
+    }
+    
+    /// Initialize the game with default configuration
+    /// 
+    /// Returns true if initialization was successful, false otherwise
+    #[func]
+    pub fn initialize_default(&mut self) -> bool {
+        let mut manager = GameManager::new();
+        
+        match manager.initialize() {
+            Ok(_) => {
+                // Store the initialized manager
+                self.game_manager = Some(Arc::new(Mutex::new(manager)));
+                
+                // Update the current state
+                self.update_state_property();
+                
+                if self.debug_mode {
+                    godot_print!("GameManagerBridge: Game initialized with default config");
+                }
+                
+                true
+            },
+            Err(e) => {
+                let error_msg = format!("Failed to initialize game: {:?}", e);
+                godot_error!("{}", error_msg);
+                
+                // Emit error signal
+                self.base_mut().emit_signal("game_error", &[error_msg.to_variant()]);
+                
+                false
+            }
+        }
+    }
+    
+    /// Start the game (non-blocking)
+    /// 
+    /// Returns true if the game was started successfully, false otherwise
+    #[func]
+    pub fn start_game(&mut self) -> bool {
+        // Step 1: Execute operation with immutable borrow
+        let start_result = if let Some(game_manager) = &self.game_manager {
+            if let Ok(mut manager) = game_manager.lock() {
+                // Check the current state
+                let current_state = manager.get_state();
+                
+                // Only start if not already running
+                if current_state != GameState::Running {
+                    // Set state to Running
+                    manager.transition_state(GameState::Running);
+                    true
+                } else {
+                    // Already running is not an error
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        // Step 2: Now handle operations requiring mutable borrow
+        if start_result {
+            // Update the state property
+            self.update_state_property();
+            
+            if self.debug_mode {
+                godot_print!("GameManagerBridge: Game started");
+            }
+            
+            true
+        } else {
+            godot_error!("GameManagerBridge: Game manager not initialized");
+            false
+        }
+    }
+    
+    /// Update the game state (should be called every frame for non-blocking operation)
+    /// 
+    /// Returns true if the update was successful, false otherwise
+    #[func]
+    pub fn update_game(&mut self, delta: f64) -> bool {
+        // Step 1: Extract operation result and error message if any
+        let (update_result, error_msg) = if let Some(game_manager) = &self.game_manager {
+            if let Ok(mut manager) = game_manager.lock() {
+                // Only update if the game is running
+                if manager.get_state() == GameState::Running {
+                    // Call the update method
+                    match manager.update() {
+                        Ok(_) => (true, None),
+                        Err(e) => {
+                            let msg = format!("Game update error: {:?}", e);
+                            (false, Some(msg))
+                        }
+                    }
+                } else {
+                    (false, None) // Not running, no update performed
+                }
+            } else {
+                (false, None) // Failed to lock
+            }
+        } else {
+            (false, None) // No game manager
+        };
+        
+        // Step 2: Handle results and emit signals
+        if let Some(msg) = error_msg {
+            godot_error!("{}", msg);
+            self.base_mut().emit_signal(&StringName::from("game_error"), &[msg.to_variant()]);
+        }
+        
+        update_result
+    }
+
+    /// Get the current game state as an integer
+    /// 
+    /// Returns:
+    /// - 0: Initializing
+    /// - 1: MainMenu
+    /// - 2: Loading
+    /// - 3: Running
+    /// - 4: Paused
+    /// - 5: Exiting
+    /// - -1: Not initialized
+    #[func]
+    pub fn get_game_state(&self) -> i32 {
+        self.current_state
+    }
+    
+    /// Get the current game state as a string
+    /// 
+    /// Returns a descriptive string for the current state
+    #[func]
+    pub fn get_game_state_name(&self) -> GString {
+        match self.current_state {
+            0 => "Initializing",
+            1 => "MainMenu",
+            2 => "Loading",
+            3 => "Running",
+            4 => "Paused",
+            5 => "Exiting",
+            _ => "Not Initialized",
+        }.into()
+    }
+    
+    /// Pause the game
+    /// 
+    /// Returns true if the game was paused successfully
+    #[func]
+    pub fn pause_game(&mut self) -> bool {
+        // Step 1: Execute operation with immutable borrow
+        let pause_successful = if let Some(game_manager) = &self.game_manager {
+            if let Ok(mut manager) = game_manager.lock() {
+                manager.pause();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        // Step 2: Now handle operations requiring mutable borrow
+        if pause_successful {
+            // Update the state property
+            self.update_state_property();
+            
+            if self.debug_mode {
+                godot_print!("GameManagerBridge: Game paused");
+            }
+            
+            true
+        } else {
+            godot_error!("GameManagerBridge: Game manager not initialized");
+            false
+        }
+    }
+    
+    /// Resume the game
+    /// 
+    /// Returns true if the game was resumed successfully
+    #[func]
+    pub fn resume_game(&mut self) -> bool {
+        // Step 1: Execute operation with immutable borrow
+        let resume_successful = if let Some(game_manager) = &self.game_manager {
+            if let Ok(mut manager) = game_manager.lock() {
+                manager.resume();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        // Step 2: Now handle operations requiring mutable borrow
+        if resume_successful {
+            // Update the state property
+            self.update_state_property();
+            
+            if self.debug_mode {
+                godot_print!("GameManagerBridge: Game resumed");
+            }
+            
+            true
+        } else {
+            godot_error!("GameManagerBridge: Game manager not initialized");
+            false
+        }
+    }
+
+    #[func]
+    pub fn stop_game(&mut self) -> bool {
+        // Step 1: Execute operation with immutable borrow
+        let stop_successful = if let Some(game_manager) = &self.game_manager {
+            if let Ok(mut manager) = game_manager.lock() {
+                manager.stop();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        // Step 2: Now handle operations requiring mutable borrow
+        if stop_successful {
+            // Update the state property
+            self.update_state_property();
+            
+            if self.debug_mode {
+                godot_print!("GameManagerBridge: Game stopped");
+            }
+            
+            true
+        } else {
+            godot_error!("GameManagerBridge: Game manager not initialized");
+            false
+        }
+    }
+    
+    /// Set the maximum frames per second
+    #[func]
+    pub fn set_frame_rate(&mut self, fps: i32) {
+        self.frame_rate = fps;
+        
+        if let Some(game_manager) = &self.game_manager {
+            if let Ok(mut manager) = game_manager.lock() {
+                // Update the frame rate in the game manager
+                manager.set_frame_rate(fps as u32);
+                
+                if self.debug_mode {
+                    godot_print!("GameManagerBridge: Frame rate set to {}", fps);
+                }
+            }
+        }
+    }
+    
+    /// Update the current_state property based on the game manager state
+    fn update_state_property(&mut self) {
+        // First gather data with immutable borrow
+        let (old_state, new_state, state_changed) = if let Some(game_manager) = &self.game_manager {
+            if let Ok(manager) = game_manager.lock() {
+                let old_state = self.current_state;
+                
+                // Map game state to integer
+                let new_state = match manager.get_state() {
+                    GameState::Initializing => 0,
+                    GameState::MainMenu => 1,
+                    GameState::Loading => 2,
+                    GameState::Running => 3,
+                    GameState::Paused => 4,
+                    GameState::Exiting => 5,
+                };
+                
+                (old_state, new_state, old_state != new_state)
+            } else {
+                return; // Failed to lock
+            }
+        } else {
+            return; // No game manager
+        };
+        
+        // Update the state
+        self.current_state = new_state;
+        
+        // Emit signal if state changed
+        if state_changed {
+            let state_name = self.get_game_state_name();
+            
+            self.base_mut().emit_signal(&StringName::from("game_state_changed"), &[
+                old_state.to_variant(),
+                new_state.to_variant(),
+                state_name.to_variant(),
+            ]);
+            
+            if self.debug_mode {
+                godot_print!(
+                    "GameManagerBridge: Game state changed from {} to {}", 
+                    if old_state >= 0 { self.state_to_string(old_state) } else { "Not Initialized" },
+                    self.state_to_string(new_state),
+                );
+            }
+        }
+    }
+    
+    /// Helper function to convert state integer to string
+    fn state_to_string(&self, state: i32) -> &'static str {
+        match state {
+            0 => "Initializing",
+            1 => "MainMenu",
+            2 => "Loading",
+            3 => "Running",
+            4 => "Paused",
+            5 => "Exiting",
+            _ => "Unknown",
+        }
+    }
+}

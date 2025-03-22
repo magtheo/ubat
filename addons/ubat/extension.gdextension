@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.3
+
+[libraries]
+linux.debug.x86_64 = "res://target/debug/libubat.so"
+linux.release.x86_64 = "res://target/release/libmy_godot_extension.so"
+windows.debug.x86_64 = "res://target/debug/my_godot_extension.dll"
+windows.release.x86_64 = "res://target/release/my_godot_extension.dll"
+macos.debug = "res://target/debug/libmy_godot_extension.dylib"
+macos.release = "res://target/release/libmy_godot_extension.dylib"
