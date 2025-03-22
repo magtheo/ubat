@@ -1,7 +1,0 @@
-[gd_resource type="NoiseTexture2D" load_steps=2 format=3 uid="uid://buc14kotl5g7q"]
-
-[ext_resource type="FastNoiseLite" path="res://project/terrain/noise/rockNoise.tres" id="1_kljvj"]
-
-[resource]
-seamless = true
-noise = ExtResource("1_kljvj")
