@@ -1,0 +1,53 @@
+[
+  {
+    "directory": "/home/theo/Documents/GameDev/ubat/addons/terrain_generator",
+    "file": "src/chunkGen/chunk_generator.cpp",
+    "output": "",
+    "arguments": [
+      "g++",
+      "-o",
+      "-c",
+      "-std=c++17",
+      "-I../../godot-cpp/gdextension",
+      "-I../../godot-cpp/include",
+      "-I../../godot-cpp/include/godot_cpp",
+      "-I../../godot-cpp/gen/include",
+      "-Isrc/thirdparty",
+      "-Ithirdparty"
+    ]
+  },
+  {
+    "directory": "/home/theo/Documents/GameDev/ubat/addons/terrain_generator",
+    "file": "src/utils/SingletonAccessor.cpp",
+    "output": "",
+    "arguments": [
+      "g++",
+      "-o",
+      "-c",
+      "-std=c++17",
+      "-I../../godot-cpp/gdextension",
+      "-I../../godot-cpp/include",
+      "-I../../godot-cpp/include/godot_cpp",
+      "-I../../godot-cpp/gen/include",
+      "-Isrc/thirdparty",
+      "-Ithirdparty"
+    ]
+  },
+  {
+    "directory": "/home/theo/Documents/GameDev/ubat/addons/terrain_generator",
+    "file": "src/register_types.cpp",
+    "output": "",
+    "arguments": [
+      "g++",
+      "-o",
+      "-c",
+      "-std=c++17",
+      "-I../../godot-cpp/gdextension",
+      "-I../../godot-cpp/include",
+      "-I../../godot-cpp/include/godot_cpp",
+      "-I../../godot-cpp/gen/include",
+      "-Isrc/thirdparty",
+      "-Ithirdparty"
+    ]
+  }
+]

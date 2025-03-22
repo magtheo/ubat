@@ -1,0 +1,15 @@
+[configuration]
+entry_symbol = "chunk_generator_library_init"
+compatible_godot_version = "4.3"
+compatibility_minimum = "4.3"
+reloadable=true
+
+[files]
+libchunk_generator = "res://addons/terrain_generator/bin/libchunk_generator.so"
+
+[libraries]
+linux.debug.x86_64 = "res://addons/terrain_generator/bin/libchunk_generator.so"
+linux.release = "res://addons/terrain_generator/bin/libchunk_generator.so"
+windows.debug = "res://addons/terrain_generator/bin/chunk_generator.dll"
+windows.release = "res://addons/terrain_generator/bin/chunk_generator.dll"
+

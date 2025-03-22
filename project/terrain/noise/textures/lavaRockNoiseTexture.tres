@@ -1,0 +1,7 @@
+[gd_resource type="NoiseTexture2D" load_steps=2 format=3 uid="uid://ckkn7r5uwjbtp"]
+
+[ext_resource type="FastNoiseLite" path="res://project/terrain/noise/lavaRockNoise.tres" id="1_dllma"]
+
+[resource]
+seamless = true
+noise = ExtResource("1_dllma")
