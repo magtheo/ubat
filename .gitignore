@@ -67,9 +67,9 @@ desktop.ini
 
 
 ## Rust
-addons/ubat/target/     # Rust build output
-addons/ubat/Cargo.lock  # Optional - include if you want lockfile for binaries
-addons/ubat/.cargo/     # Cargo config (optional)
+/addons/ubat/target/     # Rust build output
+/addons/ubat/Cargo.lock  # Optional - include if you want lockfile for binaries
+/addons/ubat/.cargo/     # Cargo config (optional)
 /addons/ubat/xtask/     # If you have an xtask helper crate
 
 /target/                # Rust build output
