@@ -1,84 +1,238 @@
-pub mod network_manager {
-    /// Core networking system
-    pub struct NetworkSystem {
-        role: NetworkRole,
-        connection_manager: ConnectionManager,
-        message_dispatcher: MessageDispatcher,
-        replication_system: ReplicationSystem,
+use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use serde::{Serialize, Deserialize};
+use bincode;
+use std::collections::HashMap;
+use std::io::Write;
+
+// Enum to represent different network events
+#[derive(Debug)]
+pub enum NetworkEvent {
+    Connected(PeerId),
+    Disconnected(PeerId),
+    DataReceived {
+        peer_id: PeerId,
+        payload: Vec<u8>,
+    },
+    ConnectionError(ConnectionError),
+}
+
+// Unique identifier for network peers
+pub type PeerId = String;
+
+// Possible network modes
+#[derive(Debug, Clone, PartialEq)]
+pub enum NetworkMode {
+    Standalone,
+    Host,
+    Client,
+}
+
+// Connection configuration
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    pub mode: NetworkMode,
+    pub port: u16,
+    pub max_connections: usize,
+    pub server_address: Option<String>,
+}
+
+// Custom error type for network operations
+#[derive(Debug)]
+pub enum ConnectionError {
+    ConnectionFailed,
+    SendError,
+    ReceiveError,
+    InvalidMessage,
+}
+
+// Network message wrapper for type-safe serialization
+#[derive(Serialize, Deserialize)]
+struct NetworkMessage<T> {
+    message_type: String,
+    payload: T,
+}
+
+// Primary Network Handler Structure
+pub struct NetworkHandler {
+    // Current network mode
+    mode: NetworkMode,
+
+    // Connection details
+    config: NetworkConfig,
+
+    // Active peer connections
+    peers: Arc<Mutex<HashMap<PeerId, TcpStream>>>,
+
+    // Event channel for network events
+    event_sender: mpsc::Sender<NetworkEvent>,
+    event_receiver: mpsc::Receiver<NetworkEvent>,
+
+    // Listener for incoming connections (for host mode)
+    listener: Option<TcpListener>,
+}
+
+impl NetworkHandler {
+    // Create a new network handler
+    pub fn new(config: NetworkConfig) -> Result<Self, ConnectionError> {
+        let (event_sender, event_receiver) = mpsc::channel();
+
+        let mut handler = Self {
+            mode: config.mode.clone(),
+            config,
+            peers: Arc::new(Mutex::new(HashMap::new())),
+            event_sender,
+            event_receiver,
+            listener: None,
+        };
+
+        // Initialize based on network mode
+        handler.initialize_mode()?;
+
+        Ok(handler)
     }
 
-    impl NetworkSystem {
-        /// Initialize networking in specified role
-        pub fn new(role: NetworkRole) -> Self {
-            // Sets up appropriate network configuration
-        }
-
-        /// Main update loop for networking
-        pub fn update(&mut self, delta: f32) {
-            // Processes messages
-            // Handles replication
-            // Manages connections
-        }
-
-        /// Send an RPC to a specific client
-        pub fn send_rpc(&self, target: ClientId, method: &str, args: &[Variant]) {
-            // Sends RPC message
-        }
-
-        /// Broadcast an RPC to all connected clients
-        pub fn broadcast_rpc(&self, method: &str, args: &[Variant]) {
-            // Sends to all clients
-        }
-
-        /// Send an RPC to the host
-        pub fn send_to_host(&self, method: &str, args: &[Variant]) {
-            // Sends message to host
+    // Initialize networking based on mode
+    fn initialize_mode(&mut self) -> Result<(), ConnectionError> {
+        match self.mode {
+            NetworkMode::Host => self.start_host_mode(),
+            NetworkMode::Client => self.start_client_mode(),
+            NetworkMode::Standalone => Ok(()),
         }
     }
 
-    /// Manages data replication for networked objects
-    pub struct ReplicationSystem {
-        tracked_objects: HashMap<ObjectId, ReplicatedObject>,
-        interest_manager: InterestManager,
+    // Start host mode - listen for incoming connections
+    fn start_host_mode(&mut self) -> Result<(), ConnectionError> {
+        let address = format!("0.0.0.0:{}", self.config.port);
+        let listener = TcpListener::bind(&address)
+            .map_err(|_| ConnectionError::ConnectionFailed)?;
+        
+        // Clone the listener for the thread
+        let thread_listener = listener.try_clone()
+            .map_err(|_| ConnectionError::ConnectionFailed)?;
+
+
+        let peers = Arc::clone(&self.peers);
+        let event_sender = self.event_sender.clone();
+
+        // Spawn connection acceptance thread
+        thread::spawn(move || {
+            for incoming in thread_listener.incoming() {
+                match incoming {
+                    Ok(stream) => {
+                        let peer_id = Self::generate_peer_id();
+                        
+                        // Add to peers
+                        let mut peers_lock = peers.lock().unwrap();
+                        peers_lock.insert(peer_id.clone(), stream.try_clone().unwrap());
+
+                        // Send connection event
+                        event_sender.send(NetworkEvent::Connected(peer_id)).unwrap();
+                    }
+                    Err(e) => {
+                        // Handle connection errors
+                        eprintln!("Connection error: {}", e);
+                    }
+                }
+            }
+        });
+
+        self.listener = Some(listener);
+        Ok(())
     }
 
-    impl ReplicationSystem {
-        /// Register an object for replication
-        pub fn register_object(&mut self, object_id: ObjectId, replication_type: ReplicationType) {
-            // Sets up object for replication
-        }
+    // Start client mode - connect to host
+    fn start_client_mode(&mut self) -> Result<(), ConnectionError> {
+        let server_address = self.config.server_address
+            .as_ref()
+            .ok_or(ConnectionError::ConnectionFailed)?;
 
-        /// Update a property on a replicated object
-        pub fn update_property(&mut self, object_id: ObjectId, property: &str, value: Variant) {
-            // Marks property as changed
-        }
+        let stream = TcpStream::connect(server_address)
+            .map_err(|_| ConnectionError::ConnectionFailed)?;
 
-        /// Send updates to clients based on interest
-        pub fn send_updates(&mut self) {
-            // Sends delta updates to relevant clients
-        }
+        let peer_id = Self::generate_peer_id();
+        
+        // Add server connection to peers
+        let mut peers = self.peers.lock().unwrap();
+        peers.insert(peer_id.clone(), stream);
+
+        // Send connection event
+        self.event_sender
+            .send(NetworkEvent::Connected(peer_id))
+            .map_err(|_| ConnectionError::ConnectionFailed)?;
+
+        Ok(())
     }
 
-    /// Manages client interest in networked objects
-    pub struct InterestManager {
-        player_positions: HashMap<ClientId, Vector3>,
-        interest_areas: HashMap<ClientId, InterestArea>,
+    // Send a message to a specific peer
+    pub fn send_to_peer<T: Serialize>(
+        &self, 
+        peer_id: &PeerId, 
+        message_type: &str, 
+        payload: &T
+    ) -> Result<(), ConnectionError> {
+        let message = NetworkMessage {
+            message_type: message_type.to_string(),
+            payload,
+        };
+
+        let serialized = bincode::serialize(&message)
+            .map_err(|_| ConnectionError::SendError)?;
+
+        let mut peers = self.peers.lock().unwrap();
+        if let Some(stream) = peers.get_mut(peer_id) {
+            stream.write_all(&serialized)
+                .map_err(|_| ConnectionError::SendError)?;
+        }
+
+        Ok(())
     }
 
-    impl InterestManager {
-        /// Update a player's position
-        pub fn update_player_position(&mut self, client_id: ClientId, position: Vector3) {
-            // Updates position and recalculates interest
-        }
+    // Generate a unique peer identifier
+    fn generate_peer_id() -> PeerId {
+        // In a real implementation, use a more robust method
+        uuid::Uuid::new_v4().to_string()
+    }
 
-        /// Check if a client is interested in an object
-        pub fn is_client_interested(&self, client_id: ClientId, object_position: Vector3) -> bool {
-            // Determines if object should be replicated to client
-        }
-
-        /// Get all clients interested in a position
-        pub fn get_interested_clients(&self, position: Vector3) -> Vec<ClientId> {
-            // Returns clients that should receive updates
-        }
+    // Process incoming network events
+    pub fn poll_events(&self) -> Option<NetworkEvent> {
+        self.event_receiver.try_recv().ok()
     }
 }
+
+// // Demonstration of usage
+// fn demonstrate_network_handler() {
+//     // Host configuration
+//     let host_config = NetworkConfig {
+//         mode: NetworkMode::Host,
+//         port: 7878,
+//         max_connections: 64,
+//         server_address: None,
+//     };
+
+//     // Client configuration
+//     let client_config = NetworkConfig {
+//         mode: NetworkMode::Client,
+//         port: 0,
+//         max_connections: 1,
+//         server_address: Some("127.0.0.1:7878".to_string()),
+//     };
+
+//     // Create network handlers
+//     let host_handler = NetworkHandler::new(host_config).unwrap();
+//     let client_handler = NetworkHandler::new(client_config).unwrap();
+
+//     // Poll for events
+//     while let Some(event) = host_handler.poll_events() {
+//         match event {
+//             NetworkEvent::Connected(peer_id) => {
+//                 println!("New peer connected: {}", peer_id);
+//             }
+//             NetworkEvent::Disconnected(peer_id) => {
+//                 println!("Peer disconnected: {}", peer_id);
+//             }
+//             _ => {}
+//         }
+//     }
+// }

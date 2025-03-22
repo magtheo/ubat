@@ -6,6 +6,7 @@
 *.godot
 .editor_settings-*
 .editor_settings
+**/*.import
 
 # Binaries
 *.o
@@ -67,10 +68,13 @@ desktop.ini
 
 
 ## Rust
-addons/ubat/target/     # Rust build output
-addons/ubat/Cargo.lock  # Optional - include if you want lockfile for binaries
-addons/ubat/.cargo/     # Cargo config (optional)
-/addons/ubat/xtask/     # If you have an xtask helper crate
+/addons/ubat/target/     # Rust build output
+/addons/ubat/Cargo.lock  # Optional - include if you want lockfile for binaries
+/addons/ubat/.cargo     # Cargo config (optional)
+/addons/ubat/xtask     # If you have an xtask helper crate
+
+**/target/
+**/bin/
 
 /target/                # Rust build output
 **/*.rs.bk              # Rust backup files
