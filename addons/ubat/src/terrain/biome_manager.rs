@@ -166,7 +166,7 @@ impl BiomeManager {
         // Section 1: Forest region
         self.sections.push(BiomeSection {
             section_id: 1,
-            possible_biomes: vec![1, 2, 3],  // Dense forest, Light forest, Forest clearing
+            possible_biomes: vec![1, 2],  // sand, Corral
             voronoi_points: Vec::new(),
             point_density: 5.0,  // 5 points per 1000x1000 area
         });
@@ -174,7 +174,7 @@ impl BiomeManager {
         // Section 2: Mountain region
         self.sections.push(BiomeSection {
             section_id: 2,
-            possible_biomes: vec![2, 3, 4],  // Light forest, Forest clearing, Rocky terrain
+            possible_biomes: vec![3, 4],  // rock, kelp
             voronoi_points: Vec::new(),
             point_density: 3.0,  // 3 points per 1000x1000 area
         });
@@ -182,7 +182,7 @@ impl BiomeManager {
         // Section 3: Plains region
         self.sections.push(BiomeSection {
             section_id: 3,
-            possible_biomes: vec![3, 4, 5],  // Forest clearing, Rocky terrain, Grassland
+            possible_biomes: vec![3, 5],  // rock, lavarock
             voronoi_points: Vec::new(),
             point_density: 4.0,  // 4 points per 1000x1000 area
         });
@@ -241,6 +241,11 @@ impl BiomeManager {
             mask_y.clamp(0, self.mask_height - 1)
         )
     }
+
+    #[func]
+    pub fn get_seed(&self) -> u32 {
+        self.seed
+    }
     
     // Get the Section Color from the Mask
     #[func]
@@ -290,28 +295,29 @@ impl BiomeManager {
         // Get the color from the biome mask
         let color = self.get_biome_color(world_x, world_y);
         
-        // Convert color to section ID (simplified mapping)
-        // In a real implementation, you might have a more complex mapping
+        // Map colors to sections based on your biomeMask_image.png
+        // Red components (r > 0.7) = Section 1 (Coral/Sand)
+        // Green components (g > 0.7) = Section 2 (Rock/Kelp)
+        // Blue components (b > 0.7) = Section 3 (Rock/Lavarock)
+        
         let section_id = if color.r > 0.7 {
-            1 // Red-ish: Forest
+            1 // Section 1: Coral & Sand
         } else if color.g > 0.7 {
-            2 // Green-ish: Mountain
+            2 // Section 2: Rock & Kelp
         } else if color.b > 0.7 {
-            3 // Blue-ish: Plains
+            3 // Section 3: Rock & Lavarock
         } else {
-            // Default or mixed colors
+            // For mixed colors or undefined areas, determine section by dominance
             let max_component = f32::max(f32::max(color.r, color.g), color.b);
+            
             if max_component < 0.1 {
-                0 // Very dark: water or invalid
+                0 // Very dark: undefined section
+            } else if color.r >= color.g && color.r >= color.b {
+                1 // Red dominant: Section 1
+            } else if color.g >= color.r && color.g >= color.b {
+                2 // Green dominant: Section 2
             } else {
-                // Find which RGB component is highest
-                if color.r >= color.g && color.r >= color.b {
-                    1 // Red dominant
-                } else if color.g >= color.r && color.g >= color.b {
-                    2 // Green dominant
-                } else {
-                    3 // Blue dominant
-                }
+                3 // Blue dominant: Section 3
             }
         };
         
@@ -465,11 +471,11 @@ impl BiomeManager {
     pub fn get_biome_name(&self, biome_id: u8) -> GString {
         match biome_id {
             0 => "Unknown".into(),
-            1 => "Dense Forest".into(),
-            2 => "Light Forest".into(),
-            3 => "Forest Clearing".into(),
-            4 => "Rocky Terrain".into(),
-            5 => "Grassland".into(),
+            1 => "Coral".into(),
+            2 => "Sand".into(),
+            3 => "Rock".into(),
+            4 => "Kelp".into(),
+            5 => "Lavarock".into(),
             _ => format!("Biome {}", biome_id).into(),
         }
     }
