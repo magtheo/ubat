@@ -1,6 +1,5 @@
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
-use std::path::Path;
 
 use crate::core::game_manager::{GameManager, GameState, GameError};
 use crate::bridge::EventBridge;
