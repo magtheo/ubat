@@ -3,7 +3,7 @@ use godot::prelude::*;
 mod core;
 mod resource;
 mod networking;
-// mod terrain;
+mod terrain;
 
 mod bridge;
 
