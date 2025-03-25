@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 
 use crate::terrain::BiomeManager;
+use crate::terrain::biome_manager::ThreadSafeBiomeData;
+
 use crate::terrain::ChunkStorage;
 use crate::terrain::ThreadPool;
 
@@ -65,6 +67,7 @@ pub struct ChunkManager {
     chunks: Arc<Mutex<HashMap<ChunkPosition, Arc<Mutex<Chunk>>>>>,
     thread_pool: Arc<ThreadPool>,
     biome_manager: Option<Gd<BiomeManager>>,
+    thread_safe_biome_data: Option<Arc<ThreadSafeBiomeData>>,
     storage: Arc<ChunkStorage>,
     render_distance: i32,
 }
@@ -81,6 +84,7 @@ impl INode for ChunkManager {
             chunks: Arc::new(Mutex::new(HashMap::new())),
             thread_pool,
             biome_manager: None,
+            thread_safe_biome_data: None,
             storage,
             render_distance: 8, // Default render distance
         }
@@ -92,7 +96,15 @@ impl INode for ChunkManager {
         if let Some(parent) = parent {
             // Try to find BiomeManager as a sibling node
             let biome_manager = parent.get_node_as::<BiomeManager>("BiomeManager");
-            self.biome_manager = Some(biome_manager);
+            
+            // Create thread-safe biome data first
+            self.thread_safe_biome_data = Some(Arc::new(
+                ThreadSafeBiomeData::from_biome_manager(&biome_manager.bind())
+            ));
+            
+            // Then set the biome_manager field (clone to avoid move)
+            self.biome_manager = Some(biome_manager.clone());
+            
             godot_print!("ChunkManager: Got BiomeManager node as {:?}", self.biome_manager);
         }
     }
@@ -130,6 +142,9 @@ impl ChunkManager {
         let new_chunk_clone = Arc::clone(&new_chunk);
         let biome_manager = self.biome_manager.clone();
         
+         // Pass thread-safe biome data to thread
+        let thread_safe_biome = self.thread_safe_biome_data.as_ref().map(Arc::clone);
+
         self.thread_pool.execute(move || {
             if storage_clone.chunk_exists(position) {
                 // Chunk exists in storage, load it
@@ -147,7 +162,7 @@ impl ChunkManager {
                 }
             } else {
                 // Chunk doesn't exist, generate it
-                Self::generate_chunk(new_chunk_clone, position, storage_clone, biome_manager);
+                Self::generate_chunk(new_chunk_clone, position, storage_clone, thread_safe_biome);
             }
         });
         
@@ -159,11 +174,9 @@ impl ChunkManager {
         chunk: Arc<Mutex<Chunk>>, 
         position: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        biome_manager: Option<Gd<BiomeManager>>
+        thread_safe_biome: Option<Arc<ThreadSafeBiomeData>>
     ) {
-        // Clone biome manager safely
-        let biome_mgr_clone = biome_manager.clone();
-        
+
         // Generate heightmap
         let mut heightmap = vec![0.0; (CHUNK_SIZE * CHUNK_SIZE) as usize];
         let mut biome_ids = vec![0; (CHUNK_SIZE * CHUNK_SIZE) as usize];
@@ -173,11 +186,9 @@ impl ChunkManager {
                 let world_x = position.x as f32 * CHUNK_SIZE as f32 + x as f32;
                 let world_z = position.z as f32 * CHUNK_SIZE as f32 + z as f32;
                 
-                // Safely use biome manager if available
-                let biome_id = if let Some(ref biome_mgr) = biome_mgr_clone {
-                    let color = biome_mgr.bind().get_biome_color(world_x, world_z);
-                    // Simple mapping from color to biome ID
-                    ((color.r * 5.0) as u8) % 5
+                // Use thread-safe biome data instead of biome_manager
+                let biome_id = if let Some(ref biome_data) = thread_safe_biome {
+                    biome_data.get_biome_id(world_x, world_z)
                 } else {
                     // Default generation if no BiomeManager
                     ((world_x.cos() * 0.5 + world_z.sin() * 0.5) * 2.0) as u8
@@ -329,6 +340,15 @@ impl ChunkManager {
         }
         
         false
+    }
+
+    #[func]
+    pub fn update_thread_safe_biome_data(&mut self) {
+        if let Some(ref biome_mgr) = self.biome_manager {
+            self.thread_safe_biome_data = Some(Arc::new(
+                ThreadSafeBiomeData::from_biome_manager(&biome_mgr.bind())
+            ));
+        }
     }
     
     // Get the heightmap data for a chunk

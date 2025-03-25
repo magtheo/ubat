@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::resource::resource_manager::resource_manager;
+use crate::terrain::chunk_manager::ChunkManager;
 
 // Structure to define a Voronoi point for biome distribution
 struct VoronoiPoint {
@@ -21,6 +22,27 @@ struct BiomeSection {
     voronoi_points: Vec<VoronoiPoint>,
     point_density: f32, // Points per 1000x1000 world units
 }
+
+// Thread-safe versions of biome structures
+pub struct ThreadSafeBiomeData {
+    world_width: f32,
+    world_height: f32,
+    seed: u32,
+    sections: Vec<ThreadSafeBiomeSection>,
+    blend_distance: f32,
+}
+
+struct ThreadSafeBiomeSection {
+    section_id: u8,
+    possible_biomes: Vec<u8>,
+    voronoi_points: Vec<ThreadSafeVoronoiPoint>,
+}
+
+struct ThreadSafeVoronoiPoint {
+    position: (f32, f32),
+    biome_id: u8,
+}
+
 
 // BiomeManager handles loading and accessing a bitmap that defines biome regions
 #[derive(GodotClass)]
@@ -163,7 +185,7 @@ impl BiomeManager {
         self.sections.clear();
         
         // Define sections with their possible biomes
-        // Section 1: Forest region
+        // Section 1:
         self.sections.push(BiomeSection {
             section_id: 1,
             possible_biomes: vec![1, 2],  // sand, Corral
@@ -171,7 +193,7 @@ impl BiomeManager {
             point_density: 5.0,  // 5 points per 1000x1000 area
         });
         
-        // Section 2: Mountain region
+        // Section 2: 
         self.sections.push(BiomeSection {
             section_id: 2,
             possible_biomes: vec![3, 4],  // rock, kelp
@@ -179,7 +201,7 @@ impl BiomeManager {
             point_density: 3.0,  // 3 points per 1000x1000 area
         });
         
-        // Section 3: Plains region
+        // Section 3: 
         self.sections.push(BiomeSection {
             section_id: 3,
             possible_biomes: vec![3, 5],  // rock, lavarock
@@ -461,6 +483,9 @@ impl BiomeManager {
         self.world_height = height;
         self.clear_cache();
         self.initialize_voronoi_points(); // Recreate Voronoi points for new dimensions
+    
+        // Notify ChunkManager if possible
+        self.notify_data_change();
     }
     
     // Set seed for procedural generation
@@ -475,15 +500,42 @@ impl BiomeManager {
         
         self.clear_cache();
         self.initialize_voronoi_points();
+        
+        // Notify ChunkManager if possible
+        self.notify_data_change();
     }
+
     
     // Set blend distance for smoother transitions
     #[func]
     pub fn set_blend_distance(&mut self, distance: f32) {
         self.blend_distance = distance;
         self.clear_cache();
+
+        // Notify ChunkManager if possible
+        self.notify_data_change();
     }
     
+   // Helper method to notify ChunkManager
+    fn notify_data_change(&self) {
+        // Try to find ChunkManager in the scene tree
+        if let Some(parent) = self.base().get_parent() {
+            // Use a string literal directly
+            let node_path = "ChunkManager";
+            if let Some(chunk_manager) = parent.get_node_or_null(node_path) {
+                // Use match for Result instead of if let for Option
+                match chunk_manager.try_cast::<ChunkManager>() {
+                    Ok(mut chunk_manager) => {
+                        chunk_manager.bind_mut().update_thread_safe_biome_data();
+                    },
+                    Err(_) => {
+                        godot_print!("Failed to cast node to ChunkManager");
+                    }
+                }
+            }
+        }
+    }
+
     // Get a biome name for display
     #[func]
     pub fn get_biome_name(&self, biome_id: u8) -> GString {
@@ -541,5 +593,106 @@ impl BiomeManager {
         }
         
         result
+    }
+}
+
+impl ThreadSafeBiomeData {
+    pub fn from_biome_manager(biome_mgr: &BiomeManager) -> Self {
+        let mut sections = Vec::new();
+        
+        // Clone all sections and their Voronoi points
+        for section in &biome_mgr.sections {
+            let mut voronoi_points = Vec::new();
+            
+            for point in &section.voronoi_points {
+                voronoi_points.push(ThreadSafeVoronoiPoint {
+                    position: (point.position.x, point.position.y),
+                    biome_id: point.biome_id,
+                });
+            }
+            
+            sections.push(ThreadSafeBiomeSection {
+                section_id: section.section_id,
+                possible_biomes: section.possible_biomes.clone(),
+                voronoi_points,
+            });
+        }
+        
+        ThreadSafeBiomeData {
+            world_width: biome_mgr.world_width,
+            world_height: biome_mgr.world_height,
+            seed: biome_mgr.seed,
+            sections,
+            blend_distance: biome_mgr.blend_distance,
+        }
+    }
+    
+    // Get section ID based on world coordinates
+    pub fn get_section_id(&self, world_x: f32, world_y: f32) -> u8 {
+        // Simplified version - you might need a more complex algorithm
+        // based on your original get_section_id implementation
+        
+        // Basic section determination based on position
+        let relative_x = world_x / self.world_width;
+        let relative_y = world_y / self.world_height;
+        
+        if relative_x < 0.33 {
+            1 // Section 1: Forest
+        } else if relative_x < 0.66 {
+            2 // Section 2: Mountain
+        } else {
+            3 // Section 3: Plains
+        }
+    }
+    
+    // Get biome ID at world coordinates
+    pub fn get_biome_id(&self, world_x: f32, world_y: f32) -> u8 {
+        // Get the section for this position
+        let section_id = self.get_section_id(world_x, world_y);
+        
+        // Find the section
+        if let Some(section) = self.sections.iter().find(|s| s.section_id == section_id) {
+            // If no Voronoi points, return first possible biome
+            if section.voronoi_points.is_empty() {
+                return *section.possible_biomes.first().unwrap_or(&0);
+            }
+            
+            // Calculate distances to all Voronoi points in this section
+            let pos = (world_x, world_y);
+            let mut distances: Vec<(f32, &ThreadSafeVoronoiPoint)> = section.voronoi_points.iter()
+                .map(|point| {
+                    let dx = pos.0 - point.position.0;
+                    let dy = pos.1 - point.position.1;
+                    let distance = (dx * dx + dy * dy).sqrt();
+                    (distance, point)
+                })
+                .collect();
+            
+            // Sort by distance
+            distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            
+            // Return the biome ID of the closest point
+            if !distances.is_empty() {
+                return distances[0].1.biome_id;
+            }
+        }
+        
+        // Default biome
+        0
+    }
+    
+    // Get biome color based on biome ID
+    pub fn get_biome_color(&self, world_x: f32, world_y: f32) -> Color {
+        let biome_id = self.get_biome_id(world_x, world_y);
+        
+        // Generate a color based on biome ID
+        match biome_id {
+            1 => Color::from_rgba(0.8, 0.2, 0.2, 1.0), // Coral - reddish
+            2 => Color::from_rgba(0.9, 0.9, 0.2, 1.0), // Sand - yellowish
+            3 => Color::from_rgba(0.5, 0.5, 0.5, 1.0), // Rock - gray
+            4 => Color::from_rgba(0.2, 0.8, 0.2, 1.0), // Kelp - greenish
+            5 => Color::from_rgba(0.8, 0.4, 0.1, 1.0), // Lavarock - orange
+            _ => Color::from_rgba(1.0, 0.0, 1.0, 1.0), // Magenta for unknown
+        }
     }
 }
