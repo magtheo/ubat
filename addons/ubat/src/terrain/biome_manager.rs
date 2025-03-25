@@ -339,11 +339,14 @@ impl BiomeManager {
         
         let cache_key = format!("biome_{}_{}", (world_x * 0.1) as i32, (world_y * 0.1) as i32);
         
-        // Check cache first
-        if let Some(&biome_id) = self.biome_cache.get(&cache_key) {
-            return biome_id;
-        }
-        
+        // Check cache first in a separate scope so the lock is released
+        {
+            let cache = self.biome_cache.lock().unwrap();
+            if let Some(&biome_id) = cache.get(&cache_key) {
+                return biome_id;
+            }
+        }// Lock is released here when cache goes out of scope
+
         // Get the section ID for this position
         let section_id = self.get_section_id(world_x, world_y);
         
@@ -357,7 +360,13 @@ impl BiomeManager {
             if section.voronoi_points.is_empty() {
                 // No points in this section, return the first possible biome
                 let default_biome = section.possible_biomes.first().unwrap_or(&0);
-                self.biome_cache.insert(cache_key, *default_biome);
+                
+                // Lock again in a new scope
+                {
+                    let mut cache = self.biome_cache.lock().unwrap();
+                    cache.insert(cache_key, *default_biome);
+                } // Lock is released here
+                
                 return *default_biome;
             }
             
@@ -397,10 +406,16 @@ impl BiomeManager {
                     // If blend is needed, choose randomly between the two biomes
                     // with probability based on distance
                     if self.rng.randf() > adjusted_blend {
-                        self.biome_cache.insert(cache_key, point1.biome_id);
+                        {
+                            let mut cache = self.biome_cache.lock().unwrap();
+                            cache.insert(cache_key, point1.biome_id);
+                        }
                         return point1.biome_id;
                     } else {
-                        self.biome_cache.insert(cache_key, point2.biome_id);
+                        {
+                            let mut cache = self.biome_cache.lock().unwrap();
+                            cache.insert(cache_key, point2.biome_id);
+                        }
                         return point2.biome_id;
                     }
                 }
@@ -409,7 +424,10 @@ impl BiomeManager {
             // If no blending or only one point, return the closest
             if !distances.is_empty() {
                 let biome_id = distances[0].1.biome_id;
-                self.biome_cache.insert(cache_key, biome_id);
+                {  
+                    let mut cache = self.biome_cache.lock().unwrap();
+                    cache.insert(cache_key, biome_id);
+                }
                 return biome_id;
             }
         }
