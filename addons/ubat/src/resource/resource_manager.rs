@@ -1,13 +1,11 @@
 use godot::prelude::*;
 use godot::classes::{Texture2D, Shader, ResourceLoader};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// The ResourceManager handles loading, caching, and managing game assets.
-#[derive(GodotClass)]
-#[class(base=Object, no_init)]
+
 pub struct ResourceManager {
-    // The base Godot object.
-    base: Base<Object>,
     // Caches for textures and shaders.
     texture_cache: Dictionary,
     shader_cache: Dictionary,
@@ -15,29 +13,17 @@ pub struct ResourceManager {
     base_asset_path: GString,
 }
 
-#[godot_api]
-impl IObject for ResourceManager {
-    // Required default constructor.
-    fn init(base: Base<Object>) -> Self {
+impl ResourceManager {
+    /// Convenience constructor that wraps init in a Gd pointer.
+    pub fn new() -> Self {
         Self {
-            base,
             texture_cache: Dictionary::new(),
             shader_cache: Dictionary::new(),
             base_asset_path: GString::from("res://assets/"),
         }
     }
-}
-
-#[godot_api]
-impl ResourceManager {
-    /// Convenience constructor that wraps init in a Gd pointer.
-    #[func]
-    pub fn new() -> Gd<Self> {
-        Gd::from_init_fn(|base| Self::init(base))
-    }
     
     // generic resource funciton exposed to godot
-    #[func]
     pub fn load_resource(&mut self, path: GString) -> Option<Gd<Resource>> {
         ResourceLoader::singleton().load(&path)
     }
@@ -62,7 +48,7 @@ impl ResourceManager {
         }
     }
     
-    #[func]
+    
     pub fn load_texture(&mut self, path: GString) -> Option<Gd<Texture2D>> {
         // Use key as Variant without an extra '&'
         if let Some(texture_variant) = self.texture_cache.get(path.to_variant()) {
@@ -90,7 +76,7 @@ impl ResourceManager {
         Some(texture)
     }
 
-    #[func]
+    
     pub fn load_shader(&mut self, path: GString) -> Option<Gd<Shader>> {
         if let Some(shader_variant) = self.shader_cache.get(path.to_variant()) {
             return shader_variant.try_to::<Gd<Shader>>().ok();
@@ -117,28 +103,28 @@ impl ResourceManager {
         Some(shader)
     }
 
-    #[func]
+    
     pub fn clear_cache(&mut self) {
         self.texture_cache.clear();
         self.shader_cache.clear();
     }
 
-    #[func]
+    
     pub fn remove_texture(&mut self, path: GString) {
         self.texture_cache.remove(path.to_variant());
     }
 
-    #[func]
+    
     pub fn remove_shader(&mut self, path: GString) {
         self.shader_cache.remove(path.to_variant());
     }
 
-    #[func]
+    
     pub fn set_asset_base_path(&mut self, path: GString) {
         self.base_asset_path = path;
     }
 
-    #[func]
+    
     pub fn get_asset_base_path(&self) -> GString {
         self.base_asset_path.clone()
     }
@@ -149,32 +135,38 @@ impl ResourceManager {
 // Instead of a static OnceLock, we'll use a thread-local pattern.
 
 thread_local! {
-    static RESOURCE_MANAGER_INSTANCE: RefCell<Option<Gd<ResourceManager>>> = RefCell::new(None);
+    static RESOURCE_MANAGER: RefCell<ResourceManager> = RefCell::new(ResourceManager::new());
 }
 
 /// Helper functions to access the resource manager singleton
 pub mod resource_manager {
     use super::*;
 
-    /// Initialize the resource manager singleton
+    /// Initialize the resource manager - no-op since it's created on first access
     pub fn init() {
-        RESOURCE_MANAGER_INSTANCE.with(|cell| {
-            let mut instance = cell.borrow_mut();
-            if instance.is_none() {
-                *instance = Some(ResourceManager::new());
-            }
-        });
+        // Already initialized via thread_local
     }
 
-    /// Get the resource manager singleton
-    pub fn get() -> Option<Gd<ResourceManager>> {
-        let mut result = None;
-        RESOURCE_MANAGER_INSTANCE.with(|cell| {
-            if let Some(instance) = &*cell.borrow() {
-                result = Some(instance.clone());
-            }
-        });
-        result
+    /// Execute a function with borrowed access to the resource manager
+    pub fn with<F, R>(f: F) -> R
+    where
+        F: FnOnce(&ResourceManager) -> R,
+    {
+        RESOURCE_MANAGER.with(|cell| {
+            let resource_manager = cell.borrow();
+            f(&resource_manager)
+        })
+    }
+
+    /// Execute a function with mutable borrowed access to the resource manager
+    pub fn with_mut<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut ResourceManager) -> R,
+    {
+        RESOURCE_MANAGER.with(|cell| {
+            let mut resource_manager = cell.borrow_mut();
+            f(&mut resource_manager)
+        })
     }
 
     /// Generic function that can load any resource type
@@ -182,13 +174,6 @@ pub mod resource_manager {
     where 
         T: GodotClass + Inherits<Resource>
     {
-        get().map(|mut m| {
-            // Access the resource through the public methods
-            if let Some(resource) = m.bind_mut().load_resource(path) {
-                resource.try_cast::<T>().ok()
-            } else {
-                None
-            }
-        }).flatten()
+        with_mut(|manager| manager.load_and_cast::<T>(&path))
     }
 }
