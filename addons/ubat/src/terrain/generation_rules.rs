@@ -41,4 +41,3 @@ impl Default for GenerationRules {
     }
 }
 
-pub use self::generation_rules::GenerationRules;
