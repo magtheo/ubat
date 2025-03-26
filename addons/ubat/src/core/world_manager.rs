@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-
+use crate::terrain::GenerationRules;
 
 // World State Manager (Catalog/Blueprint)
 
@@ -28,7 +28,7 @@ trait WorldEntity: Send + Sync {
 pub struct WorldStateConfig {
     pub seed: u64,
     pub world_size: (u32, u32),
-    pub generation_parameters: GenerationRules, // TODO: make generation rules
+    pub generation_parameters: GenerationRules, // TODO: Change the Generation rules so that they make sense in terms of the desired terrain results.
 }
 
 // Comprehensive world state management
@@ -69,6 +69,32 @@ impl WorldStateManager {
         // Increment world version
         self.current_version += 1;
     }
+
+    fn populate_initial_entities(&mut self, terrain: WorldTerrain) {
+        // This method creates the initial set of entities in the world
+        // based on the generated terrain
+        // TODO: implemetn this function
+
+        // Example implementation:
+        // 1. Create spawn points based on terrain features
+        // 2. Add resource nodes based on biome distribution
+        // 3. Place initial structures or landmarks
+
+        // For now, we'll just log that entities are being populated
+        println!("Populating world with initial entities for seed: {}", terrain.seed);
+        
+        // In a full implementation, you would:
+        // - Add resource nodes
+        // - Create spawn points
+        // - Add environmental objects
+        // - Set up initial NPCs if any
+        
+        // This would use functionality like:
+        // let entity_id = Uuid::new_v4();
+        // let entity = YourEntityType::new(entity_id, position, properties);
+        // self.add_entity(Arc::new(entity));
+    }
+
 
     // Add an entity to the world
     fn add_entity(&mut self, entity: Arc<dyn WorldEntity>) {
@@ -147,7 +173,31 @@ impl WorldStateManager {
     }
 }
 
+// Implement Clone for WorldStateManager
+impl Clone for WorldStateManager {
+    fn clone(&self) -> Self {
+        // Create a new instance with the same configuration
+        let mut cloned = Self {
+            entities: Arc::new(RwLock::new(HashMap::new())),
+            config: self.config.clone(),
+            current_version: self.current_version,
+            terrain_generator: self.terrain_generator.clone(),
+        };
+        
+        // Copy entities if needed
+        if let Ok(entities) = self.entities.read() {
+            let mut cloned_entities = cloned.entities.write().unwrap();
+            for (id, entity) in entities.iter() {
+                cloned_entities.insert(id.clone(), entity.clone());
+            }
+        }
+        
+        cloned
+    }
+}
+
 // Terrain generation system
+#[derive(Clone)]
 struct TerrainGenerator {
     config: WorldStateConfig,
 }
@@ -185,7 +235,7 @@ fn demonstrate_world_state_management() {
     };
 
     // Create world state manager
-    let mut world_state = WorldStateManager::new(world_config);
+    let mut world_state = WorldStateManager::new(world_config.clone());
 
     // Generate initial world
     world_state.generate_initial_world();

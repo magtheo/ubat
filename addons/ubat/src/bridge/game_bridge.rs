@@ -1,6 +1,5 @@
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
-use std::path::Path;
 
 use crate::core::game_manager::{GameManager, GameState, GameError};
 use crate::bridge::EventBridge;
@@ -14,10 +13,7 @@ pub struct GameManagerBridge {
     
     // Internal reference to the game manager
     game_manager: Option<Arc<Mutex<GameManager>>>,
-
-    // Reference to the event bridge
-    event_bridge: Option<Gd<EventBridge>>,
-    
+ 
     // Configuration properties exposed to the editor
     #[export]
     config_path: GString,
@@ -42,7 +38,6 @@ impl INode for GameManagerBridge {
         Self {
             base,
             game_manager: None,
-            event_bridge: None,
             config_path: "res://game_config.toml".into(),
             frame_rate: 60,
             debug_mode: false,
@@ -52,17 +47,6 @@ impl INode for GameManagerBridge {
     }
     
     fn ready(&mut self) {
-        // Find the event bridge in the scene tree
-        if let Some(tree) = self.base().get_tree() {
-            if let Some(root) = tree.get_root() {
-                // Using get_node_as which returns Option<Gd<T>>
-                self.event_bridge = Some(root.get_node_as::<EventBridge>("EventBridge"));
-                
-                if self.event_bridge.is_some() && self.debug_mode {
-                    godot_print!("GameManagerBridge: Found EventBridge");
-                }
-            }
-        }
         
         // Automatically initialize if config path is set
         if !self.config_path.is_empty() && self.debug_mode {

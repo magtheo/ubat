@@ -7,6 +7,8 @@ pub mod biome_manager;
 pub mod world_integration;
 pub mod thread_pool;
 
+pub mod generation_rules;
+
 
 // Re-export main types for easier access
 pub use chunk_manager::ChunkManager;
@@ -16,6 +18,8 @@ pub use biome_manager::BiomeManager;
 pub use world_integration::TerrainWorldIntegration;
 
 pub use thread_pool::ThreadPool;
+
+pub use generation_rules::GenerationRules;
 
 // Component descriptions:
 

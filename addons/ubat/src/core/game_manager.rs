@@ -183,7 +183,7 @@ impl GameManager {
         let world_config = WorldStateConfig {
             seed: config.world_seed,
             world_size: (config.world_size.width, config.world_size.height),
-            generation_parameters: Default::default(), // Use default rules
+            generation_parameters: config.generation_rules.clone(), // Use default rules
         };
         
         let world_manager = WorldStateManager::new(world_config.clone());

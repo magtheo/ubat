@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://dk3g22qie0wf7"]
+
+[ext_resource type="Script" uid="uid://c6h00osqiit1t" path="res://project/autoloads/bridge_manager.gd" id="1_hth70"]
+
+[node name="BridgeManager" type="Node"]
+script = ExtResource("1_hth70")

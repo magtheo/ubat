@@ -1,0 +1,188 @@
+[gd_scene load_steps=2 format=3 uid="uid://xcocqp013tbm"]
+
+[ext_resource type="Script" uid="uid://61lu5w6co72r" path="res://project/scenes/main_menu.gd" id="1_w4ch6"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_w4ch6")
+
+[node name="MainPanel" type="Panel" parent="."]
+layout_mode = 0
+offset_right = 1152.0
+offset_bottom = 648.0
+
+[node name="ButtonContainer" type="VBoxContainer" parent="MainPanel"]
+layout_mode = 0
+offset_left = 49.0
+offset_top = 96.0
+offset_right = 287.0
+offset_bottom = 417.0
+
+[node name="Standalone" type="Button" parent="MainPanel/ButtonContainer"]
+layout_mode = 2
+text = "Standalone"
+
+[node name="Host" type="Button" parent="MainPanel/ButtonContainer"]
+layout_mode = 2
+text = "Host"
+
+[node name="Client" type="Button" parent="MainPanel/ButtonContainer"]
+layout_mode = 2
+text = "Client
+"
+
+[node name="QuitButton" type="Button" parent="MainPanel"]
+layout_mode = 0
+offset_left = 64.0
+offset_top = 536.0
+offset_right = 140.0
+offset_bottom = 574.0
+text = "Quit
+"
+
+[node name="Title" type="Label" parent="MainPanel"]
+layout_mode = 0
+offset_left = 43.0
+offset_top = 30.0
+offset_right = 189.0
+offset_bottom = 55.0
+text = "Ubat"
+
+[node name="Background" type="TextureRect" parent="."]
+layout_mode = 0
+offset_right = 1152.0
+offset_bottom = 648.0
+
+[node name="HostOptions" type="Panel" parent="."]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="Host" type="Label" parent="HostOptions"]
+layout_mode = 0
+offset_left = 403.0
+offset_top = 37.0
+offset_right = 443.0
+offset_bottom = 60.0
+text = "Host"
+
+[node name="MaxPlayers" type="Label" parent="HostOptions"]
+layout_mode = 0
+offset_left = 404.0
+offset_top = 213.0
+offset_right = 498.0
+offset_bottom = 236.0
+text = "Max Players"
+
+[node name="port" type="Label" parent="HostOptions"]
+layout_mode = 0
+offset_left = 457.0
+offset_top = 174.0
+offset_right = 497.0
+offset_bottom = 197.0
+text = "Port"
+
+[node name="ServerName" type="LineEdit" parent="HostOptions"]
+layout_mode = 0
+offset_left = 466.0
+offset_top = 133.0
+offset_right = 588.0
+offset_bottom = 164.0
+text = "ServerName"
+
+[node name="PortInput" type="SpinBox" parent="HostOptions"]
+layout_mode = 0
+offset_left = 515.0
+offset_top = 171.0
+offset_right = 601.562
+offset_bottom = 202.0
+
+[node name="MaxPlayersInput" type="SpinBox" parent="HostOptions"]
+layout_mode = 0
+offset_left = 516.0
+offset_top = 207.0
+offset_right = 602.562
+offset_bottom = 238.0
+
+[node name="StartServer" type="Button" parent="HostOptions"]
+layout_mode = 0
+offset_left = 920.0
+offset_top = 544.0
+offset_right = 1020.0
+offset_bottom = 575.0
+text = "Start Server"
+
+[node name="Back" type="Button" parent="HostOptions"]
+layout_mode = 0
+offset_left = 848.0
+offset_top = 544.0
+offset_right = 893.0
+offset_bottom = 575.0
+text = "Back"
+
+[node name="ClientOptions" type="Panel" parent="."]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="Title" type="Label" parent="ClientOptions"]
+layout_mode = 0
+offset_left = 402.0
+offset_top = 37.0
+offset_right = 447.0
+offset_bottom = 60.0
+text = "Client"
+
+[node name="ServerAddress" type="LineEdit" parent="ClientOptions"]
+layout_mode = 0
+offset_left = 448.0
+offset_top = 128.0
+offset_right = 592.0
+offset_bottom = 159.0
+text = "ServerAddress"
+
+[node name="PlayerName" type="LineEdit" parent="ClientOptions"]
+layout_mode = 0
+offset_left = 448.0
+offset_top = 168.0
+offset_right = 592.0
+offset_bottom = 199.0
+text = "PlayerName"
+
+[node name="Connect" type="Button" parent="ClientOptions"]
+layout_mode = 0
+offset_left = 976.0
+offset_top = 544.0
+offset_right = 1048.0
+offset_bottom = 575.0
+text = "Connect
+"
+
+[node name="Back" type="Button" parent="ClientOptions"]
+layout_mode = 0
+offset_left = 912.0
+offset_top = 544.0
+offset_right = 957.0
+offset_bottom = 575.0
+text = "Back
+"
+
+[node name="LoadingOverlay" type="Panel" parent="."]
+layout_mode = 0
+offset_right = 1152.0
+offset_bottom = 632.0
+
+[node name="Loading" type="Label" parent="LoadingOverlay"]
+layout_mode = 0
+offset_left = 544.0
+offset_top = 312.0
+offset_right = 608.0
+offset_bottom = 344.0
+text = "Loading"
+
+[node name="loadingAnimation" type="AnimatedSprite2D" parent="LoadingOverlay"]

@@ -3,12 +3,15 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::terrain::generation_rules::GenerationRules;
+
 // Core configuration structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GameConfiguration {
     // World Generation Parameters
     pub world_seed: u64,
     pub world_size: WorldSize,
+    pub generation_rules: GenerationRules, 
     
     // Networking Configuration
     pub network: NetworkConfig,
@@ -88,6 +91,7 @@ impl ConfigurationManager {
                 width: 10000,
                 height: 10000,
             },
+            generation_rules: GenerationRules::default(),
             network: NetworkConfig {
                 max_players: 64,
                 server_port: 7878,

@@ -86,3 +86,8 @@ Cargo.lock              # Lock file (optional, keep if you're publishing a libra
 # Rust dependencies cache (optional)
 /vendor/                # If using cargo vendor
 Cargo.toml.orig         # Cargo.toml merge conflict leftovers
+
+addons/phantom_camera
+addons/godot-git-plugin
+addons/fpc
+addons/awesome_debug_log
