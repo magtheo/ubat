@@ -34,20 +34,20 @@ func _ready():
 	biome_manager.connect("biome_manager_ready", Callable(self, "_on_biome_manager_ready"))
 
 	# Create the GD extension class
-	libchunk_generator = ChunkGenerator.new()
-	if libchunk_generator:
-		print("ChunkGenerator created successfully: ", libchunk_generator)
-	else:
-		push_error("Failed to create ChunkGenerator!")
+	# libchunk_generator = ChunkGenerator.new()
+	# if libchunk_generator:
+	# 	print("ChunkGenerator created successfully: ", libchunk_generator)
+	# else:
+	# 	push_error("Failed to create ChunkGenerator!")
 		
 	if !thread_pool:
 		push_error("Threadpool not found")
 
 	# Initialize with .tres paths + chunk size + seed
-	libchunk_generator.initialize(CHUNK_SIZE)
+	# libchunk_generator.initialize(CHUNK_SIZE)
 	
-	# Assign it to the thread pool so the pool can call it
-	thread_pool.libchunk_generator = libchunk_generator
+	# # Assign it to the thread pool so the pool can call it
+	# thread_pool.libchunk_generator = libchunk_generator
 	
 	var seed_node = load("res://project/terrain/SeedNode.gd").new()
 	seed_node.noises_randomized.connect(_on_noises_randomized)
@@ -149,7 +149,7 @@ func cleanup_distant_chunks(center_x: int, center_y: int, max_distance: int):
 	if chunks_to_remove.size() > 0:
 		var min_chunk = Vector2i(center_x - max_distance, center_y - max_distance)
 		var max_chunk = Vector2i(center_x + max_distance, center_y + max_distance)
-		libchunk_generator.cleanup_chunk_caches(min_chunk, max_chunk)
+		# libchunk_generator.cleanup_chunk_caches(min_chunk, max_chunk)
 
 func _process(_delta: float):
 	if player and seedsRandomized:
