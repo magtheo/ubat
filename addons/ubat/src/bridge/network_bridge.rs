@@ -196,7 +196,7 @@ impl NetworkManagerBridge {
     
     // Get peer count - Remove this if you have another definition elsewhere
     #[func]
-    pub fn get_peer_count_Ubat(&self) -> i32 {
+    pub fn get_peer_count_ubat(&self) -> i32 {
         self.peer_count
     }
     
