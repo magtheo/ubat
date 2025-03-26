@@ -59,6 +59,7 @@ offset_right = 1152.0
 offset_bottom = 648.0
 
 [node name="HostOptions" type="Panel" parent="."]
+layout_mode = 0
 offset_right = 40.0
 offset_bottom = 40.0
 
@@ -125,6 +126,7 @@ offset_bottom = 575.0
 text = "Back"
 
 [node name="ClientOptions" type="Panel" parent="."]
+layout_mode = 0
 offset_right = 40.0
 offset_bottom = 40.0
 

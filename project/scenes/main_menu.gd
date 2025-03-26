@@ -3,6 +3,10 @@ extends Control
 # Path to game scene
 const GAME_WORLD = "res://project/scenes/GameWorld.tscn"
 
+var config_bridge
+var game_bridge
+var network_bridge
+
 # References to panels
 @onready var main_panel = $MainPanel
 @onready var standalone_options = $StandaloneOptions
@@ -10,13 +14,10 @@ const GAME_WORLD = "res://project/scenes/GameWorld.tscn"
 @onready var client_options = $ClientOptions
 @onready var loading_overlay = $LoadingOverlay
 
-# References to bridges
-@onready var config_bridge = get_node("/root/Main/ConfigBridge")
-@onready var game_bridge = get_node("/root/Main/GameManagerBridge")
-@onready var network_bridge = get_node("/root/Main/NetworkManagerBridge")
 
 # Called when the node enters the scene tree
 func _ready():
+	
 	# Connect bridge signals
 	config_bridge.connect("config_updated", _on_config_updated)
 	game_bridge.connect("game_state_changed", _on_game_state_changed)
