@@ -85,27 +85,38 @@ impl GameManager {
         }
     }
     
-    // Initialize from configuration file
-    pub fn init_from_config<P: AsRef<Path>>(config_path: P) -> Result<Self, GameError> {
-        // Load configuration
-        let config_manager = Arc::new(Mutex::new(
-            ConfigurationManager::load_from_file(config_path)
-                .map_err(|e| GameError::ConfigError(format!("Failed to load config: {}", e)))?
-        ));
+    // Initialize from configuration file (accepts a String)
+    pub fn init_from_config<S: AsRef<str>>(config_path: S) -> Result<Self, GameError> {
+        // Convert to a Path
+        let path = std::path::Path::new(config_path.as_ref());
+        println!("GameManager: Loading from filesystem path: {:?}", path);
         
-        // Create event bus
-        let event_bus = Arc::new(EventBus::new());
+        // Check if the file exists
+        if !path.exists() {
+            return Err(GameError::ConfigError(format!("File not found: {:?}", path)));
+        }
         
-        Ok(Self {
-            state: GameState::Initializing,
-            running: false,
-            config_manager,
-            event_bus,
-            world_manager: None,
-            network_handler: None,
-            frame_rate: 60,
-            last_update: Instant::now(),
-        })
+        // Try to load the configuration
+        match ConfigurationManager::load_from_file(path) {
+            Ok(config_manager) => {
+                // Create event bus
+                let event_bus = Arc::new(EventBus::new());
+                
+                Ok(Self {
+                    state: GameState::Initializing,
+                    running: false,
+                    config_manager: Arc::new(Mutex::new(config_manager)),
+                    event_bus,
+                    world_manager: None,
+                    network_handler: None,
+                    frame_rate: 60,
+                    last_update: Instant::now(),
+                })
+            },
+            Err(e) => {
+                Err(GameError::ConfigError(format!("Failed to load config: {}", e)))
+            }
+        }
     }
     
     // Initialize the game systems

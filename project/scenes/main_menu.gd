@@ -70,7 +70,6 @@ func _on_QuitButton_pressed():
 	get_tree().quit()
 
 # STANDALONE MODE LOGIC
-
 func _start_standalone_game():
 	debug_log("Starting standalone game...")
 
@@ -78,7 +77,7 @@ func _start_standalone_game():
 	_show_panel(loading_overlay)
 	debug_log("Showing loading overlay")
 
-	# Configure standalone mode
+	# Set network mode to Standalone - THIS IS THE CRITICAL PART
 	debug_log("Setting network mode to Standalone (0)")
 	config_bridge.network_mode = 0
 	config_bridge.apply_network_mode()
@@ -89,14 +88,14 @@ func _start_standalone_game():
 		debug_log("Generated random seed: " + str(config_bridge.world_seed))
 		config_bridge.apply_world_seed()
 
-	# Save configuration
+	# Save configuration WITH the user-selected game mode
 	debug_log("Saving configuration...")
 	if not config_bridge.save_config():
 		debug_error("Failed to save configuration")
 		_show_error("Failed to save configuration")
 		return
 
-	# Initialize game systems
+	# Now initialize - the game mode is properly set
 	debug_log("Initializing game systems...")
 	if not game_bridge.initialize(config_bridge.config_path):
 		debug_error("Failed to initialize game")
@@ -230,7 +229,7 @@ func _show_error(message):
 
 	# Show error dialog
 	var dialog = AcceptDialog.new()
-	dialog.window_title = "Error"
+	dialog.title = "Error"
 	dialog.dialog_text = message
 	add_child(dialog)
 	dialog.popup_centered()
@@ -280,15 +279,3 @@ func debug_check_signals():
 	debug_log("- config_updated signal connected: " + str(config_updated_connected))
 	debug_log("- game_state_changed signal connected: " + str(game_state_changed_connected))
 	debug_log("- game_error signal connected: " + str(game_error_connected))
-
-
-func _on_standalone_button_down() -> void:
-	pass # Replace with function body.
-
-
-func _on_host_button_down() -> void:
-	pass # Replace with function body.
-
-
-func _on_client_button_down() -> void:
-	pass # Replace with function body.
