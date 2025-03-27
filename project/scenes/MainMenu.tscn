@@ -1,6 +1,8 @@
-[gd_scene load_steps=2 format=3 uid="uid://xcocqp013tbm"]
+[gd_scene load_steps=3 format=3 uid="uid://xcocqp013tbm"]
 
 [ext_resource type="Script" uid="uid://61lu5w6co72r" path="res://project/scenes/main_menu.gd" id="1_w4ch6"]
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_w4ch6"]
 
 [node name="MainMenu" type="Control"]
 layout_mode = 3
@@ -12,6 +14,7 @@ grow_vertical = 2
 script = ExtResource("1_w4ch6")
 
 [node name="MainPanel" type="Panel" parent="."]
+visible = false
 layout_mode = 0
 offset_right = 1152.0
 offset_bottom = 648.0
@@ -53,10 +56,91 @@ offset_right = 189.0
 offset_bottom = 55.0
 text = "Ubat"
 
-[node name="HostOptions" type="Panel" parent="."]
+[node name="StandaloneOptions" type="Panel" parent="."]
 layout_mode = 0
-offset_right = 40.0
-offset_bottom = 40.0
+offset_right = 1200.0
+offset_bottom = 712.0
+
+[node name="Title" type="Label" parent="StandaloneOptions"]
+layout_mode = 0
+offset_left = 402.0
+offset_top = 37.0
+offset_right = 447.0
+offset_bottom = 60.0
+text = "Standalone"
+
+[node name="ConfigConteiner" type="VBoxContainer" parent="StandaloneOptions"]
+layout_mode = 0
+offset_left = 376.0
+offset_top = 296.0
+offset_right = 664.0
+offset_bottom = 432.0
+
+[node name="seed" type="HBoxContainer" parent="StandaloneOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="WorldSeed" type="Label" parent="StandaloneOptions/ConfigConteiner/seed"]
+layout_mode = 2
+text = "WorldSeed"
+
+[node name="SeedInput" type="SpinBox" parent="StandaloneOptions/ConfigConteiner/seed"]
+layout_mode = 2
+max_value = 1e+07
+
+[node name="RandomSeed" type="Button" parent="StandaloneOptions/ConfigConteiner/seed"]
+layout_mode = 2
+text = "RandomSeed"
+
+[node name="WorldWidthContener" type="HBoxContainer" parent="StandaloneOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="WorldWidth" type="Label" parent="StandaloneOptions/ConfigConteiner/WorldWidthContener"]
+layout_mode = 2
+text = "WorldWidth"
+
+[node name="WorldWidthInput" type="SpinBox" parent="StandaloneOptions/ConfigConteiner/WorldWidthContener"]
+layout_mode = 2
+min_value = 1000.0
+max_value = 50000.0
+step = 100.0
+value = 10000.0
+
+[node name="WorldHeightContener" type="HBoxContainer" parent="StandaloneOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="WorldHeight" type="Label" parent="StandaloneOptions/ConfigConteiner/WorldHeightContener"]
+layout_mode = 2
+text = "WorldWidth"
+
+[node name="WorldHeightInput" type="SpinBox" parent="StandaloneOptions/ConfigConteiner/WorldHeightContener"]
+layout_mode = 2
+min_value = 1000.0
+max_value = 50000.0
+step = 100.0
+value = 1000.0
+
+[node name="Start" type="Button" parent="StandaloneOptions"]
+layout_mode = 0
+offset_left = 976.0
+offset_top = 544.0
+offset_right = 1048.0
+offset_bottom = 575.0
+text = "Start"
+
+[node name="Back" type="Button" parent="StandaloneOptions"]
+layout_mode = 0
+offset_left = 912.0
+offset_top = 544.0
+offset_right = 957.0
+offset_bottom = 575.0
+text = "Back
+"
+
+[node name="HostOptions" type="Panel" parent="."]
+visible = false
+layout_mode = 0
+offset_right = 1152.0
+offset_bottom = 712.0
 
 [node name="Host" type="Label" parent="HostOptions"]
 layout_mode = 0
@@ -66,43 +150,82 @@ offset_right = 443.0
 offset_bottom = 60.0
 text = "Host"
 
-[node name="MaxPlayers" type="Label" parent="HostOptions"]
+[node name="ConfigConteiner" type="VBoxContainer" parent="HostOptions"]
 layout_mode = 0
-offset_left = 404.0
-offset_top = 213.0
-offset_right = 498.0
-offset_bottom = 236.0
-text = "Max Players"
+offset_left = 376.0
+offset_top = 304.0
+offset_right = 664.0
+offset_bottom = 440.0
 
-[node name="port" type="Label" parent="HostOptions"]
-layout_mode = 0
-offset_left = 457.0
-offset_top = 174.0
-offset_right = 497.0
-offset_bottom = 197.0
-text = "Port"
-
-[node name="ServerName" type="LineEdit" parent="HostOptions"]
-layout_mode = 0
-offset_left = 466.0
-offset_top = 133.0
-offset_right = 588.0
-offset_bottom = 164.0
+[node name="ServerName" type="LineEdit" parent="HostOptions/ConfigConteiner"]
+layout_mode = 2
 text = "ServerName"
 
-[node name="PortInput" type="SpinBox" parent="HostOptions"]
-layout_mode = 0
-offset_left = 515.0
-offset_top = 171.0
-offset_right = 601.562
-offset_bottom = 202.0
+[node name="seed" type="HBoxContainer" parent="HostOptions/ConfigConteiner"]
+layout_mode = 2
 
-[node name="MaxPlayersInput" type="SpinBox" parent="HostOptions"]
-layout_mode = 0
-offset_left = 516.0
-offset_top = 207.0
-offset_right = 602.562
-offset_bottom = 238.0
+[node name="WorldSeed" type="Label" parent="HostOptions/ConfigConteiner/seed"]
+layout_mode = 2
+text = "WorldSeed"
+
+[node name="SeedInput" type="SpinBox" parent="HostOptions/ConfigConteiner/seed"]
+layout_mode = 2
+max_value = 1e+07
+
+[node name="RandomSeed" type="Button" parent="HostOptions/ConfigConteiner/seed"]
+layout_mode = 2
+text = "RandomSeed"
+
+[node name="WorldWidthContener" type="HBoxContainer" parent="HostOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="WorldWidth" type="Label" parent="HostOptions/ConfigConteiner/WorldWidthContener"]
+layout_mode = 2
+text = "WorldWidth"
+
+[node name="WorldWidthInput" type="SpinBox" parent="HostOptions/ConfigConteiner/WorldWidthContener"]
+layout_mode = 2
+min_value = 1000.0
+max_value = 50000.0
+step = 100.0
+value = 10000.0
+
+[node name="WorldHeightContener" type="HBoxContainer" parent="HostOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="WorldHeight" type="Label" parent="HostOptions/ConfigConteiner/WorldHeightContener"]
+layout_mode = 2
+text = "WorldWidth"
+
+[node name="WorldHeightInput" type="SpinBox" parent="HostOptions/ConfigConteiner/WorldHeightContener"]
+layout_mode = 2
+min_value = 1000.0
+max_value = 50000.0
+step = 100.0
+value = 1000.0
+
+[node name="MaxPlayersContainer" type="HBoxContainer" parent="HostOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="MaxPlayers" type="Label" parent="HostOptions/ConfigConteiner/MaxPlayersContainer"]
+layout_mode = 2
+text = "Max Players"
+
+[node name="MaxPlayersInput" type="SpinBox" parent="HostOptions/ConfigConteiner/MaxPlayersContainer"]
+layout_mode = 2
+min_value = 1.0
+max_value = 6.0
+value = 6.0
+
+[node name="PortContainer" type="HBoxContainer" parent="HostOptions/ConfigConteiner"]
+layout_mode = 2
+
+[node name="port" type="Label" parent="HostOptions/ConfigConteiner/PortContainer"]
+layout_mode = 2
+text = "Port"
+
+[node name="PortInput" type="SpinBox" parent="HostOptions/ConfigConteiner/PortContainer"]
+layout_mode = 2
 
 [node name="StartServer" type="Button" parent="HostOptions"]
 layout_mode = 0
@@ -121,9 +244,10 @@ offset_bottom = 575.0
 text = "Back"
 
 [node name="ClientOptions" type="Panel" parent="."]
+visible = false
 layout_mode = 0
-offset_right = 40.0
-offset_bottom = 40.0
+offset_right = 1184.0
+offset_bottom = 664.0
 
 [node name="Title" type="Label" parent="ClientOptions"]
 layout_mode = 0
@@ -132,22 +256,6 @@ offset_top = 37.0
 offset_right = 447.0
 offset_bottom = 60.0
 text = "Client"
-
-[node name="ServerAddress" type="LineEdit" parent="ClientOptions"]
-layout_mode = 0
-offset_left = 448.0
-offset_top = 128.0
-offset_right = 592.0
-offset_bottom = 159.0
-text = "ServerAddress"
-
-[node name="PlayerName" type="LineEdit" parent="ClientOptions"]
-layout_mode = 0
-offset_left = 448.0
-offset_top = 168.0
-offset_right = 592.0
-offset_bottom = 199.0
-text = "PlayerName"
 
 [node name="Connect" type="Button" parent="ClientOptions"]
 layout_mode = 0
@@ -167,49 +275,28 @@ offset_bottom = 575.0
 text = "Back
 "
 
-[node name="StandaloneOptions" type="Panel" parent="."]
+[node name="ConfigConteiner" type="VBoxContainer" parent="ClientOptions"]
 layout_mode = 0
-offset_right = 40.0
-offset_bottom = 40.0
+offset_left = 392.0
+offset_top = 112.0
+offset_right = 731.0
+offset_bottom = 318.0
 
-[node name="Title" type="Label" parent="StandaloneOptions"]
-layout_mode = 0
-offset_left = 402.0
-offset_top = 37.0
-offset_right = 447.0
-offset_bottom = 60.0
-text = "Standalone"
+[node name="HBoxContainer" type="HBoxContainer" parent="ClientOptions/ConfigConteiner"]
+layout_mode = 2
 
-[node name="ToBeUsedPotensialy" type="LineEdit" parent="StandaloneOptions"]
-layout_mode = 0
-offset_left = 448.0
-offset_top = 128.0
-offset_right = 592.0
-offset_bottom = 159.0
+[node name="ServerAddress" type="Label" parent="ClientOptions/ConfigConteiner/HBoxContainer"]
+layout_mode = 2
+text = "Server Address"
+
+[node name="ServerAddressInput" type="LineEdit" parent="ClientOptions/ConfigConteiner/HBoxContainer"]
+layout_mode = 2
+theme_override_constants/minimum_character_width = 14
 text = "ServerAddress"
 
-[node name="Start" type="Button" parent="StandaloneOptions"]
-layout_mode = 0
-offset_left = 976.0
-offset_top = 544.0
-offset_right = 1048.0
-offset_bottom = 575.0
-text = "Start"
-
-[node name="Back" type="Button" parent="StandaloneOptions"]
-layout_mode = 0
-offset_left = 912.0
-offset_top = 544.0
-offset_right = 957.0
-offset_bottom = 575.0
-text = "Back
-"
-
-[node name="Background" type="TextureRect" parent="."]
-visible = false
-layout_mode = 0
-offset_right = 1152.0
-offset_bottom = 648.0
+[node name="PlayerName" type="LineEdit" parent="ClientOptions/ConfigConteiner"]
+layout_mode = 2
+text = "PlayerName"
 
 [node name="LoadingOverlay" type="Panel" parent="."]
 visible = false
@@ -226,13 +313,27 @@ offset_bottom = 344.0
 text = "Loading"
 
 [node name="loadingAnimation" type="AnimatedSprite2D" parent="LoadingOverlay"]
+position = Vector2(536, 352)
+sprite_frames = SubResource("SpriteFrames_w4ch6")
+
+[node name="Background" type="TextureRect" parent="."]
+visible = false
+layout_mode = 0
+offset_right = 1152.0
+offset_bottom = 648.0
+
+[node name="ErrorDialog" type="AcceptDialog" parent="."]
+title = "Error"
+size = Vector2i(400, 150)
 
 [connection signal="button_down" from="MainPanel/ButtonContainer/Standalone" to="." method="_on_StandaloneButton_pressed"]
 [connection signal="button_down" from="MainPanel/ButtonContainer/Host" to="." method="_on_HostButton_pressed"]
 [connection signal="button_down" from="MainPanel/ButtonContainer/Client" to="." method="_on_ClientButton_pressed"]
 [connection signal="button_down" from="MainPanel/QuitButton" to="." method="_on_QuitButton_pressed"]
+[connection signal="button_down" from="StandaloneOptions/ConfigConteiner/seed/RandomSeed" to="." method="_on_RandomSeedStandaloneButton_pressed"]
+[connection signal="button_down" from="StandaloneOptions/Start" to="." method="_start_standalone_game"]
+[connection signal="button_down" from="HostOptions/ConfigConteiner/seed/RandomSeed" to="." method="_on_RandomSeedHostButton_pressed"]
 [connection signal="button_down" from="HostOptions/StartServer" to="." method="_on_StartServerButton_pressed"]
 [connection signal="button_down" from="HostOptions/Back" to="." method="_on_HostOptions_BackButton_pressed"]
 [connection signal="button_down" from="ClientOptions/Connect" to="." method="_on_ConnectButton_pressed"]
 [connection signal="button_down" from="ClientOptions/Back" to="." method="_on_ClientOptions_BackButton_pressed"]
-[connection signal="button_down" from="StandaloneOptions/Start" to="." method="_start_standalone_game"]
