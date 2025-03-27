@@ -1,0 +1,31 @@
+# World Generation Parameters
+world_seed = 12345
+world_size = { width = 10000, height = 10000 }
+
+# Generation rules
+[generation_rules]
+terrain_octaves = 6
+terrain_scale = 100.0
+terrain_persistence = 0.5
+terrain_lacunarity = 2.0
+biome_blend_distance = 100.0
+biome_transition_noise = 0.2
+feature_density = 0.1
+
+mountain_threshold = 0.7 # TODO: Should be removed, but make sure rest of the system is chagned first 
+river_width = 5.0
+tree_density = 0.2
+grass_coverage = 0.5
+
+# Network Configuration
+[network]
+max_players = 64
+server_port = 7878
+connection_timeout = 5000
+
+# Game Mode (one of: Standalone, Host, Client)
+#game_mode = "Standalone"  # Can be "Standalone", "Host", or "Client"
+
+# Custom settings
+[custom_settings]
+# Any additional settings can go here

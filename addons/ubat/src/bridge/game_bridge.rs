@@ -80,6 +80,14 @@ impl GameManagerBridge {
         // Store the config path
         self.config_path = config_path.clone();
         
+        // Convert Godot resource path to filesystem path
+        let global_path = godot::classes::ProjectSettings::singleton().globalize_path(&config_path.clone());
+        
+        if self.debug_mode {
+            godot_print!("GameManagerBridge: Converting path '{}' to '{}'", config_path, global_path);
+        }
+
+        
         // Create and initialize the game manager
         let (initialization_successful, error_msg) = match GameManager::init_from_config(config_path.to_string()) {
             Ok(mut manager) => {
