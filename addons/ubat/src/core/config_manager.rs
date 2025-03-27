@@ -114,9 +114,44 @@ impl ConfigurationManager {
 
     // Load configuration from a file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
+        // Read and parse TOML as before
         let config_str = fs::read_to_string(path.as_ref())?;
-        let config: GameConfiguration = toml::from_str(&config_str)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        
+        // Try to parse it as is
+        let mut config: GameConfiguration = match toml::from_str(&config_str) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                // Check if the error is about missing game_mode
+                if e.to_string().contains("missing field `game_mode`") {
+                    // Try to parse without that field
+                    #[derive(Deserialize)]
+                    struct PartialConfig {
+                        world_seed: u64,
+                        world_size: WorldSize,
+                        generation_rules: GenerationRules,
+                        network: NetworkConfig,
+                        #[serde(default)]
+                        custom_settings: HashMap<String, ConfigValue>,
+                    }
+                    
+                    let partial: PartialConfig = toml::from_str(&config_str)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                    
+                    // Create a complete config with default game mode
+                    GameConfiguration {
+                        world_seed: partial.world_seed,
+                        world_size: partial.world_size,
+                        generation_rules: partial.generation_rules,
+                        network: partial.network,
+                        game_mode: GameModeConfig::Standalone, // Default
+                        custom_settings: partial.custom_settings,
+                    }
+                } else {
+                    // If it's some other error, propagate it
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+                }
+            }
+        };
         
         Ok(Self {
             current_config: config,
