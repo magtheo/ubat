@@ -6,6 +6,7 @@ var config_bridge
 var game_bridge
 var network_bridge
 var event_bridge
+var game_init_helper
 
 func _ready():
 	print("BridgeManager: Initializing bridges...")
@@ -42,3 +43,11 @@ func _ready():
 		print("EventBridge created, node: ", event_bridge)
 	else:
 		push_error("EventBridge class not found")
+
+	if ClassDB.class_exists("GameInitHelper"):
+		game_init_helper = GameInitHelper.new()
+		add_child(game_init_helper)
+		game_init_helper.debug_mode = true
+		print("GameInitHelper created, node: ", game_init_helper)
+	else:
+		push_error("GameInitHelper class not found")
