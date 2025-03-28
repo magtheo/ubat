@@ -91,6 +91,8 @@ impl INode for ChunkManager {
     }
     
     fn ready(&mut self) {
+        godot_print!("ChunkManager: Initializing...");
+        
         // Try to find BiomeManager in the scene tree
         let parent = self.base().get_parent();
         if let Some(parent) = parent {
@@ -105,8 +107,12 @@ impl INode for ChunkManager {
             // Then set the biome_manager field (clone to avoid move)
             self.biome_manager = Some(biome_manager.clone());
             
-            godot_print!("ChunkManager: Got BiomeManager node as {:?}", self.biome_manager);
+            godot_print!("ChunkManager: Successfully connected to BiomeManager");
+        } else {
+            godot_error!("ChunkManager: Could not find parent node");
         }
+        
+        godot_print!("ChunkManager: Initialization complete");
     }
 }
 

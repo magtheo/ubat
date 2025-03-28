@@ -43,26 +43,41 @@ impl INode3D for ChunkController {
     }
     
     fn ready(&mut self) {
+        godot_print!("ChunkController: Initializing...");
+        
         // Find the ChunkManager and BiomeManager in the scene tree
         let chunk_manager = self.base().get_node_as::<ChunkManager>("../ChunkManager");
         let biome_manager = self.base().get_node_as::<BiomeManager>("../BiomeManager");
         
-        self.chunk_manager = Some(chunk_manager);
-        self.biome_manager = Some(biome_manager);
+        if chunk_manager.is_instance_valid() {
+            self.chunk_manager = Some(chunk_manager);
+            godot_print!("ChunkController: Found ChunkManager");
+        } else {
+            godot_error!("ChunkController: Could not find ChunkManager in scene tree");
+        }
+        
+        if biome_manager.is_instance_valid() {
+            self.biome_manager = Some(biome_manager);
+            godot_print!("ChunkController: Found BiomeManager");
+        } else {
+            godot_error!("ChunkController: Could not find BiomeManager in scene tree");
+        }
         
         // Set the reference in ChunkManager to BiomeManager (if needed)
         if let (Some(chunk_mgr), Some(biome_mgr)) = (&self.chunk_manager, &self.biome_manager) {
             let mut chunk_mgr_mut = chunk_mgr.clone();
             chunk_mgr_mut.bind_mut().set_biome_manager(biome_mgr.clone());
+            godot_print!("ChunkController: Connected ChunkManager to BiomeManager");
         }
         
         // Initialize the render distance in the ChunkManager
         if let Some(chunk_mgr) = &self.chunk_manager {
             let mut chunk_mgr_mut = chunk_mgr.clone();
             chunk_mgr_mut.bind_mut().set_render_distance(self.render_distance);
+            godot_print!("ChunkController: Set render distance to {}", self.render_distance);
         }
-
-        godot_print!("ChunkController initialized");
+    
+        godot_print!("ChunkController: Initialization complete");
     }
     
     fn process(&mut self, _delta: f64) {

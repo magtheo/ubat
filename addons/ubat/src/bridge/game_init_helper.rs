@@ -56,42 +56,91 @@ impl GameInitHelper {
     /// Returns true if initialization was successful, false otherwise
     #[func]
     pub fn init_standalone(&self, config_path: GString, options: Dictionary) -> bool {
-        if self.config_bridge.is_none() || self.game_bridge.is_none() {
-            godot_error!("GameInitHelper: Bridges not set");
+        godot_print!("GameInitHelper: init_standalone called with path: {}, options: {:?}", config_path, options);
+        
+        // Check bridges
+        if self.config_bridge.is_none() {
+            godot_error!("GameInitHelper: ConfigBridge not set");
             return false;
         }
         
-        let mut config_bridge = self.config_bridge.as_ref().unwrap().clone();
-        let mut game_bridge = self.game_bridge.as_ref().unwrap().clone();
+        if self.game_bridge.is_none() {
+            godot_error!("GameInitHelper: GameBridge not set");
+            return false;
+        }
+        
+        // Clone bridges to avoid borrowing issues
+        let config_bridge = self.config_bridge.as_ref().unwrap().clone();
+        let game_bridge = self.game_bridge.as_ref().unwrap().clone();
         
         // Create a new dictionary with network_mode set to 0 (Standalone)
         let mut full_options = options.clone();
         full_options.insert("network_mode".to_variant(), 0.to_variant());
         
-        // Apply options to the config bridge
-        let apply_result = config_bridge.bind_mut().apply_multiple_settings(full_options, true);
+        godot_print!("GameInitHelper: Applying configuration options: {:?}", full_options);
+        
+        // Step 1: Apply settings with better error reporting
+        let apply_result = {
+            let mut config_bridge_mut = config_bridge.clone();
+            let result = config_bridge_mut.bind_mut().apply_multiple_settings(full_options, true);
+            if !result {
+                godot_error!("GameInitHelper: Failed to apply configuration options");
+            }
+            result
+        };
+        
         if !apply_result {
-            godot_error!("GameInitHelper: Failed to apply configuration options");
+            // Try to get more specific information - separate operation
+            let mut config_bridge_mut = config_bridge.clone();
+            let game_mode_result = config_bridge_mut.bind_mut().set_game_mode(0, true);
+            godot_error!("GameInitHelper: Direct set_game_mode(0) result: {}", game_mode_result);
+            
             return false;
         }
         
-        // Initialize the game
-        let init_result = game_bridge.bind_mut().initialize(config_path);
+        godot_print!("GameInitHelper: Successfully applied configuration options");
+        godot_print!("GameInitHelper: Initializing game with config path: {}", config_path);
+        
+        // Step 2: Initialize the game with better error reporting
+        let init_result = {
+            let mut game_bridge_mut = game_bridge.clone();
+            let result = game_bridge_mut.bind_mut().initialize(config_path.clone());
+            if !result {
+                godot_error!("GameInitHelper: Failed to initialize game with path: {}", config_path);
+            }
+            result
+        };
+        
         if !init_result {
-            godot_error!("GameInitHelper: Failed to initialize game");
+            // Try with default initialization as fallback
+            let mut game_bridge_mut = game_bridge.clone();
+            let default_result = game_bridge_mut.bind_mut().initialize_default();
+            godot_error!("GameInitHelper: Fallback initialize_default result: {}", default_result);
+            
             return false;
         }
         
-        // Start the game
-        let start_result = game_bridge.bind_mut().start_game();
+        godot_print!("GameInitHelper: Game initialized successfully, now starting game");
+        
+        // Step 3: Start the game with better error reporting
+        let start_result = {
+            let mut game_bridge_mut = game_bridge.clone();
+            let result = game_bridge_mut.bind_mut().start_game();
+            if !result {
+                godot_error!("GameInitHelper: Failed to start game");
+            }
+            result
+        };
+        
         if !start_result {
-            godot_error!("GameInitHelper: Failed to start game");
             return false;
         }
+        
+        godot_print!("GameInitHelper: Complete initialization successful");
         
         true
     }
-    
+
     /// Initialize the game in host mode
     ///
     /// Parameters:

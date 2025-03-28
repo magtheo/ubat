@@ -111,14 +111,25 @@ impl INode for BiomeManager {
 
     // Initialize
     fn ready(&mut self) {
+        godot_print!("BiomeManager: Initializing...");
+        
         // Initialize resource manager if needed
         resource_manager::init();
         
+        godot_print!("BiomeManager: Loading mask from {}", self.biome_mask_image_path);
         self.load_mask(self.biome_mask_image_path.clone());
+        
+        godot_print!("BiomeManager: Loading noise from {}", self.noise_path);
         self.load_noise(self.noise_path.clone());
+        
+        godot_print!("BiomeManager: Setting up biome sections");
         self.setup_biome_sections();
+        
+        godot_print!("BiomeManager: Initializing Voronoi points with seed {}", self.seed);
         self.initialize_voronoi_points();
+        
         self.initialized = true;
+        godot_print!("BiomeManager: Initialization complete");
     }
 }
 

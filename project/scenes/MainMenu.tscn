@@ -14,7 +14,6 @@ grow_vertical = 2
 script = ExtResource("1_w4ch6")
 
 [node name="MainPanel" type="Panel" parent="."]
-visible = false
 layout_mode = 0
 offset_right = 1152.0
 offset_bottom = 648.0
@@ -23,8 +22,9 @@ offset_bottom = 648.0
 layout_mode = 0
 offset_left = 49.0
 offset_top = 96.0
-offset_right = 287.0
-offset_bottom = 417.0
+offset_right = 145.0
+offset_bottom = 197.0
+scale = Vector2(2, 2)
 
 [node name="Standalone" type="Button" parent="MainPanel/ButtonContainer"]
 layout_mode = 2
@@ -71,10 +71,11 @@ text = "Standalone"
 
 [node name="ConfigConteiner" type="VBoxContainer" parent="StandaloneOptions"]
 layout_mode = 0
-offset_left = 376.0
-offset_top = 296.0
-offset_right = 664.0
-offset_bottom = 432.0
+offset_left = 344.0
+offset_top = 160.0
+offset_right = 632.0
+offset_bottom = 261.0
+scale = Vector2(2, 2)
 
 [node name="seed" type="HBoxContainer" parent="StandaloneOptions/ConfigConteiner"]
 layout_mode = 2
@@ -85,7 +86,9 @@ text = "WorldSeed"
 
 [node name="SeedInput" type="SpinBox" parent="StandaloneOptions/ConfigConteiner/seed"]
 layout_mode = 2
-max_value = 1e+07
+min_value = 1.0
+max_value = 1e+10
+value = 1.0
 
 [node name="RandomSeed" type="Button" parent="StandaloneOptions/ConfigConteiner/seed"]
 layout_mode = 2
@@ -152,10 +155,11 @@ text = "Host"
 
 [node name="ConfigConteiner" type="VBoxContainer" parent="HostOptions"]
 layout_mode = 0
-offset_left = 376.0
-offset_top = 304.0
-offset_right = 664.0
-offset_bottom = 440.0
+offset_left = 336.0
+offset_top = 112.0
+offset_right = 624.0
+offset_bottom = 318.0
+scale = Vector2(2, 2)
 
 [node name="ServerName" type="LineEdit" parent="HostOptions/ConfigConteiner"]
 layout_mode = 2
@@ -244,7 +248,6 @@ offset_bottom = 575.0
 text = "Back"
 
 [node name="ClientOptions" type="Panel" parent="."]
-visible = false
 layout_mode = 0
 offset_right = 1184.0
 offset_bottom = 664.0
@@ -277,10 +280,11 @@ text = "Back
 
 [node name="ConfigConteiner" type="VBoxContainer" parent="ClientOptions"]
 layout_mode = 0
-offset_left = 392.0
+offset_left = 304.0
 offset_top = 112.0
-offset_right = 731.0
+offset_right = 643.0
 offset_bottom = 318.0
+scale = Vector2(2, 2)
 
 [node name="HBoxContainer" type="HBoxContainer" parent="ClientOptions/ConfigConteiner"]
 layout_mode = 2
@@ -331,7 +335,8 @@ size = Vector2i(400, 150)
 [connection signal="button_down" from="MainPanel/ButtonContainer/Client" to="." method="_on_ClientButton_pressed"]
 [connection signal="button_down" from="MainPanel/QuitButton" to="." method="_on_QuitButton_pressed"]
 [connection signal="button_down" from="StandaloneOptions/ConfigConteiner/seed/RandomSeed" to="." method="_on_RandomSeedStandaloneButton_pressed"]
-[connection signal="button_down" from="StandaloneOptions/Start" to="." method="_start_standalone_game"]
+[connection signal="button_down" from="StandaloneOptions/Start" to="." method="_on_StartStandaloneButton_pressed"]
+[connection signal="button_down" from="StandaloneOptions/Back" to="." method="_on_StandaloneOptions_BackButton_pressed"]
 [connection signal="button_down" from="HostOptions/ConfigConteiner/seed/RandomSeed" to="." method="_on_RandomSeedHostButton_pressed"]
 [connection signal="button_down" from="HostOptions/StartServer" to="." method="_on_StartServerButton_pressed"]
 [connection signal="button_down" from="HostOptions/Back" to="." method="_on_HostOptions_BackButton_pressed"]

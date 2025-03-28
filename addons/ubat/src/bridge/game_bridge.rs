@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::core::game_manager::{GameManager, GameState, GameError};
 use crate::bridge::EventBridge;
+use crate::core::event_bus::WorldGeneratedEvent;
 
 
 #[derive(GodotClass)]
@@ -65,6 +66,9 @@ impl INode for GameManagerBridge {
 #[godot_api]
 impl GameManagerBridge {
     // Signal declarations
+    #[signal]
+    fn game_world_initialized();
+    
     #[signal]
     fn game_state_changed(old_state: i32, new_state: i32, state_name: GString);
     
@@ -310,6 +314,13 @@ impl GameManagerBridge {
             
             if self.debug_mode {
                 godot_print!("GameManagerBridge: Game started");
+                
+                // We can't directly access private fields of GameManager
+                // Instead, emit a custom signal that TerrainSystem can listen for
+                self.base_mut().emit_signal(
+                    &StringName::from("game_world_initialized"), 
+                    &[]
+                );
             }
             
             true
@@ -317,7 +328,7 @@ impl GameManagerBridge {
             godot_error!("GameManagerBridge: Game manager not initialized");
             false
         }
-    }
+    }    
     
     /// Update the game state (should be called every frame for non-blocking operation)
     /// 
