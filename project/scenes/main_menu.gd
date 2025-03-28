@@ -18,6 +18,7 @@ const GAME_WORLD = "res://project/scenes/GameWorld.tscn"
 @onready var error_dialog = $ErrorDialog
 
 # Called when the node enters the scene tree
+# In main_menu.gd - look for the _ready() function
 func _ready():
 	# Verify that all bridges were successfully created
 	if !config_bridge or !game_bridge or !network_bridge:
@@ -35,8 +36,13 @@ func _ready():
 	# Create our init helper if not provided by BridgeManager
 	if not game_init_helper:
 		game_init_helper = GameInitHelper.new()
-		game_init_helper.set_bridges(config_bridge, game_bridge)
+		add_child(game_init_helper) # Add it to the scene tree
 		game_init_helper.debug_mode = true
+	
+	# IMPORTANT: Always set the bridges on the helper, even if it comes from BridgeManager
+	game_init_helper.set_bridges(config_bridge, game_bridge)
+	
+	# The rest of your _ready() function...
 	
 	# Initialize configuration
 	if not config_bridge.create_default_config():
@@ -58,21 +64,83 @@ func _ready():
 
 # Set up UI controls with current configuration values
 func _setup_ui():
-	# Standalone options
-	$StandaloneOptions/ConfigConteiner/seed/SeedInput.value = config_bridge.world_seed
-	$StandaloneOptions/ConfigConteiner/WorldHeightContener/WorldHeightInput.value = config_bridge.world_width
-	$StandaloneOptions/ConfigConteiner/WorldWidthContener/WorldWidthInput.value = config_bridge.world_height
+	debug_log("Setting up UI with configuration values")
+	
+	# First, check if nodes exist and print their paths for debugging
+	var seed_input = find_node_recursive(standalone_options, "SeedInput")
+	if seed_input:
+		print("Found SeedInput at: ", (seed_input.get_path()))
+		seed_input.value = config_bridge.world_seed
+	else:
+		debug_error("SeedInput not found in scene hierarchy")
+	
+	# Continue with other UI elements using the same pattern...
+	var world_width_input = find_node_recursive(standalone_options, "WorldWidthInput")
+	if world_width_input:
+		world_width_input.value = config_bridge.world_width
+	else:
+		debug_error("WorldWidthInput not found")
+		
+	var world_height_input = find_node_recursive(standalone_options, "WorldHeightInput")
+	if world_height_input:
+		world_height_input.value = config_bridge.world_height
+	else:
+		debug_error("WorldHeightInput not found")
 	
 	# Host options
-	$HostOptions/ConfigConteiner/seed/SeedInput.value = config_bridge.world_seed
-	$HostOptions/ConfigConteiner/ServerName.text = config_bridge.get_custom_value("server_name") or "My Game Server"
-	$HostOptions/ConfigConteiner/PortContainer/PortInput.value = config_bridge.server_port
-	$HostOptions/ConfigConteiner/MaxPlayersContainer/MaxPlayersInput.value = config_bridge.max_players
+	var host_seed_input = find_node_recursive(host_options, "SeedInput") 
+	if host_seed_input:
+		host_seed_input.value = config_bridge.world_seed
+	else:
+		debug_error("SeedInput not found in HostOptions")
+	
+	var server_name_input = find_node_recursive(host_options, "ServerName")
+	if server_name_input:
+		server_name_input = config_bridge.get_custom_value("server_name") or "My Game Server"
+	else:
+		debug_error("ServerName not found")
+	
+	var port_input = find_node_recursive(host_options, "PortInput")
+	if port_input:
+		port_input.value = config_bridge.server_port
+	else:
+		debug_error("PortInput not found")
+	
+	var max_players_input = find_node_recursive(host_options, "MaxPlayersInput")
+	if max_players_input:
+		max_players_input.value = config_bridge.max_players
+	else:
+		debug_error("MaxPlayersInput not found")
 	
 	# Client options
-	$ClientOptions/ServerAddressInput.text = config_bridge.server_address
-	$ClientOptions/PlayerNameInput.text = config_bridge.get_custom_value("player_name") or "Player"
-
+	var server_address = find_node_recursive(client_options, "ServerAddress")
+	if server_address:
+		server_address = config_bridge.server_address
+	else:
+		debug_error("ServerAddress not found")
+	
+	var player_name = find_node_recursive(client_options, "PlayerName")
+	if player_name:
+		player_name = config_bridge.get_custom_value("player_name") or "Player"
+	else:
+		debug_error("PlayerName not found")
+		
+# Helper function to find nodes recursively by name
+func find_node_recursive(parent, node_name):
+	# First check direct children
+	for child in parent.get_children():
+		if child.name == node_name:
+			return child
+		
+		# Check if this child has children
+		if child.get_child_count() > 0:
+			var found = find_node_recursive(child, node_name)
+			if found:
+				return found
+	
+	# Not found
+	return null
+	
 # Shows only the specified panel, hides others
 func _show_panel(panel):
 	main_panel.visible = (panel == main_panel)
@@ -82,7 +150,6 @@ func _show_panel(panel):
 	loading_overlay.visible = (panel == loading_overlay)
 
 # MAIN PANEL BUTTON HANDLERS
-
 func _on_StandaloneButton_pressed():
 	debug_button_press("Standalone")
 	_show_panel(standalone_options)
@@ -99,7 +166,6 @@ func _on_QuitButton_pressed():
 	debug_button_press("Quit")
 	get_tree().quit()
 
-# STANDALONE MODE HANDLERS
 
 func _on_StartStandaloneButton_pressed():
 	debug_button_press("Start Standalone")
@@ -107,52 +173,69 @@ func _on_StartStandaloneButton_pressed():
 	# Show loading
 	_show_panel(loading_overlay)
 	
-	# Get world seed value
-	var seed_value = $StandaloneOptions/SeedInput.value
+	# Find input elements using recursive search
+	var seed_input = find_node_recursive(standalone_options, "SeedInput")
+	var width_input = find_node_recursive(standalone_options, "WorldWidthInput")
+	var height_input = find_node_recursive(standalone_options, "WorldHeightInput")
+	
+	# Check if all required inputs were found
+	if not seed_input or not width_input or not height_input:
+		debug_error("Required input elements not found in scene")
+		_show_error("UI configuration error - please check scene setup")
+		return
+		
+	# Get values from the input elements
+	var seed_value = int(seed_input.value)  # Explicitly convert to int
+	var width_value = int(width_input.value)  # Explicitly convert to int
+	var height_value = int(height_input.value)  # Explicitly convert to int
+	
+	debug_log("Found inputs - Seed: " + str(seed_value) + ", Width: " + str(width_value) + ", Height: " + str(height_value))
 	
 	# Create options dictionary
 	var options = {
-		"world_seed": seed_value if seed_value > 0 else randi(),
-		"world_width": $StandaloneOptions/WorldWidthInput.value,
-		"world_height": $StandaloneOptions/WorldHeightInput.value
+		"world_seed": seed_value if seed_value > 0 else int(randi()),  # Ensure it's an int
+		"world_width": width_value,
+		"world_height": height_value
 	}
 	
 	debug_log("Starting standalone game with options: " + str(options))
 	
-	# Apply all settings at once
-	if not config_bridge.apply_multiple_settings(options, true):
-		_show_error("Failed to apply game configuration")
+	# Check if game_init_helper is available
+	if not game_init_helper:
+		debug_error("GameInitHelper is not available")
+		_show_error("Game initialization helper not available")
 		return
 	
-	# Set game mode to standalone
-	if not config_bridge.set_game_mode(0, true):
-		_show_error("Failed to set standalone mode")
-		return
+	debug_log("GameInitHelper available, config_path: " + str(config_bridge.config_path))
 	
-	# Initialize the game
-	if not game_bridge.initialize(config_bridge.config_path):
-		_show_error("Failed to initialize game")
-		return
-	
-	# Start the game
-	if not game_bridge.start_game():
-		_show_error("Failed to start game")
-		return
-	
-	# Wait a bit for any backend initialization to complete
-	await get_tree().create_timer(0.5).timeout
-	
-	# Change to game scene
-	debug_log("Changing to game scene: " + GAME_WORLD)
-	var error = get_tree().change_scene_to_file(GAME_WORLD)
-	if error != OK:
-		_show_error("Failed to load game scene (error " + str(error) + ")")
-
+	# Use the GameInitHelper to handle the initialization
+	var init_result = game_init_helper.init_standalone(config_bridge.config_path, options)
+	if init_result:
+		debug_log("Game initialized successfully, waiting before scene transition")
+		# Wait a bit for any backend initialization to complete
+		await get_tree().create_timer(0.5).timeout
+		
+		# Change to game scene
+		debug_log("Changing to game scene: " + GAME_WORLD)
+		var error = get_tree().change_scene_to_file(GAME_WORLD)
+		if error != OK:
+			_show_error("Failed to load game scene (error " + str(error) + ")")
+	else:
+		debug_error("Failed to initialize standalone game")
+		_show_error("Failed to initialize game in standalone mode")
+		
 func _on_RandomSeedStandaloneButton_pressed():
-	$StandaloneOptions/SeedInput.value = randi()
+	print("Random Seed pressed")
+	
+	# Try to find the SeedInput node directly
+	var seed_input = find_node_recursive(standalone_options, "SeedInput")
+	if seed_input:
+		print("Found SeedInput at: ", seed_input.get_path())
+		seed_input.value = randi()  # Try with .value property
+	else:
+		print("SeedInput not found in scene hierarchy!")
 
 # HOST MODE HANDLERS
-
 func _on_StartServerButton_pressed():
 	debug_button_press("Start Server")
 	
@@ -160,10 +243,10 @@ func _on_StartServerButton_pressed():
 	_show_panel(loading_overlay)
 
 	# Get input values
-	var server_name = $HostOptions/ServerNameInput.text
-	var port = $HostOptions/PortInput.value
-	var max_players = $HostOptions/MaxPlayersInput.value
-	var seed_value = $HostOptions/SeedInput.value
+	var server_name = $HostOptions/ConfigContainer/ServerName.text
+	var port = $HostOptions/ConfigContainer/PortContainer/PortInput.value
+	var max_players = $HostOptions/ConfigContainer/MaxPlayersContainer/MaxPlayersInput.value
+	var seed_value = $HostOptions/ConfigContainer/seed/SeedInput.value
 	
 	debug_log("Starting host game with: Server=" + server_name + ", Port=" + str(port) + ", Players=" + str(max_players) + ", Seed=" + str(seed_value))
 	
@@ -210,19 +293,30 @@ func _on_StartServerButton_pressed():
 		_show_error("Failed to load game scene (error " + str(error) + ")")
 
 func _on_RandomSeedHostButton_pressed():
-	$HostOptions/SeedInput.value = randi()
+	$HostOptions/ConfigContainer/seed/SeedInput.value = randi()
 
 # CLIENT MODE HANDLERS
-
 func _on_ConnectButton_pressed():
 	debug_button_press("Connect to Server")
 	
 	# Show loading
 	_show_panel(loading_overlay)
 
-	# Get input values
-	var server_address = $ClientOptions/ServerAddressInput.text
-	var player_name = $ClientOptions/PlayerNameInput.text
+	# You need to add these inputs to your ClientOptions node
+	# or adjust these paths to match your actual node structure
+	var server_address = ""
+	var player_name = ""
+	
+	if $ClientOptions.has_node("ServerAddressInput"):
+		server_address = $ClientOptions/ServerAddressInput.text
+	else:
+		_show_error("Server address input not found in UI")
+		return
+		
+	if $ClientOptions.has_node("PlayerNameInput"):
+		player_name = $ClientOptions/PlayerNameInput.text
+	else:
+		player_name = "Player" # Default name
 	
 	if server_address.strip_edges().empty():
 		_show_error("Please enter a server address")
@@ -280,7 +374,6 @@ func _on_ConnectButton_pressed():
 		_show_error("Failed to load game scene (error " + str(error) + ")")
 
 # BACK BUTTON HANDLERS
-
 func _on_StandaloneOptions_BackButton_pressed():
 	_show_panel(main_panel)
 
@@ -291,8 +384,15 @@ func _on_ClientOptions_BackButton_pressed():
 	_show_panel(main_panel)
 
 # ERROR HANDLING
-
 func _show_error(message):
+	# Create error dialog if it doesn't exist
+	if not has_node("ErrorDialog"):
+		var dialog = AcceptDialog.new()
+		dialog.name = "ErrorDialog"
+		dialog.title = "Error"
+		add_child(dialog)
+		error_dialog = dialog
+	
 	# Return to main panel
 	_show_panel(main_panel)
 	
@@ -303,7 +403,6 @@ func _show_error(message):
 	debug_error(message)
 
 # SIGNAL HANDLERS
-
 func _on_game_error(error_message):
 	_show_error(error_message)
 
