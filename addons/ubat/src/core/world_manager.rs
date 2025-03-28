@@ -44,6 +44,10 @@ pub struct WorldStateManager {
     
     // Terrain generation system
     terrain_generator: TerrainGenerator,
+
+    pending_init: bool,
+    pending_seed: u64,
+    pending_size: (u32, u32),
 }
 
 
@@ -55,7 +59,26 @@ impl WorldStateManager {
             config: config.clone(),
             current_version: 0,
             terrain_generator: TerrainGenerator::new(config),
+            pending_init: false,
+            pending_seed: 0,
+            pending_size: (0, 0),
         }
+    }
+    
+    pub fn set_pending_world_init(&mut self, seed: u64, size: (u32, u32)) {
+        self.pending_init = true;
+        self.pending_seed = seed;
+        self.pending_size = size;
+    }
+    
+    // Get and potentially clear the pending initialization
+    pub fn get_pending_world_init(&self) -> (bool, u64, (u32, u32)) {
+        (self.pending_init, self.pending_seed, self.pending_size)
+    }
+    
+    // Clear the pending initialization flag
+    pub fn clear_pending_world_init(&mut self) {
+        self.pending_init = false;
     }
 
     // Generate initial world state
@@ -177,11 +200,14 @@ impl WorldStateManager {
 impl Clone for WorldStateManager {
     fn clone(&self) -> Self {
         // Create a new instance with the same configuration
-        let mut cloned = Self {
+        let cloned = Self {
             entities: Arc::new(RwLock::new(HashMap::new())),
             config: self.config.clone(),
             current_version: self.current_version,
             terrain_generator: self.terrain_generator.clone(),
+            pending_init: self.pending_init,
+            pending_seed: self.pending_seed,
+            pending_size: self.pending_size,
         };
         
         // Copy entities if needed
