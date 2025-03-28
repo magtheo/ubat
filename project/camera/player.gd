@@ -26,7 +26,7 @@ func _physics_process(_delta):
 		velocity_up -= self.transform.basis[1] * speed
 	
 	self.translate(local_velocity + velocity_up)
-	print("player position", self.position)
+	# print("player position", self.position)
 
 func _unhandled_input(event):
 	if event is InputEventMouseButton: 
