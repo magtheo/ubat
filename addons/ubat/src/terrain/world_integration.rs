@@ -8,10 +8,13 @@ use crate::terrain::{BiomeManager, ChunkManager, ChunkController};
 use crate::core::world_manager::WorldStateManager;
 use crate::core::config_manager::GameConfiguration;
 
+use crate::terrain::terrainInitState::TerrainInitializationState;
+
 pub struct TerrainWorldIntegration {
     biome_manager: Option<Gd<BiomeManager>>,
     chunk_manager: Option<Gd<ChunkManager>>,
     world_manager: Arc<Mutex<WorldStateManager>>,
+    initialization_state: TerrainInitializationState,
 }
 
 impl TerrainWorldIntegration {
@@ -20,37 +23,58 @@ impl TerrainWorldIntegration {
             biome_manager: None,
             chunk_manager: None,
             world_manager,
+            initialization_state: TerrainInitializationState::Uninitialized,
         }
     }
     
     // Initialize terrain from configuration
-    pub fn initialize_terrain(&mut self, biome_manager: Gd<BiomeManager>, chunk_manager: Gd<ChunkManager>, config: &GameConfiguration) {
-        // Store managers
-        self.biome_manager = Some(biome_manager.clone());
-        self.chunk_manager = Some(chunk_manager.clone());
+    pub fn initialize_terrain(&mut self, biome_manager: Gd<BiomeManager>, chunk_manager: Gd<ChunkManager>, config: &GameConfiguration) -> Result<(), String> {
+        // Store the current state
+        let mut current_state = TerrainInitializationState::Uninitialized;
         
-        // Set world seed from configuration
+        // Step 1: Validate configuration
+        if config.world_seed == 0 || config.world_size.width == 0 || config.world_size.height == 0 {
+            return Err("Invalid terrain configuration: missing seed or dimensions".to_string());
+        }
+        current_state = TerrainInitializationState::ConfigLoaded;
+        
+        // Step 2: Initialize BiomeManager
+        self.biome_manager = Some(biome_manager.clone());
         {
             let mut biome_mgr = biome_manager.clone();
             biome_mgr.bind_mut().set_seed(config.world_seed as u32);
-            
-            // Set world dimensions
             biome_mgr.bind_mut().set_world_dimensions(
                 config.world_size.width as f32,
                 config.world_size.height as f32
             );
-        }
-        
-        // Configure chunk manager with the same seed
-        if let Some(chunk_mgr) = &self.chunk_manager {
-            let mut cm = chunk_mgr.clone();
             
-            // Set render distance based on configuration
-            // This could be a custom setting in your GameConfiguration
-            cm.bind_mut().set_render_distance(8); // Default value
+            // Verify BiomeManager is correctly initialized
+            if !biome_mgr.bind().is_initialized() {
+                return Err("BiomeManager failed to initialize properly".to_string());
+            }
         }
+        current_state = TerrainInitializationState::BiomeInitialized;
         
-        godot_print!("Terrain initialized with seed: {}", config.world_seed);
+        // Step 3: Initialize ChunkManager
+        self.chunk_manager = Some(chunk_manager.clone());
+        {
+            let mut chunk_mgr = chunk_manager.clone();
+            chunk_mgr.bind_mut().set_biome_manager(biome_manager.clone());
+            chunk_mgr.bind_mut().update_thread_safe_biome_data();
+            
+            // Verify ChunkManager is correctly initialized
+            if !chunk_mgr.bind().is_initialized() {
+                return Err("ChunkManager failed to initialize properly".to_string());
+            }
+        }
+        current_state = TerrainInitializationState::ChunkManagerInitialized;
+        
+        // Everything is ready
+        current_state = TerrainInitializationState::Ready;
+        self.initialization_state = current_state;
+        
+        godot_print!("Terrain initialized successfully with seed: {}", config.world_seed);
+        Ok(())
     }
 
     pub fn connect_to_event_bus(&self, event_bus: Arc<EventBus>) {
