@@ -43,7 +43,7 @@ impl INode3D for ChunkController {
     }
     
     fn ready(&mut self) {
-        godot_print!("ChunkController: Initializing...");
+        godot_print!("RUST: ChunkController: Initializing...");
         
         // Find the ChunkManager and BiomeManager in the scene tree
         let chunk_manager = self.base().get_node_as::<ChunkManager>("../ChunkManager");

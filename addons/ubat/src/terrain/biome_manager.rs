@@ -111,7 +111,7 @@ impl INode for BiomeManager {
 
     // Initialize
     fn ready(&mut self) {
-        godot_print!("BiomeManager: Initializing...");
+        godot_print!("RUST: BiomeManager: Initializing...");
         
         // Initialize resource manager if needed
         resource_manager::init();

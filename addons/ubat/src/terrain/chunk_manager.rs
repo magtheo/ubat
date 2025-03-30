@@ -91,7 +91,7 @@ impl INode for ChunkManager {
     }
     
     fn ready(&mut self) {
-        godot_print!("ChunkManager: Initializing...");
+        godot_print!("RUST: ChunkManager: Initializing...");
         
         // Try to find BiomeManager in the scene tree
         let parent = self.base().get_parent();

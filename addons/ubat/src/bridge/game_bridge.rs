@@ -308,19 +308,19 @@ impl GameManagerBridge {
         };
         
         // Step 2: Now handle operations requiring mutable borrow
+        // In start_game() method in game_bridge.rs
         if start_result {
             // Update the state property
             self.update_state_property();
             
+            // Emit signal unconditionally, not just in debug mode
+            self.base_mut().emit_signal(
+                &StringName::from("game_world_initialized"), 
+                &[]
+            );
+            
             if self.debug_mode {
                 godot_print!("GameManagerBridge: Game started");
-                
-                // We can't directly access private fields of GameManager
-                // Instead, emit a custom signal that TerrainSystem can listen for
-                self.base_mut().emit_signal(
-                    &StringName::from("game_world_initialized"), 
-                    &[]
-                );
             }
             
             true
