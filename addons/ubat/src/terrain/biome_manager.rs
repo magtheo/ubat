@@ -4,16 +4,104 @@ use godot::classes::RandomNumberGenerator;
 use godot::builtin::{Color, Rect2, Vector2, Vector2i};
 use std::collections::HashMap;
 use std::cmp::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crate::resource::resource_manager::resource_manager;
 use crate::terrain::chunk_manager::ChunkManager;
+use crate::terrain::generation_rules::GenerationRules;
 
 // Structure to define a Voronoi point for biome distribution
 struct VoronoiPoint {
     position: Vector2,
     biome_id: u8,
 }
+
+// Grid cell for spatial partitioning
+struct SpatialCell {
+    voronoi_points: Vec<(usize, usize)>, // (section_index, point_index)
+}
+
+// Spatial partitioning grid
+struct SpatialGrid {
+    cells: Vec<Vec<SpatialCell>>,
+    cell_size: f32,
+    grid_width: usize,
+    grid_height: usize,
+}
+
+impl SpatialGrid {
+    fn new(world_width: f32, world_height: f32, cell_size: f32) -> Self {
+        let grid_width = (world_width / cell_size).ceil() as usize + 1;
+        let grid_height = (world_height / cell_size).ceil() as usize + 1;
+        
+        let mut cells = Vec::with_capacity(grid_width);
+        for _ in 0..grid_width {
+            let mut column = Vec::with_capacity(grid_height);
+            for _ in 0..grid_height {
+                column.push(SpatialCell { voronoi_points: Vec::new() });
+            }
+            cells.push(column);
+        }
+        
+        SpatialGrid {
+            cells,
+            cell_size,
+            grid_width,
+            grid_height,
+        }
+    }
+    
+    fn add_point(&mut self, section_index: usize, point_index: usize, position: Vector2) {
+        let grid_x = (position.x / self.cell_size).floor() as usize;
+        let grid_y = (position.y / self.cell_size).floor() as usize;
+        
+        if grid_x < self.grid_width && grid_y < self.grid_height {
+            self.cells[grid_x][grid_y].voronoi_points.push((section_index, point_index));
+        }
+    }
+    
+    fn get_nearby_points(&self, x: f32, y: f32, radius: f32) -> Vec<(usize, usize)> {
+        let mut result = Vec::new();
+        let grid_x = (x / self.cell_size).floor() as usize;
+        let grid_y = (y / self.cell_size).floor() as usize;
+        
+        // Calculate cell radius based on query radius
+        let cell_radius = (radius / self.cell_size).ceil() as usize;
+        
+        // Check cells in a square around the query point
+        for dx in 0..=cell_radius*2 {
+            let cx = if grid_x >= cell_radius {
+                grid_x + dx - cell_radius
+            } else {
+                dx
+            };
+            
+            if cx >= self.grid_width {
+                continue;
+            }
+            
+            for dy in 0..=cell_radius*2 {
+                let cy = if grid_y >= cell_radius {
+                    grid_y + dy - cell_radius
+                } else {
+                    dy
+                };
+                
+                if cy >= self.grid_height {
+                    continue;
+                }
+                
+                // Add all points from this cell
+                for &(section_index, point_index) in &self.cells[cx][cy].voronoi_points {
+                    result.push((section_index, point_index));
+                }
+            }
+        }
+        
+        result
+    }
+}
+
 
 // Structure to define a section with its associated biomes
 struct BiomeSection {
@@ -61,9 +149,9 @@ pub struct BiomeManager {
     world_height: f32,
     
     // Performance Cache
-    color_cache: Arc<Mutex<HashMap<String, Color>>>,
-    section_cache: Arc<Mutex<HashMap<String, u8>>>,
-    biome_cache: Arc<Mutex<HashMap<String, u8>>>,
+    color_cache: Arc<RwLock<HashMap<String, Color>>>,
+    section_cache: Arc<RwLock<HashMap<String, u8>>>,
+    biome_cache: Arc<RwLock<HashMap<String, u8>>>,
     
     // Biome mask image path
     biome_mask_image_path: GString,
@@ -80,6 +168,9 @@ pub struct BiomeManager {
     
     // Random number generator for voronoi points
     rng: Gd<RandomNumberGenerator>,
+
+    // Spatial partitioning grid
+    spatial_grid: Option<SpatialGrid>,
 }
 
 #[godot_api]
@@ -95,9 +186,9 @@ impl INode for BiomeManager {
             mask_height: 0,
             world_width: 10000.0,
             world_height: 10000.0,
-            color_cache: Arc::new(Mutex::new(HashMap::new())),
-            section_cache: Arc::new(Mutex::new(HashMap::new())),
-            biome_cache: Arc::new(Mutex::new(HashMap::new())),
+            color_cache: Arc::new(RwLock::new(HashMap::new())),
+            section_cache: Arc::new(RwLock::new(HashMap::new())),
+            biome_cache: Arc::new(RwLock::new(HashMap::new())),
             biome_mask_image_path: GString::from("res://textures/biomeMask_image.png"),
             noise_path: GString::from("res://resources/noise/biome_blend_noise.tres"),
             sections: Vec::new(),
@@ -106,6 +197,7 @@ impl INode for BiomeManager {
             initialized: false,
             seed: 12345,
             rng,
+            spatial_grid: None,
         }
     }
 
@@ -117,10 +209,14 @@ impl INode for BiomeManager {
         resource_manager::init();
         
         godot_print!("BiomeManager: Loading mask from {}", self.biome_mask_image_path);
-        self.load_mask(self.biome_mask_image_path.clone());
+        if !self.load_mask(self.biome_mask_image_path.clone()) {
+            godot_error!("Failed to load biome mask");
+        }
         
         godot_print!("BiomeManager: Loading noise from {}", self.noise_path);
-        self.load_noise(self.noise_path.clone());
+        if !self.load_noise(self.noise_path.clone()) {
+            godot_error!("Failed to load noise");
+        }
         
         godot_print!("BiomeManager: Setting up biome sections");
         self.setup_biome_sections();
@@ -135,25 +231,34 @@ impl INode for BiomeManager {
 
 #[godot_api]
 impl BiomeManager {
+    #[func]
+    pub fn is_initialized(&self) -> bool {
+        self.initialized && self.noise.is_some() && !self.sections.is_empty()
+    }
+
     // Load Biome Mask from image
     #[func]
     pub fn load_mask(&mut self, path: GString) -> bool {
+        match self.load_mask_internal(path) {
+            Ok(_) => true,
+            Err(e) => {
+                godot_error!("Failed to load biome mask: {}", e);
+                false
+            }
+        }
+    }
+
+    fn load_mask_internal(&mut self, path: GString) -> Result<(), String> {
         // Try to load using resource manager
         let texture = match resource_manager::load_and_cast::<Texture2D>(path.clone()) {
             Some(tex) => tex,
-            none => {
-                godot_error!("Failed to load texture from path: {}", path);
-                return false;
-            }
+            None => return Err(format!("Failed to load texture from path: {}", path))
         };
 
         // Get image from texture
         let image = match texture.get_image() {
             Some(img) => img,
-            none => {
-                godot_error!("Failed to get image from texture");
-                return false;
-            }
+            None => return Err("Failed to get image from texture".to_string())
         };
 
         // Store the image
@@ -164,20 +269,30 @@ impl BiomeManager {
         self.mask_height = image.get_height();
         
         godot_print!("Biome image loaded: {}x{}", self.mask_width, self.mask_height);
-        true
+        Ok(())
     }
     
     // Load FastNoiseLite from resource
     #[func]
     pub fn load_noise(&mut self, path: GString) -> bool {
+        match self.load_noise_internal(path) {
+            Ok(_) => true,
+            Err(e) => {
+                godot_error!("Failed to load noise: {}", e);
+                false
+            }
+        }
+    }
+
+    fn load_noise_internal(&mut self, path: GString) -> Result<(), String> {
         // Try to load using resource manager
         match resource_manager::load_and_cast::<FastNoiseLite>(path.clone()) {
             Some(noise) => {
                 self.noise = Some(noise);
                 godot_print!("Loaded FastNoiseLite from: {}", path);
-                true
+                Ok(())
             },
-            none => {
+            None => {
                 godot_error!("Failed to load FastNoiseLite from path: {}", path);
                 // Create a new noise as fallback
                 let mut noise = FastNoiseLite::new_gd();
@@ -185,7 +300,7 @@ impl BiomeManager {
                 noise.set_frequency(0.01);
                 noise.set_fractal_octaves(4);
                 self.noise = Some(noise);
-                false
+                Err(format!("Failed to load noise from: {}, using fallback", path))
             }
         }
     }
@@ -199,7 +314,7 @@ impl BiomeManager {
         // Section 1:
         self.sections.push(BiomeSection {
             section_id: 1,
-            possible_biomes: vec![1, 2],  // sand, Corral
+            possible_biomes: vec![1, 2],  // sand, Coral
             voronoi_points: Vec::new(),
             point_density: 5.0,  // 5 points per 1000x1000 area
         });
@@ -258,9 +373,27 @@ impl BiomeManager {
                     biome_id,
                 });
             }
+        }        
+        godot_print!("Voronoi points initialized for all sections ({} total sections)", self.sections.len());
+        
+        // Build the spatial grid
+        self.build_spatial_grid();
+    }
+    
+    // Build the spatial partitioning grid
+    fn build_spatial_grid(&mut self) {
+        // Create a new spatial grid with cell size of 200 (adjust as needed)
+        let mut grid = SpatialGrid::new(self.world_width, self.world_height, 200.0);
+        
+        // Add all Voronoi points to the grid
+        for (section_index, section) in self.sections.iter().enumerate() {
+            for (point_index, point) in section.voronoi_points.iter().enumerate() {
+                grid.add_point(section_index, point_index, point.position);
+            }
         }
         
-        godot_print!("Voronoi points initialized for all sections ({} total sections)", self.sections.len());
+        self.spatial_grid = Some(grid);
+        godot_print!("Spatial grid built for efficient point lookup");
     }
     
     // Map World Coordinates to Biome Mask Coordinates
@@ -286,23 +419,22 @@ impl BiomeManager {
         let coords = self.world_to_mask_coords(world_x, world_y);
         let key = format!("{}_{}", coords.x, coords.y);
         
-        // Use Cache for Performance
-        // Safe cache access
+        // Use Cache for Performance - Read lock
         {
-            let cache = self.color_cache.lock().unwrap();
+            let cache = self.color_cache.read().expect("Failed to acquire read lock on color cache");
             if let Some(color) = cache.get(&key) {
                 return *color;
             }
         }
-
+    
         // Get pixel color and cache it
         match &self.biome_image {
             Some(image) => {
                 let color = image.get_pixel(coords.x, coords.y);
                 
-                // Thread-safe cache insertion
+                // Thread-safe cache insertion - Write lock
                 {
-                    let mut cache = self.color_cache.lock().unwrap();
+                    let mut cache = self.color_cache.write().expect("Failed to acquire write lock on color cache");
                     cache.insert(key, color);
                 }
                 
@@ -311,19 +443,40 @@ impl BiomeManager {
             _none => Color::from_rgba(1.0, 0.0, 1.0, 1.0) // Magenta as error color
         }
     }
-    // TODO: this needs rework to allow for the secitons defined previously
+    
     // Get the section ID from color
     #[func]
     pub fn get_section_id(&mut self, world_x: f32, world_y: f32) -> u8 {
         let key = format!("section_{}_{}", world_x as i32, world_y as i32);
-        
-        // Thread-safe cache check
-    {
-        let cache = self.section_cache.lock().unwrap();
-        if let Some(&section_id) = cache.get(&key) {
-            return section_id;
+    
+        // Thread-safe cache check with read lock
+        {
+            let cache = self.section_cache.read().expect("Failed to acquire read lock on section cache");
+            if let Some(&section_id) = cache.get(&key) {
+                return section_id;
+            }
         }
-    }
+        
+        // If biome image is missing, use a fallback based on position
+        if self.biome_image.is_none() {
+            // Simple fallback: divide world into three horizontal sections
+            let relative_y = world_y / self.world_height;
+            let fallback_id = if relative_y < 0.33 {
+                1 // Section 1
+            } else if relative_y < 0.66 {
+                2 // Section 2
+            } else {
+                3 // Section 3
+            };
+            
+            // Cache the result
+            {
+                let mut cache = self.section_cache.write().expect("Failed to acquire write lock on section cache");
+                cache.insert(key, fallback_id);
+            }
+            
+            return fallback_id;
+        }
         
         // Get the color from the biome mask
         let color = self.get_biome_color(world_x, world_y);
@@ -354,9 +507,9 @@ impl BiomeManager {
             }
         };
         
-        // Thread-safe cache insertion
+        // Thread-safe cache insertion with write lock
         {
-            let mut cache = self.section_cache.lock().unwrap();
+            let mut cache = self.section_cache.write().expect("Failed to acquire write lock on section cache");
             cache.insert(key, section_id);
         }
 
@@ -372,14 +525,14 @@ impl BiomeManager {
         
         let cache_key = format!("biome_{}_{}", (world_x * 0.1) as i32, (world_y * 0.1) as i32);
         
-        // Check cache first in a separate scope so the lock is released
+        // Check cache first with read lock
         {
-            let cache = self.biome_cache.lock().unwrap();
+            let cache = self.biome_cache.read().expect("Failed to acquire read lock on biome cache");
             if let Some(&biome_id) = cache.get(&cache_key) {
                 return biome_id;
             }
-        }// Lock is released here when cache goes out of scope
-
+        }
+        
         // Get the section ID for this position
         let section_id = self.get_section_id(world_x, world_y);
         
@@ -394,11 +547,11 @@ impl BiomeManager {
                 // No points in this section, return the first possible biome
                 let default_biome = section.possible_biomes.first().unwrap_or(&0);
                 
-                // Lock again in a new scope
+                // Lock for cache write
                 {
-                    let mut cache = self.biome_cache.lock().unwrap();
+                    let mut cache = self.biome_cache.write().expect("Failed to acquire write lock on biome cache");
                     cache.insert(cache_key, *default_biome);
-                } // Lock is released here
+                }
                 
                 return *default_biome;
             }
@@ -406,7 +559,77 @@ impl BiomeManager {
             // Create a position vector
             let pos = Vector2::new(world_x, world_y);
             
-            // Calculate distances to all Voronoi points in this section
+            // Use spatial grid for efficient lookup if available
+            if let Some(grid) = &self.spatial_grid {
+                let nearby_indices = grid.get_nearby_points(world_x, world_y, self.blend_distance * 2.0);
+                
+                // Filter to only points in the current section
+                let section_points: Vec<_> = nearby_indices.iter()
+                    .filter(|(idx, _)| *idx == section_idx)
+                    .collect();
+                
+                if !section_points.is_empty() {
+                    // Calculate distances
+                    let mut distances: Vec<(f32, u8)> = Vec::new();
+                    
+                    for &(_, point_idx) in &section_points {
+                        let point = &section.voronoi_points[*point_idx];
+                        let distance = pos.distance_to(point.position);
+                        distances.push((distance, point.biome_id));
+                    }
+                    
+                    // Sort by distance
+                    distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+                    
+                    // Check if we need to blend between two closest points
+                    if distances.len() >= 2 {
+                        let (dist1, biome1) = distances[0];
+                        let (dist2, biome2) = distances[1];
+                        
+                        // If the points are close enough, blend between them
+                        if (dist2 - dist1) < self.blend_distance {
+                            // Calculate blend factor with noise influence for natural borders
+                            let noise_val = if let Some(ref noise) = self.noise {
+                                // Use Godot's FastNoiseLite
+                                noise.get_noise_2d(world_x * 0.01, world_y * 0.01) * 0.5 + 0.5
+                            } else {
+                                // Fallback if noise is not available
+                                0.5
+                            };
+                            
+                            let blend_factor = ((dist2 - dist1) / self.blend_distance).min(1.0);
+                            let adjusted_blend = blend_factor * (1.0 - noise_val * 0.3); // Noise influence
+                            
+                            // Choose biome based on blend factor
+                            let selected_biome = if self.rng.randf() > adjusted_blend {
+                                biome1
+                            } else {
+                                biome2
+                            };
+                            
+                            // Write to cache
+                            {
+                                let mut cache = self.biome_cache.write().expect("Failed to acquire write lock on biome cache");
+                                cache.insert(cache_key, selected_biome);
+                            }
+                            
+                            return selected_biome;
+                        }
+                    }
+                    
+                    // If no blending needed, return closest
+                    if !distances.is_empty() {
+                        let biome_id = distances[0].1;
+                        {
+                            let mut cache = self.biome_cache.write().expect("Failed to acquire write lock on biome cache");
+                            cache.insert(cache_key, biome_id);
+                        }
+                        return biome_id;
+                    }
+                }
+            }
+            
+            // Fallback to original algorithm if spatial grid not available or no nearby points found
             let mut distances: Vec<(f32, &VoronoiPoint)> = section.voronoi_points.iter()
                 .map(|point| {
                     let distance = pos.distance_to(point.position);
@@ -417,48 +640,11 @@ impl BiomeManager {
             // Sort by distance
             distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
             
-            // Check if we need to blend between two closest points
-            if distances.len() >= 2 {
-                let (dist1, point1) = distances[0];
-                let (dist2, point2) = distances[1];
-                
-                // If the points are close enough, blend between them
-                if (dist2 - dist1) < self.blend_distance {
-                    // Calculate blend factor with noise influence for natural borders
-                    let noise_val = if let Some(ref noise) = self.noise {
-                        // Use Godot's FastNoiseLite
-                        noise.get_noise_2d(world_x * 0.01, world_y * 0.01) * 0.5 + 0.5
-                    } else {
-                        // Fallback if noise is not available
-                        0.5
-                    };
-                    
-                    let blend_factor = ((dist2 - dist1) / self.blend_distance).min(1.0);
-                    let adjusted_blend = blend_factor * (1.0 - noise_val * 0.3); // Noise influence
-                    
-                    // If blend is needed, choose randomly between the two biomes
-                    // with probability based on distance
-                    if self.rng.randf() > adjusted_blend {
-                        {
-                            let mut cache = self.biome_cache.lock().unwrap();
-                            cache.insert(cache_key, point1.biome_id);
-                        }
-                        return point1.biome_id;
-                    } else {
-                        {
-                            let mut cache = self.biome_cache.lock().unwrap();
-                            cache.insert(cache_key, point2.biome_id);
-                        }
-                        return point2.biome_id;
-                    }
-                }
-            }
-            
             // If no blending or only one point, return the closest
             if !distances.is_empty() {
                 let biome_id = distances[0].1.biome_id;
                 {  
-                    let mut cache = self.biome_cache.lock().unwrap();
+                    let mut cache = self.biome_cache.write().expect("Failed to acquire write lock on biome cache");
                     cache.insert(cache_key, biome_id);
                 }
                 return biome_id;
@@ -481,10 +667,10 @@ impl BiomeManager {
     // Clear Cache
     #[func]
     pub fn clear_cache(&mut self) {
-        // Thread-safe cache clearing
-        self.color_cache.lock().unwrap().clear();
-        self.section_cache.lock().unwrap().clear();
-        self.biome_cache.lock().unwrap().clear();
+        // Thread-safe cache clearing with write locks
+        self.color_cache.write().expect("Failed to acquire write lock on color cache").clear();
+        self.section_cache.write().expect("Failed to acquire write lock on section cache").clear();
+        self.biome_cache.write().expect("Failed to acquire write lock on biome cache").clear();
     }
     
     // Set world dimensions
@@ -515,7 +701,6 @@ impl BiomeManager {
         // Notify ChunkManager if possible
         self.notify_data_change();
     }
-
     
     // Set blend distance for smoother transitions
     #[func]
@@ -527,7 +712,36 @@ impl BiomeManager {
         self.notify_data_change();
     }
     
-   // Helper method to notify ChunkManager
+    // Apply generation rules to the biome manager
+    #[func]
+    pub fn apply_generation_rules(&mut self, rules_dict: Dictionary) -> VariantArray {
+        // Convert Dictionary to GenerationRules
+        let mut validated_rules = GenerationRules::from_dictionary(&rules_dict);
+        let warnings = validated_rules.validate_and_fix();
+        
+        // Apply the validated rules
+        self.blend_distance = validated_rules.biome_blend_distance;
+        
+        // Update noise settings if available
+        if let Some(ref mut noise) = self.noise {
+            noise.set_fractal_octaves(validated_rules.terrain_octaves as i32);
+            noise.set_frequency(1.0 / validated_rules.terrain_scale);
+            // Set other noise parameters as needed
+        }
+        
+        // Clear caches since we've changed parameters
+        self.clear_cache();
+        
+        // Convert warnings to VariantArray for GDScript
+        let mut result = VariantArray::new();
+        for warning in warnings {
+            result.push(&warning.to_variant());
+        }
+        
+        result
+    }
+    
+    // Helper method to notify ChunkManager
     fn notify_data_change(&self) {
         // Try to find ChunkManager in the scene tree
         if let Some(parent) = self.base().get_parent() {
@@ -608,6 +822,43 @@ impl BiomeManager {
 }
 
 impl ThreadSafeBiomeData {
+    // Update only changed properties
+    pub fn update_from_biome_manager(&mut self, biome_mgr: &BiomeManager) {
+        // Only update these if they've changed
+        if self.world_width != biome_mgr.world_width || self.world_height != biome_mgr.world_height {
+            self.world_width = biome_mgr.world_width;
+            self.world_height = biome_mgr.world_height;
+        }
+        
+        if self.seed != biome_mgr.seed {
+            self.seed = biome_mgr.seed;
+            
+            // When seed changes, we need to update sections and voronoi points
+            self.sections.clear();
+            
+            // Clone all sections and their Voronoi points
+            for section in &biome_mgr.sections {
+                let mut voronoi_points = Vec::new();
+                
+                for point in &section.voronoi_points {
+                    voronoi_points.push(ThreadSafeVoronoiPoint {
+                        position: (point.position.x, point.position.y),
+                        biome_id: point.biome_id,
+                    });
+                }
+                
+                self.sections.push(ThreadSafeBiomeSection {
+                    section_id: section.section_id,
+                    possible_biomes: section.possible_biomes.clone(),
+                    voronoi_points,
+                });
+            }
+        }
+        
+        // Always update blend distance as it doesn't require rebuilding sections
+        self.blend_distance = biome_mgr.blend_distance;
+    }
+
     pub fn from_biome_manager(biome_mgr: &BiomeManager) -> Self {
         let mut sections = Vec::new();
         
@@ -640,19 +891,17 @@ impl ThreadSafeBiomeData {
     
     // Get section ID based on world coordinates
     pub fn get_section_id(&self, world_x: f32, world_y: f32) -> u8 {
-        // Simplified version - you might need a more complex algorithm
-        // based on your original get_section_id implementation
-        
+        // Simple fallback that doesn't depend on biome mask
         // Basic section determination based on position
         let relative_x = world_x / self.world_width;
         let relative_y = world_y / self.world_height;
         
         if relative_x < 0.33 {
-            1 // Section 1: Forest
+            1 // Section 1
         } else if relative_x < 0.66 {
-            2 // Section 2: Mountain
+            2 // Section 2
         } else {
-            3 // Section 3: Plains
+            3 // Section 3
         }
     }
     
