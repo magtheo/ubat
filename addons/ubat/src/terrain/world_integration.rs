@@ -49,7 +49,7 @@ impl TerrainWorldIntegration {
             );
             
             // Verify BiomeManager is correctly initialized
-            if !biome_mgr.bind().is_initialized() {
+            if !biome_mgr.bind().is_fully_initialized() {
                 return Err("BiomeManager failed to initialize properly".to_string());
             }
         }
