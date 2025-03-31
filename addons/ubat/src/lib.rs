@@ -6,6 +6,7 @@ mod networking;
 mod terrain;
 
 mod bridge;
+mod utils;
 
 // The entry point of your extension library.
 struct UbatExtension;
