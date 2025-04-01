@@ -31,7 +31,8 @@ impl TerrainWorldIntegration {
     pub fn initialize_terrain(&mut self, biome_manager: Gd<BiomeManager>, chunk_manager: Gd<ChunkManager>, config: &GameConfiguration) -> Result<(), String> {
         // Store the current state
         let mut current_state = TerrainInitializationState::Uninitialized;
-        
+        godot_print!("WorldInitHelper: Initailized");
+
         // Step 1: Validate configuration
         if config.world_seed == 0 || config.world_size.width == 0 || config.world_size.height == 0 {
             return Err("Invalid terrain configuration: missing seed or dimensions".to_string());

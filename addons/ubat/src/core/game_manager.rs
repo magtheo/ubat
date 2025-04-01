@@ -197,26 +197,35 @@ impl GameManager {
             generation_parameters: config.generation_rules.clone(), // Use default rules
         };
         
+        println!("GameManager: Creating world with seed {}, size {}x{}", 
+                 world_config.seed, world_config.world_size.0, world_config.world_size.1);
+        
         let world_manager = WorldStateManager::new(world_config.clone());
         self.world_manager = Some(Arc::new(Mutex::new(world_manager)));
         
         // If we're in host mode or standalone, generate the world
         match config.game_mode {
             GameModeConfig::Standalone | GameModeConfig::Host(_) => {
+                println!("GameManager: Standalone/Host mode detected, generating initial world");
+                
                 if let Some(world_manager) = &self.world_manager {
                     let mut manager = world_manager.lock()
                         .map_err(|_| GameError::SystemError("Failed to lock world manager".into()))?;
                     
+                    println!("GameManager: Generating initial world");
                     manager.generate_initial_world();
                     
                     // Publish world generated event
+                    println!("GameManager: Publishing WorldGeneratedEvent");
                     self.event_bus.publish(WorldGeneratedEvent {
                         seed: world_config.seed,
                         world_size: world_config.world_size,
                     });
                 }
             },
-            _ => {} // Client will receive world state from host
+            _ => {
+                println!("GameManager: Client mode detected, not generating world (will receive from host)");
+            } // Client will receive world state from host
         }
         
         Ok(())

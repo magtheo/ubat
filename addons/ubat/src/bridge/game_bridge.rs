@@ -88,37 +88,54 @@ impl GameManagerBridge {
         let path_str = global_path.to_string();
         
         if self.debug_mode {
-            println!("GameManagerBridge: Converting path '{}' to '{}'", config_path, path_str);
+            godot_print!("GameManagerBridge: Converting path '{}' to '{}'", config_path, path_str);
+            godot_print!("GameManagerBridge: Checking if file exists at path");
         }
         
         // Check if the file exists
-        if !std::path::Path::new(&path_str).exists() {
+        let file_exists = std::path::Path::new(&path_str).exists();
+        if self.debug_mode {
+            godot_print!("GameManagerBridge: File exists check result: {}", file_exists);
+        }
+        
+        if !file_exists {
             let error_msg = format!("Config file not found at: {}", path_str);
-            println!("GameManagerBridge: {}", error_msg);
+            godot_error!("{}", error_msg);
             self.base_mut().emit_signal("game_error", &[error_msg.to_variant()]);
             return false;
         }
         
         // IMPORTANT: Pass the globalized path string, not the original Godot path
+        if self.debug_mode {
+            godot_print!("GameManagerBridge: Attempting to initialize GameManager with config");
+        }
+        
         let (initialization_successful, error_msg) = match GameManager::init_from_config(path_str) {
             Ok(mut manager) => {
                 // Initialize the manager
+                if self.debug_mode {
+                    godot_print!("GameManagerBridge: GameManager created, now initializing");
+                }
+                
                 match manager.initialize() {
                     Ok(_) => {
                         // Store the initialized manager in an Arc<Mutex>
                         self.game_manager = Some(Arc::new(Mutex::new(manager)));
+                        if self.debug_mode {
+                            godot_print!("GameManagerBridge: GameManager initialized successfully");
+                        }
                         (true, None)
                     },
                     Err(e) => {
                         let error_msg = format!("Failed to initialize game: {:?}", e);
-                        println!("{}", error_msg);
+                        godot_error!("{}", error_msg);
                         (false, Some(error_msg))
                     }
                 }
             },
             Err(e) => {
                 let error_msg = format!("Failed to create game manager: {:?}", e);
-                println!("{}", error_msg);
+                godot_error!("{}", error_msg);
                 (false, Some(error_msg))
             }
         };
@@ -133,7 +150,7 @@ impl GameManagerBridge {
             self.update_state_property();
             
             if self.debug_mode {
-                println!("GameManagerBridge: Game initialized successfully");
+                godot_print!("GameManagerBridge: Game initialized successfully");
             }
         }
         
