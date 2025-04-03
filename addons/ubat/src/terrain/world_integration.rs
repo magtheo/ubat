@@ -1,156 +1,185 @@
-// File: addons/ubat/src/terrain/world_integration.rs
+// File: src/terrain/world_integration.rs
 
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
-use crate::core::event_bus::WorldGeneratedEvent;
-use crate::core::EventBus;
-use crate::terrain::{BiomeManager, ChunkManager, ChunkController};
+use std::marker::PhantomData;
+
+use crate::core::event_bus::EventBus;
 use crate::core::world_manager::WorldStateManager;
 use crate::core::config_manager::GameConfiguration;
+use crate::terrain::chunk_manager::ChunkManager;
+use crate::terrain::biome_manager::BiomeManager;
 
+
+// Define a state enum for tracking initialization
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TerrainInitializationState {
+    Uninitialized,
+    ConfigLoaded,
+    BiomeInitialized,
+    ChunkManagerInitialized,
+    Ready,
+    Error,
+}
+
+// Thread-safe struct that doesn't store Godot objects directly
 pub struct TerrainWorldIntegration {
-    biome_manager: Option<Gd<BiomeManager>>,
-    chunk_manager: Option<Gd<ChunkManager>>,
+    // Reference to the world manager
     world_manager: Arc<Mutex<WorldStateManager>>,
+    
+    // Current seed and dimensions - store these instead of Godot objects
+    current_seed: u32,
+    current_dimensions: (f32, f32),
+    
+    // Initialization state
+    initialization_state: TerrainInitializationState,
+    
+    // Using PhantomData to maintain type association without storing objects
+    _marker: PhantomData<godot::prelude::Gd<godot::classes::Node>>,
 }
 
 impl TerrainWorldIntegration {
     pub fn new(world_manager: Arc<Mutex<WorldStateManager>>) -> Self {
         Self {
-            biome_manager: None,
-            chunk_manager: None,
             world_manager,
+            current_seed: 0,
+            current_dimensions: (0.0, 0.0),
+            initialization_state: TerrainInitializationState::Uninitialized,
+            _marker: PhantomData,
         }
     }
     
-    // Initialize terrain from configuration
-    pub fn initialize_terrain(&mut self, biome_manager: Gd<BiomeManager>, chunk_manager: Gd<ChunkManager>, config: &GameConfiguration) {
-        // Store managers
-        self.biome_manager = Some(biome_manager.clone());
-        self.chunk_manager = Some(chunk_manager.clone());
-        
-        // Set world seed from configuration
+    // Initialize the terrain system - store configuration values, not Godot objects
+    pub fn initialize_terrain(&mut self, biome_manager: Gd<BiomeManager>, 
+            chunk_manager: Gd<ChunkManager>) -> Result<(), String> {
+        println!("TerrainWorldIntegration: Initializing terrain system");
+
+        // Set up initial state
+        if let Ok(world_manager) = self.world_manager.lock() {
+            let config = world_manager.get_config();
+            self.current_seed = config.seed as u32;
+            self.current_dimensions = (config.world_size.0 as f32, config.world_size.1 as f32);
+            }
+
+        // Configure the biome manager
         {
-            let mut biome_mgr = biome_manager.clone();
-            biome_mgr.bind_mut().set_seed(config.world_seed as u32);
-            
-            // Set world dimensions
-            biome_mgr.bind_mut().set_world_dimensions(
-                config.world_size.width as f32,
-                config.world_size.height as f32
+            let mut bm = biome_manager.clone();
+            bm.bind_mut().set_seed(self.current_seed);
+            bm.bind_mut().set_world_dimensions(
+            self.current_dimensions.0,
+            self.current_dimensions.1
             );
         }
-        
-        // Configure chunk manager with the same seed
-        if let Some(chunk_mgr) = &self.chunk_manager {
-            let mut cm = chunk_mgr.clone();
-            
-            // Set render distance based on configuration
-            // This could be a custom setting in your GameConfiguration
-            cm.bind_mut().set_render_distance(8); // Default value
+
+        // Set up the chunk manager
+        {
+            let mut cm = chunk_manager.clone();
+            cm.bind_mut().set_biome_manager(biome_manager.clone());
+            cm.bind_mut().update_thread_safe_biome_data();
         }
-        
-        godot_print!("Terrain initialized with seed: {}", config.world_seed);
+
+        self.initialization_state = TerrainInitializationState::Ready;
+        println!("TerrainWorldIntegration: Terrain system initialized successfully");
+        Ok(())
     }
 
-    pub fn connect_to_event_bus(&self, event_bus: Arc<EventBus>) {
-        // We can't safely pass Godot objects between threads
-        // Instead, store the event parameters and process them in the main thread
+    
+    // Update the system with new configuration values
+    pub fn update(&mut self) {
+        println!("TerrainWorldIntegration: Update called");
         
-        // First, create a signal handler that will be called on the main thread
+        // Update any system state here
+        // This method doesn't use any Godot objects directly
+    }
+    
+    // Connect to event bus for event-based updates
+    pub fn connect_to_event_bus(&self, event_bus: Arc<EventBus>) {
+        // Create a thread-safe handler that doesn't capture Godot objects
         let world_manager_clone = self.world_manager.clone();
         
-        // Define the handler
-        let world_gen_handler = Arc::new(move |event: &WorldGeneratedEvent| {
-            // Store the event data in a thread-safe way
+        // This handler only deals with the WorldStateManager, not Godot objects
+        let world_gen_handler = Arc::new(move |event: &crate::core::event_bus::WorldGeneratedEvent| {
             if let Ok(mut manager) = world_manager_clone.lock() {
                 // Store the event parameters for later processing
                 let seed = event.seed;
                 let size = event.world_size;
                 
-                // For example: store in a special field that the main thread checks
                 manager.set_pending_world_init(seed, size);
-                
-                godot_print!("WorldStateManager: Received world generation event with seed {}", seed);
+                println!("TerrainWorldIntegration: Received world generation event (seed: {})", seed);
             }
         });
         
-        // Subscribe to world generation events
+        // Subscribe to the event bus
         event_bus.subscribe(world_gen_handler);
-        godot_print!("TerrainWorldIntegration: Connected to event bus");
+        println!("TerrainWorldIntegration: Connected to event bus");
     }
     
-    // Then, add a method to process these events in the main thread (called from _process)
+    // Process pending events by looking at the WorldStateManager's pending data
     pub fn process_pending_events(&mut self) {
-        // Process any events that were handled by the event bus
-        
-        if let Some(ref biome_mgr) = self.biome_manager {
-            // Check if there's pending initialization parameters
-            let (has_pending, seed, size) = {
-                if let Ok(world_manager) = self.world_manager.lock() {
-                    world_manager.get_pending_world_init()
-                } else {
-                    (false, 0, (0, 0))
-                }
-            };
-            
-            if has_pending {
-                godot_print!("TerrainWorldIntegration: Processing pending world initialization");
-                
-                // Set biome manager seed
-                let mut bm = biome_mgr.clone();
-                bm.bind_mut().set_seed(seed as u32);
-                bm.bind_mut().set_world_dimensions(
-                    size.0 as f32,
-                    size.1 as f32
-                );
-                
-                // Notify ChunkManager
-                if let Some(ref chunk_mgr) = self.chunk_manager {
-                    let mut cm = chunk_mgr.clone();
-                    cm.bind_mut().update_thread_safe_biome_data();
-                }
-                
-                // Clear the pending flag
-                if let Ok(mut world_manager) = self.world_manager.lock() {
-                    world_manager.clear_pending_world_init();
-                }
-                
-                godot_print!("TerrainWorldIntegration: World initialization complete");
+        // Check if there are pending parameters in the world manager
+        let (has_pending, seed, size) = {
+            if let Ok(world_manager) = self.world_manager.lock() {
+                world_manager.get_pending_world_init()
+            } else {
+                (false, 0, (0, 0))
             }
+        };
+        
+        if has_pending {
+            println!("TerrainWorldIntegration: Processing pending world initialization (seed: {})", seed);
+            
+            // Update our internal state
+            self.current_seed = seed as u32;
+            self.current_dimensions = (size.0 as f32, size.1 as f32);
+            
+            // Note: This only updates internal state
+            // BiomeManager and ChunkManager would need to be updated elsewhere
+            // (typically in a Godot _process method)
+            
+            // Clear the pending flag
+            if let Ok(mut world_manager) = self.world_manager.lock() {
+                world_manager.clear_pending_world_init();
+            }
+            
+            println!("TerrainWorldIntegration: Processed pending initialization");
         }
     }
     
-    // Update terrain based on world state
-    pub fn update(&self) {
-        // Perform any needed updates based on world state
-    }
-    
-    // Get serializable terrain data for network synchronization
+    // Get serializable terrain data for network transmission
     pub fn get_terrain_data(&self) -> Vec<u8> {
-        // Serialize terrain state
-        // For now we just need the seed and dimensions
-        if let Some(biome_mgr) = &self.biome_manager {
-            let seed = biome_mgr.bind().get_seed();
-            // In a real implementation, serialize properly
-            vec![seed as u8]
-        } else {
-            vec![]
-        }
+        // Serialize our current state
+        bincode::serialize(&(self.current_seed, self.current_dimensions))
+            .unwrap_or_else(|_| Vec::new())
     }
     
-    // Update terrain from serialized data
+    // Apply terrain data from network
     pub fn apply_terrain_data(&mut self, data: &[u8]) {
-        // Apply serialized terrain state
         if data.is_empty() {
             return;
         }
         
-        if let Some(biome_mgr) = &self.biome_manager {
-            let mut bm = biome_mgr.clone();
-            // In a real implementation, deserialize properly
-            let seed = data[0] as u32;
-            bm.bind_mut().set_seed(seed);
+        // Try to deserialize the terrain data
+        if let Ok((seed, dimensions)) = bincode::deserialize::<(u32, (f32, f32))>(data) {
+            self.current_seed = seed;
+            self.current_dimensions = dimensions;
+            println!("TerrainWorldIntegration: Applied terrain data with seed {}", seed);
+            
+            // Note: BiomeManager and ChunkManager would need to be updated elsewhere
         }
+    }
+    
+    // Get the current initialization state
+    pub fn get_initialization_state(&self) -> TerrainInitializationState {
+        self.initialization_state
+    }
+    
+    // Get current seed (for display purposes)
+    pub fn get_current_seed(&self) -> u32 {
+        self.current_seed
+    }
+    
+    // Get current dimensions (for display purposes)
+    pub fn get_current_dimensions(&self) -> (f32, f32) {
+        self.current_dimensions
     }
 }

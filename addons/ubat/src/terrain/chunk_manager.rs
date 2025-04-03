@@ -91,7 +91,7 @@ impl INode for ChunkManager {
     }
     
     fn ready(&mut self) {
-        godot_print!("ChunkManager: Initializing...");
+        godot_print!("RUST: ChunkManager: Initializing...");
         
         // Try to find BiomeManager in the scene tree
         let parent = self.base().get_parent();
@@ -111,18 +111,31 @@ impl INode for ChunkManager {
         } else {
             godot_error!("ChunkManager: Could not find parent node");
         }
-        
+
         godot_print!("ChunkManager: Initialization complete");
     }
 }
 
 #[godot_api]
 impl ChunkManager {
+    #[func]
+    pub fn is_initialized(&self) -> bool {
+        self.thread_safe_biome_data.is_some()
+    }
+
     // Get a chunk by position, load if necessary
     #[func]
     pub fn get_chunk(&self, position_x: i32, position_z: i32) -> bool {
         let position = ChunkPosition { x: position_x, z: position_z };
-        let mut chunks = self.chunks.lock().unwrap();
+        let chunks_result = self.chunks.lock();
+        
+        let mut chunks = match chunks_result {
+            Ok(chunks) => chunks,
+            Err(e) => {
+                godot_error!("Failed to lock chunks: {}", e);
+                return false;
+            }
+        };
         
         if let Some(chunk) = chunks.get(&position) {
             // Update last accessed time
@@ -148,9 +161,9 @@ impl ChunkManager {
         let new_chunk_clone = Arc::clone(&new_chunk);
         let biome_manager = self.biome_manager.clone();
         
-         // Pass thread-safe biome data to thread
+        // Pass thread-safe biome data to thread
         let thread_safe_biome = self.thread_safe_biome_data.as_ref().map(Arc::clone);
-
+    
         self.thread_pool.execute(move || {
             if storage_clone.chunk_exists(position) {
                 // Chunk exists in storage, load it
