@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::thread;
-use std::path::Path;
 
 use crate::core::config_manager::{ConfigurationManager, GameConfiguration, GameModeConfig};
 use crate::core::event_bus::{EventBus, PlayerConnectedEvent, WorldGeneratedEvent};
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
-use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode, NetworkEvent, PeerId};
+use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode, NetworkEvent};
+use crate::terrain::TerrainWorldIntegration;
 
 // Game state enum
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,12 @@ pub enum GameError {
     NetworkError(String),
     WorldError(String),
     SystemError(String),
+}
+
+impl From<String> for GameError {
+    fn from(s: String) -> Self {
+        GameError::WorldError(s)
+    }
 }
 
 // Game event types specific to game logic
@@ -135,11 +141,14 @@ impl GameManager {
         
         // Set up world state manager
         self.initialize_world(&config)?;
+
+        // Initialize terrain system with config
+        self.initialize_terrain_system_with_config(&config)?;
         
         // Set up event handlers
         self.register_event_handlers();
         
-        // Initial state
+        // Transition to the appropriate state
         self.transition_state(GameState::MainMenu);
         
         Ok(())
@@ -187,7 +196,42 @@ impl GameManager {
         
         Ok(())
     }
-    
+
+    fn initialize_terrain_system_with_config(&mut self, config: &GameConfiguration) -> Result<(), GameError> {
+        println!("GameManager: Initializing terrain system with config");
+        
+        // Initialize terrain purely from the Rust side
+        if let Some(world_manager) = &mut self.world_manager {
+            let mut manager = world_manager.lock()
+                .map_err(|_| GameError::SystemError("Failed to lock world manager".into()))?;
+            
+            // Update world manager with configuration
+            let world_state_config = crate::core::world_manager::WorldStateConfig {
+                seed: config.world_seed,
+                world_size: (config.world_size.width, config.world_size.height),
+                generation_parameters: config.generation_rules.clone(),
+            };
+            
+            // Update configuration and initialize
+            manager.update_config(world_state_config);
+            manager.initialize()
+                .map_err(|e| GameError::WorldError(e))?;
+            
+            // Generate initial world
+            if matches!(config.game_mode, GameModeConfig::Standalone | GameModeConfig::Host(_)) {
+                println!("GameManager: Generating initial world terrain from Rust");
+                manager.generate_initial_world();
+            }
+            
+            println!("GameManager: Terrain system fully initialized from Rust");
+        } else {
+            return Err(GameError::SystemError("World manager not available".into()));
+        }
+        
+        Ok(())
+    }
+
+    // TODO: check if terrain is initialized, and with correct config variables
     // Initialize world state manager
     fn initialize_world(&mut self, config: &GameConfiguration) -> Result<(), GameError> {
         // Create world state configuration
@@ -226,6 +270,41 @@ impl GameManager {
             _ => {
                 println!("GameManager: Client mode detected, not generating world (will receive from host)");
             } // Client will receive world state from host
+        }
+        
+        Ok(())
+    }
+
+    // Add this to game_manager.rs after the initialize_world method
+    pub fn ensure_world_initialized(&mut self) -> Result<(), GameError> {
+        if self.world_manager.is_none() {
+            // Something went wrong during initialization
+            return Err(GameError::WorldError("World manager not created".into()));
+        }
+    
+        // Get the world configuration
+        let config = {
+            let config_manager = self.config_manager.lock()
+                .map_err(|_| GameError::SystemError("Failed to lock config manager".into()))?;
+            config_manager.get_config().clone()
+        };
+    
+        // Make sure terrain is initialized
+        self.initialize_terrain_system_with_config(&config)?;
+        
+        // Force full initialization of terrain if needed
+        if let Some(world_manager) = &mut self.world_manager {
+            let mut manager = world_manager.lock()
+                .map_err(|_| GameError::SystemError("Failed to lock world manager".into()))?;
+            
+            // Check if we need to call initialize
+            let initialization_needed = manager.initialize()
+                .map_err(|e| GameError::WorldError(e))?;
+                
+            if matches!(config.game_mode, GameModeConfig::Standalone | GameModeConfig::Host(_)) {
+                println!("GameManager: Ensuring world generation in ensure_world_initialized");
+                manager.generate_initial_world();
+            }
         }
         
         Ok(())

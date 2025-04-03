@@ -125,6 +125,7 @@ impl GameInitHelper {
         // Step 3: Start the game with better error reporting
         let start_result = {
             let mut game_bridge_mut = game_bridge.clone();
+            godot_print!("GameInitHelper: Starting game and ensuring full world initialization");
             let result = game_bridge_mut.bind_mut().start_game();
             if !result {
                 godot_error!("GameInitHelper: Failed to start game");

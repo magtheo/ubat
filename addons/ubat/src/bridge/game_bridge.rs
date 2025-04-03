@@ -303,29 +303,31 @@ impl GameManagerBridge {
     #[func]
     pub fn start_game(&mut self) -> bool {
         // Step 1: Execute operation with immutable borrow
-        let start_result = if let Some(game_manager) = &self.game_manager {
+        let (start_result, old_state, new_state) = if let Some(game_manager) = &self.game_manager {
             if let Ok(mut manager) = game_manager.lock() {
                 // Check the current state
-                let current_state = manager.get_state();
+                let old_state = manager.get_state();
                 
                 // Only start if not already running
-                if current_state != GameState::Running {
+                if old_state != GameState::Running {
                     // Set state to Running
                     manager.transition_state(GameState::Running);
-                    true
+                    
+                    // Force world initialization (this is new)
+                    let init_result = manager.ensure_world_initialized();
+                    (init_result.is_ok(), old_state.clone(), GameState::Running)
                 } else {
                     // Already running is not an error
-                    true
+                    (true, old_state.clone(), old_state)
                 }
             } else {
-                false
+                (false, GameState::Initializing, GameState::Initializing)
             }
         } else {
-            false
+            (false, GameState::Initializing, GameState::Initializing)
         };
         
         // Step 2: Now handle operations requiring mutable borrow
-        // In start_game() method in game_bridge.rs
         if start_result {
             // Update the state property
             self.update_state_property();
@@ -345,7 +347,7 @@ impl GameManagerBridge {
             godot_error!("GameManagerBridge: Game manager not initialized");
             false
         }
-    }    
+    }
     
     /// Update the game state (should be called every frame for non-blocking operation)
     /// 

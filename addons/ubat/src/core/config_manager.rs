@@ -31,7 +31,7 @@ pub struct WorldSize {
 }
 
 // Network configuration
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct NetworkConfig {
     pub max_players: u8,
     pub server_port: u16,
