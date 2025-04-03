@@ -2,7 +2,8 @@
 use std::sync::{Arc, Mutex};
 use godot::prelude::*;
 
-use crate::core::system_initializer::{SystemInitializer, SystemBundle, InitializationError, InitializationOptions, NetworkMode};
+use crate::networking::network_manager::NetworkMode;
+use crate::core::initialization::core_system_initializersystem_initializer::{SystemInitializer, SystemBundle, InitializationError, InitializationOptions};
 use crate::bridge::{ConfigBridge, GameManagerBridge, EventBridge, NetworkManagerBridge};
 
 /// Provides bridge initialization services and manages system lifecycle
