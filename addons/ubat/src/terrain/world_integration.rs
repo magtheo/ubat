@@ -2,7 +2,7 @@
 
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
-use std::marker::PhantomData;
+use std::marker::PhantomPinned;
 
 use crate::core::event_bus::EventBus;
 use crate::core::world_manager::WorldStateManager;
@@ -35,7 +35,7 @@ pub struct TerrainWorldIntegration {
     initialization_state: TerrainInitializationState,
     
     // Using PhantomData to maintain type association without storing objects
-    _marker: PhantomData<godot::prelude::Gd<godot::classes::Node>>,
+    _marker: PhantomPinned,
 }
 
 impl TerrainWorldIntegration {
@@ -45,7 +45,7 @@ impl TerrainWorldIntegration {
             current_seed: 0,
             current_dimensions: (0.0, 0.0),
             initialization_state: TerrainInitializationState::Uninitialized,
-            _marker: PhantomData,
+            _marker: PhantomPinned,
         }
     }
     
