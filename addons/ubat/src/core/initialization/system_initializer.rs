@@ -1,8 +1,11 @@
+// File: system_initializer.rs
+
 use godot::prelude::*;
 use std::error::Error;
 use std::fmt;
 use std::result::Result;
-use std::sync::{Arc, Mutex, Once, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::cell::RefCell;
 
 use crate::bridge::config::ConfigBridge;
 use crate::bridge::game::GameManagerBridge;
@@ -16,7 +19,7 @@ use crate::core::game_manager;
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode};
 
-// Import the new configuration service
+// Import the configuration service
 use crate::core::initialization::configuration_service::ConfigurationService;
 
 // Custom error type for system initialization
@@ -43,26 +46,31 @@ impl fmt::Display for SystemInitError {
 
 impl Error for SystemInitError {}
 
-// Static singleton instance
-static INSTANCE: OnceLock<Mutex<SystemInitializer>> = OnceLock::new();
-static INIT: Once = Once::new();
+// Static initialization
+static SYSTEM_INITIALIZER: OnceLock<Arc<Mutex<SystemInitializer>>> = OnceLock::new();
+
+
+
+// Singleton instance
+static mut INSTANCE: Option<SystemInitializer> = None;
 
 pub struct SystemInitializer {
-    // Bridges as Option<Gd> to manage Godot object lifecycle
-    game_bridge: Option<Arc<Mutex<Gd<GameManagerBridge>>>>,
-    config_bridge: Option<Arc<Mutex<Gd<ConfigBridge>>>>,
-    network_bridge: Option<Arc<Mutex<Gd<NetworkManagerBridge>>>>,
-    event_bridge: Option<Arc<Mutex<Gd<EventBridge>>>>,
-    
-    // Configuration service
-    configuration_service: Option<ConfigurationService>,
-    
+
+    game_bridge: RefCell<Option<Gd<GameManagerBridge>>>,
+    config_bridge: RefCell<Option<Gd<ConfigBridge>>>,
+    network_bridge: RefCell<Option<Gd<NetworkManagerBridge>>>,
+    event_bridge: RefCell<Option<Gd<EventBridge>>>,
+
+
     // Core managers with Arc<Mutex> for thread safety
     game_manager: Option<Arc<Mutex<game_manager::GameManager>>>,
     config_manager: Option<Arc<Mutex<config_manager::ConfigurationManager>>>,
     network_manager: Option<Arc<Mutex<NetworkHandler>>>,
     world_manager: Option<Arc<Mutex<WorldStateManager>>>,
     event_bus: Option<Arc<event_bus::EventBus>>,
+    
+    // Configuration service
+    configuration_service: Option<ConfigurationService>,
     
     // Tracks initialization status
     initialized: bool,
@@ -72,29 +80,30 @@ impl SystemInitializer {
     /// Create a new system initializer
     pub fn new() -> Self {
         Self {
-            game_bridge: None,
-            config_bridge: None,
-            network_bridge: None,
-            event_bridge: None,
-            
-            configuration_service: None,
-            
+            game_bridge: RefCell::new(None),
+            config_bridge: RefCell::new(None),
+            network_bridge: RefCell::new(None),
+            event_bridge: RefCell::new(None),
+
             game_manager: None,
             config_manager: None,
             network_manager: None,
             world_manager: None,
             event_bus: None,
             
+            configuration_service: None,
+            
             initialized: false,
         }
     }
     
     /// Get or create the singleton instance
-    pub fn get_instance() -> &'static Mutex<SystemInitializer> {
-        INSTANCE.get_or_init(|| {
-            Mutex::new(SystemInitializer::new())
-        })
+    pub fn get_instance() -> Arc<Mutex<SystemInitializer>> {
+        SYSTEM_INITIALIZER.get_or_init(|| {
+            Arc::new(Mutex::new(SystemInitializer::new()))
+        }).clone()
     }
+
     
     /// Initialize core managers and bridges
     fn initialize_core_systems(&mut self) -> Result<(), SystemInitError> {
@@ -147,11 +156,7 @@ impl SystemInitializer {
         )));
         self.game_manager = Some(game_manager.clone());
         
-        // Initialize bridges (wrap in Arc<Mutex> for thread safety)
-        self.event_bridge = Some(Arc::new(Mutex::new(EventBridge::new_alloc())));
-        self.config_bridge = Some(Arc::new(Mutex::new(ConfigBridge::new_alloc())));
-        self.game_bridge = Some(Arc::new(Mutex::new(GameManagerBridge::new_alloc())));
-        self.network_bridge = Some(Arc::new(Mutex::new(NetworkManagerBridge::new_alloc())));
+    
         
         // Create configuration service
         let configuration_service = ConfigurationService::new(
@@ -206,24 +211,6 @@ impl SystemInitializer {
             return Err(SystemInitError::ManagerError("Configuration service not initialized".into()));
         }
         
-        // Set network mode to Host
-        if let Some(network_manager) = &mut self.network_manager {
-            let mut manager = network_manager.lock()
-                .map_err(|_| SystemInitError::ManagerError("Failed to lock network manager".into()))?;
-            
-            // Update network mode to Host with port from options
-            let port = options.get("port")
-                .and_then(|v| v.try_to::<i64>().ok())
-                .unwrap_or(7878) as u16;
-            
-            manager.update_config(NetworkConfig {
-                mode: NetworkMode::Host,
-                port,
-                max_connections: 64,
-                server_address: None,
-            })?;
-        }
-        
         self.initialized = true;
         godot_print!("SystemInitializer: Host initialization complete");
         Ok(())
@@ -246,47 +233,26 @@ impl SystemInitializer {
             return Err(SystemInitError::ManagerError("Configuration service not initialized".into()));
         }
         
-        // Set network mode to Client
-        if let Some(network_manager) = &mut self.network_manager {
-            let mut manager = network_manager.lock()
-                .map_err(|_| SystemInitError::ManagerError("Failed to lock network manager".into()))?;
-            
-            // Get server address from options
-            let server_address = options.get("server_address")
-                .and_then(|v| v.try_to::<GString>().ok())
-                .unwrap_or("127.0.0.1:7878".to_string());
-            
-            manager.update_config(NetworkConfig {
-                mode: NetworkMode::Client,
-                port: 0,
-                max_connections: 1,
-                server_address: Some(server_address.to_string()),
-            })?;
-        }
-        
         self.initialized = true;
         godot_print!("SystemInitializer: Client initialization complete");
         Ok(())
     }
     
     /// Get the game bridge
-    pub fn get_game_bridge(&self) -> Option<Arc<Mutex<Gd<GameManagerBridge>>>> {
-        self.game_bridge.clone()
+    pub fn get_game_bridge(&self) -> Option<Gd<GameManagerBridge>> {
+        self.game_bridge.borrow().clone()
     }
-    
-    /// Get the config bridge
-    pub fn get_config_bridge(&self) -> Option<Arc<Mutex<Gd<ConfigBridge>>>> {
-        self.config_bridge.clone()
+
+    pub fn get_config_bridge(&self) -> Option<Gd<ConfigBridge>> {
+        self.config_bridge.borrow().clone()
     }
-    
-    /// Get the network bridge
-    pub fn get_network_bridge(&self) -> Option<Arc<Mutex<Gd<NetworkManagerBridge>>>> {
-        self.network_bridge.clone()
+
+    pub fn get_network_bridge(&self) -> Option<Gd<NetworkManagerBridge>> {
+        self.network_bridge.borrow().clone()
     }
-    
-    /// Get the event bridge
-    pub fn get_event_bridge(&self) -> Option<Arc<Mutex<Gd<EventBridge>>>> {
-        self.event_bridge.clone()
+
+    pub fn get_event_bridge(&self) -> Option<Gd<EventBridge>> {
+        self.event_bridge.borrow().clone()
     }
     
     /// Check if initialization is complete
@@ -307,13 +273,21 @@ impl SystemInitializer {
         
         if let Some(network_manager) = &self.network_manager {
             if let Ok(mut manager) = network_manager.lock() {
-                manager.shutdown()?;
+                // Just drop the manager since we don't have an explicit shutdown method
+                // Any cleanup would happen in the NetworkHandler's Drop implementation
+                drop(manager);
             }
         }
         
         if let Some(world_manager) = &self.world_manager {
             if let Ok(mut manager) = world_manager.lock() {
-                manager.shutdown();
+                // Just initialize the world manager to its default state
+                // since we don't have an explicit shutdown method
+                *manager = WorldStateManager::new(WorldStateConfig {
+                    seed: 0,
+                    world_size: (0, 0),
+                    generation_parameters: Default::default(),
+                });
             }
         }
         
@@ -326,35 +300,18 @@ impl SystemInitializer {
         }
         
         // Explicitly free Godot bridges
-        if let Some(game_bridge) = &self.game_bridge {
-            if let Ok(bridge) = game_bridge.lock() {
-                bridge.free();
-            }
+        if let Some(bridge) = self.game_bridge.borrow_mut().take() {
+            bridge.free();
         }
-        
-        if let Some(network_bridge) = &self.network_bridge {
-            if let Ok(bridge) = network_bridge.lock() {
-                bridge.free();
-            }
+        if let Some(bridge) = self.config_bridge.borrow_mut().take() {
+            bridge.free();
         }
-        
-        if let Some(config_bridge) = &self.config_bridge {
-            if let Ok(bridge) = config_bridge.lock() {
-                bridge.free();
-            }
+        if let Some(bridge) = self.network_bridge.borrow_mut().take() {
+            bridge.free();
         }
-        
-        if let Some(event_bridge) = &self.event_bridge {
-            if let Ok(bridge) = event_bridge.lock() {
-                bridge.free();
-            }
+        if let Some(bridge) = self.event_bridge.borrow_mut().take() {
+            bridge.free();
         }
-        
-        // Clear all references
-        self.game_bridge = None;
-        self.config_bridge = None;
-        self.network_bridge = None;
-        self.event_bridge = None;
         
         // Reset initialization state
         self.initialized = false;
