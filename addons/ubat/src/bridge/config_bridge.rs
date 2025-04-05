@@ -48,31 +48,31 @@ pub struct ConfigBridge {
     
     // Common configuration properties exposed to the editor
     #[export]
-    config_path: GString,
+    pub config_path: GString,
     
     #[export]
-    world_seed: i64,
+    pub world_seed: i64,
     
     #[export]
-    world_width: i32,
+    pub world_width: i32,
     
     #[export]
-    world_height: i32,
+    pub world_height: i32,
     
     #[export]
-    max_players: i32,
+    pub max_players: i32,
     
     #[export]
-    server_port: i32,
+    pub server_port: i32,
     
     #[export]
-    network_mode: i32, // 0=Standalone, 1=Host, 2=Client
+    pub network_mode: i32, // 0=Standalone, 1=Host, 2=Client
     
     #[export]
-    server_address: GString,
+    pub server_address: GString,
     
     #[export]
-    debug_mode: bool,
+    pub debug_mode: bool,
 }
 
 #[godot_api]
@@ -112,6 +112,24 @@ impl ConfigBridge {
     #[signal]
     fn config_updated(key: GString, value: Variant);
     
+    // Add this method to set the ConfigManager reference from SystemInitializer
+    pub fn set_config_manager(&mut self, config_manager: Arc<Mutex<ConfigurationManager>>) {
+        self.config_manager = Some(config_manager);
+        
+        // Update editor properties from the new config
+        self.update_editor_properties_from_config();
+        
+        if self.debug_mode {
+            godot_print!("ConfigBridge: Config manager reference set externally");
+        }
+    }
+
+    // Add this method to check initialization status
+    #[func]
+    pub fn is_initialized(&self) -> bool {
+        self.config_manager.is_some()
+    }
+
     /// Load configuration from a file
     /// 
     /// Returns true if loading was successful, false otherwise
@@ -148,24 +166,6 @@ impl ConfigBridge {
         success
     }
     
-    /// Create a new configuration with default values
-    /// 
-    /// Returns true if creation was successful
-    #[func]
-    pub fn create_default_config(&mut self) -> bool {
-        self.config_manager = Some(Arc::new(Mutex::new(
-            ConfigurationManager::new(None)
-        )));
-        
-        // Update editor properties
-        self.update_editor_properties_from_config();
-        
-        if self.debug_mode {
-            godot_print!("ConfigBridge: Created default configuration");
-        }
-        
-        true
-    }
     
     /// Save configuration to the current path
     /// 

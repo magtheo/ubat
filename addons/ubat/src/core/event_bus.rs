@@ -27,12 +27,14 @@ trait EventHandler {
 // Generic event bus for type-safe event handling
 pub struct EventBus {
     handlers: Mutex<HashMap<TypeId, Vec<BoxedHandler>>>,
+    initialized: bool,
 }
 
 impl EventBus {
     pub fn new() -> Self {
         EventBus {
             handlers: Mutex::new(HashMap::new()),
+            initialized: true,
         }
     }
 
@@ -69,6 +71,11 @@ impl EventBus {
             }
         }
     }
+    // Check if EventBus is initialized
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
 }
 
 // Example Event Types
@@ -83,33 +90,3 @@ pub struct WorldGeneratedEvent {
     pub world_size: (u32, u32),
 }
 
-// Example Usage Demonstration
-fn demonstrate_event_bus() {
-    let event_bus = EventBus::new();
-
-    // Subscribe to player connected events
-    let player_handler = Arc::new(|event: &PlayerConnectedEvent| {
-        println!("Player connected: {}", event.player_id);
-    });
-    event_bus.subscribe(player_handler);
-
-    // Subscribe to world generation events
-    let world_handler = Arc::new(|event: &WorldGeneratedEvent| {
-        println!(
-            "World generated with seed: {} and size: {:?}", 
-            event.seed, 
-            event.world_size
-        );
-    });
-    event_bus.subscribe(world_handler);
-
-    // Publish some events
-    event_bus.publish(PlayerConnectedEvent {
-        player_id: "player123".to_string()
-    });
-
-    event_bus.publish(WorldGeneratedEvent {
-        seed: 12345,
-        world_size: (1000, 1000)
-    });
-}

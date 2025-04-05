@@ -47,14 +47,15 @@ pub struct WorldStateManager {
     pending_seed: u64,
     pending_size: (u32, u32),
     
-    // NEW: Terrain system integration
+    // Terrain system integration
     terrain_integration: Option<TerrainWorldIntegration>,
     
-    // NEW: Event bus reference
+    // Event bus reference
     event_bus: Option<Arc<EventBus>>,
     
-    // NEW: Initialization status
+    // Initialization status
     is_terrain_initialized: bool,
+    initialized: bool,
 }
 
 impl WorldStateManager {
@@ -71,8 +72,35 @@ impl WorldStateManager {
             terrain_integration: None,
             event_bus: None,
             is_terrain_initialized: false,
+            initialized: false,
+
         }
     }
+
+    // Create a world state with dependencies
+    pub fn new_with_dependencies(
+        config: WorldStateConfig,
+        event_bus: Option<Arc<EventBus>>,
+        terrain_integration: Option<TerrainWorldIntegration>,
+    ) -> Self {
+        // Determine initialization status before potentially moving the value
+        let is_terrain_initialized = terrain_integration.is_some();
+    
+        Self {
+            entities: Arc::new(RwLock::new(HashMap::new())),
+            config: config.clone(),
+            current_version: 0,
+            terrain_generator: TerrainGenerator::new(config.clone()),
+            pending_init: false,
+            pending_seed: 0,
+            pending_size: (0, 0),
+            terrain_integration,
+            event_bus,
+            is_terrain_initialized, // Use the pre-computed value
+            initialized: false,
+        }
+    }
+
     
     pub fn initialize(&mut self) -> Result<(), String> {
         println!("WorldStateManager: Initializing world state");
@@ -117,49 +145,70 @@ impl WorldStateManager {
             }
             
             // Initialize the terrain system with these managers
-            if let Err(e) = self.initialize_terrain(biome_manager, chunk_manager) {
+            // We need to handle this differently to avoid the move issue
+            let terrain_init_result = match &mut self.terrain_integration {
+                Some(terrain) => {
+                    terrain.initialize_terrain(biome_manager.clone(), chunk_manager.clone())
+                },
+                None => Err("Terrain integration missing".to_string())
+            };
+            
+            // Now handle the result
+            if let Err(e) = terrain_init_result {
                 println!("WorldStateManager: Warning: Auto-terrain initialization failed: {}", e);
                 // Continue anyway, as we've marked the pending initialization
             } else {
+                self.is_terrain_initialized = true;
                 println!("WorldStateManager: Auto-terrain initialization successful");
             }
         }
         
         println!("WorldStateManager: Initialization complete");
+        self.initialized = true;
         Ok(())
     }
     
+    // Check if initialized
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+       
     // Initialize terrain with BiomeManager and ChunkManager
-// Replace the initialize_terrain method in world_manager.rs with this fixed version
-pub fn initialize_terrain(&mut self, 
+    pub fn initialize_terrain(&mut self, 
         biome_manager: Gd<BiomeManager>, 
         chunk_manager: Gd<ChunkManager>) -> Result<(), String> {
-    if self.terrain_integration.is_none() {
-        // Auto-initialize if needed
-        self.initialize()?;
+        // If terrain integration is not initialized, try to initialize the whole world state
+        if self.terrain_integration.is_none() {
+            // Use ? to propagate any initialization errors
+            self.initialize()?;
         }
-
-        if let Some(terrain) = &mut self.terrain_integration {
+    
+        // Clone the terrain integration to avoid moving
+        if let Some(ref mut terrain) = self.terrain_integration {
             // Create a GameConfiguration from our WorldStateConfig
             let game_config = GameConfiguration {
-            world_seed: self.config.seed,
-            world_size: WorldSize {
-            width: self.config.world_size.0,
-            height: self.config.world_size.1,
-            },
-            // Using proper GameModeConfig instead of WorldStateConfig
-            game_mode: GameModeConfig::Standalone, // Default to standalone
-            network: Default::default(),
-            generation_rules: self.config.generation_parameters.clone(),
-            custom_settings: Default::default(),
+                world_seed: self.config.seed,
+                world_size: WorldSize {
+                    width: self.config.world_size.0,
+                    height: self.config.world_size.1,
+                },
+                game_mode: GameModeConfig::Standalone,
+                network: Default::default(),
+                generation_rules: self.config.generation_parameters.clone(),
+                custom_settings: Default::default(),
             };
-
-            // Initialize terrain system - passing only the required arguments
-            let result = terrain.initialize_terrain(biome_manager, chunk_manager);
+    
+            // Initialize terrain system
+            let result = terrain.initialize_terrain(
+                biome_manager.clone(), 
+                chunk_manager.clone()
+            );
+    
             if result.is_ok() {
                 self.is_terrain_initialized = true;
                 println!("WorldStateManager: Terrain system initialized successfully");
-                }
+            }
+    
             result
         } else {
             Err("Terrain integration not available".to_string())
@@ -171,7 +220,7 @@ pub fn initialize_terrain(&mut self,
         self.event_bus = Some(event_bus.clone());
         
         // Connect terrain system if already created
-        if let Some(terrain) = &self.terrain_integration {
+        if let Some(terrain) = &self.terrain_integration.as_mut() {
             terrain.connect_to_event_bus(event_bus);
         }
     }
@@ -223,8 +272,7 @@ pub fn initialize_terrain(&mut self,
         
         // Check again after attempted initialization
         if self.is_terrain_initialized {
-            // The modern approach - use the terrain integration
-            if let Some(terrain) = &self.terrain_integration {
+            if let Some(mut terrain) = self.terrain_integration.as_mut() {
                 // Update terrain based on world state
                 println!("WorldStateManager: Updating terrain integration with the latest configuration");
                 terrain.update();
@@ -392,6 +440,7 @@ impl Clone for WorldStateManager {
             terrain_integration: None, // Can't clone easily, will be recreated when needed
             event_bus: self.event_bus.clone(),
             is_terrain_initialized: self.is_terrain_initialized,
+            initialized: self.initialized,
         };
         
         // Copy entities if needed
@@ -453,33 +502,4 @@ impl TerrainWorldIntegrationExt for TerrainWorldIntegration {
         // For now, return None as a placeholder
         None
     }
-}
-
-// Demonstration of usage
-fn demonstrate_world_state_management() {
-    // Create initial world configuration
-    let world_config = WorldStateConfig {
-        seed: 12345,
-        world_size: (10000, 10000),
-        generation_parameters: GenerationRules::default(),
-    };
-
-    // Create world state manager
-    let mut world_state = WorldStateManager::new(world_config.clone());
-
-    // Initialize world systems
-    if let Err(e) = world_state.initialize() {
-        eprintln!("Failed to initialize world: {}", e);
-        return;
-    }
-
-    // Generate initial world
-    world_state.generate_initial_world();
-
-    // Serialize world state for network transmission
-    let serialized_state = world_state.serialize_world_state();
-
-    // Simulate receiving state on another machine
-    let mut received_world_state = WorldStateManager::new(world_config);
-    received_world_state.deserialize_world_state(&serialized_state);
 }

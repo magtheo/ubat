@@ -72,14 +72,16 @@ pub enum ConfigValue {
 pub struct ConfigurationManager {
     current_config: GameConfiguration,
     config_path: Option<String>,
+    is_initialized: bool,
 }
 
-impl ConfigurationManager {
-    // Create a new configuration manager
-    pub fn new(default_config: Option<GameConfiguration>) -> Self {
+impl ConfigurationManager {  
+    // Create a new configuration with specific config
+    pub fn with_config(config: GameConfiguration, config_path: Option<String>) -> Self {
         Self {
-            current_config: default_config.unwrap_or_else(|| Self::create_default_config()),
-            config_path: None,
+            current_config: config,
+            config_path,
+            is_initialized: true,
         }
     }
 
@@ -112,13 +114,13 @@ impl ConfigurationManager {
             .as_secs()
     }
 
-    // Load configuration from a file
+    // Load configuration from a file, returns a new ConfigurationManager
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         // Read and parse TOML as before
         let config_str = fs::read_to_string(path.as_ref())?;
         
         // Try to parse it as is
-        let mut config: GameConfiguration = match toml::from_str(&config_str) {
+        let config: GameConfiguration = match toml::from_str(&config_str) {
             Ok(cfg) => cfg,
             Err(e) => {
                 // Check if the error is about missing game_mode
@@ -156,6 +158,7 @@ impl ConfigurationManager {
         Ok(Self {
             current_config: config,
             config_path: Some(path.as_ref().to_string_lossy().into_owned()),
+            is_initialized: true,
         })
     }
 
@@ -167,6 +170,11 @@ impl ConfigurationManager {
             fs::write(path, toml_string)?;
         }
         Ok(())
+    }
+
+    // Set a new config path
+    pub fn set_config_path<P: AsRef<Path>>(&mut self, path: P) {
+        self.config_path = Some(path.as_ref().to_string_lossy().into_owned());
     }
 
     // Update configuration
@@ -192,6 +200,11 @@ impl ConfigurationManager {
         self.current_config.custom_settings.insert(key, value);
     }
 
+    // Check if manager is initialized
+    pub fn is_initialized(&self) -> bool {
+        self.is_initialized
+    }
+
     // Validate configuration
     pub fn validate(&self) -> Result<(), ConfigurationError> {
         // Add validation logic
@@ -212,36 +225,20 @@ impl ConfigurationManager {
     }
 }
 
+impl Default for ConfigurationManager {
+    fn default() -> Self {
+        Self {
+            current_config: Self::create_default_config(), // Use the existing method
+            config_path: None,
+            is_initialized: true,
+        }
+    }
+}
+
 // Custom error type for configuration errors
 #[derive(Debug)]
 pub enum ConfigurationError {
     InvalidSeed,
     InvalidServerAddress,
     NetworkConfigError,
-}
-
-// Example usage
-fn demonstrate_configuration_management() {
-    // Create default configuration
-    let mut config_manager = ConfigurationManager::new(None);
-
-    // Modify configuration
-    config_manager.update_config(GameConfiguration {
-        game_mode: GameModeConfig::Host(HostConfig {
-            world_generation_seed: 12345,
-            admin_password: Some("admin123".to_string()),
-        }),
-        ..config_manager.current_config.clone()
-    });
-
-    // Save configuration
-    config_manager.save_to_file().unwrap();
-
-    // Load configuration
-    let loaded_config = ConfigurationManager::load_from_file("config.toml").unwrap();
-
-    // Validate configuration
-    if let Err(e) = loaded_config.validate() {
-        println!("Configuration error: {:?}", e);
-    }
 }
