@@ -1,6 +1,5 @@
 use godot::prelude::*;
 use crate::core::game_manager::{self, GameManager, GameState, GameError};
-use crate::core::system_initializer::SystemInitializer;
 
 /// Bridge between Godot and the Rust game manager
 /// 
@@ -67,7 +66,7 @@ impl GameManagerBridge {
     /// Returns true if the game was started successfully, false otherwise
     #[func]
     pub fn start_game(&mut self) -> bool {
-        // Access the game manager through the static function
+        // Access the game manager
         match game_manager::get_instance() {
             Some(game_manager_arc) => {
                 // Lock the game manager
@@ -122,7 +121,7 @@ impl GameManagerBridge {
     /// Returns true if the update was successful, false otherwise
     #[func]
     pub fn update_game(&mut self, delta: f64) -> bool {
-        // Access the game manager through the static function
+        // Access the game manager
         match game_manager::get_instance() {
             Some(game_manager_arc) => {
                 // Lock the game manager
@@ -198,7 +197,7 @@ impl GameManagerBridge {
     /// Returns true if the game was paused successfully
     #[func]
     pub fn pause_game(&mut self) -> bool {
-        // Access the game manager through the static function
+        // Access the game manager
         match game_manager::get_instance() {
             Some(game_manager_arc) => {
                 // Lock the game manager
@@ -234,7 +233,7 @@ impl GameManagerBridge {
     /// Returns true if the game was resumed successfully
     #[func]
     pub fn resume_game(&mut self) -> bool {
-        // Access the game manager through the static function
+        // Access the game manager
         match game_manager::get_instance() {
             Some(game_manager_arc) => {
                 // Lock the game manager
@@ -270,7 +269,7 @@ impl GameManagerBridge {
     /// Returns true if the game was stopped successfully
     #[func]
     pub fn stop_game(&mut self) -> bool {
-        // Access the game manager through the static function
+        // Access the game manager
         match game_manager::get_instance() {
             Some(game_manager_arc) => {
                 // Lock the game manager
@@ -304,7 +303,7 @@ impl GameManagerBridge {
     /// Set the maximum frames per second
     #[func]
     pub fn set_frame_rate(&mut self, fps: i32) {
-        // Access the game manager through the static function
+        // Access the game manager
         if let Some(game_manager_arc) = game_manager::get_instance() {
             // Lock the game manager
             if let Ok(mut game_manager) = game_manager_arc.lock() {
@@ -321,7 +320,7 @@ impl GameManagerBridge {
     /// Check if the game is initialized and ready
     #[func]
     pub fn is_initialized(&self) -> bool {
-        // Access the game manager through the static function
+        // Access the game manager
         match game_manager::get_instance() {
             Some(game_manager_arc) => {
                 // Lock the game manager
