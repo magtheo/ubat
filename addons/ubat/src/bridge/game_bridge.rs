@@ -1,5 +1,6 @@
 use godot::prelude::*;
 use crate::core::game_manager::{self, GameManager, GameState, GameError};
+use std::sync::{Arc, Mutex};
 
 /// Bridge between Godot and the Rust game manager
 /// 
@@ -10,6 +11,9 @@ use crate::core::game_manager::{self, GameManager, GameState, GameError};
 pub struct GameManagerBridge {
     // Base class must be first field
     base: Base<Node>,
+
+    // Game manager reference
+    game_manager: Option<Arc<Mutex<GameManager>>>,
     
     // Configuration properties exposed to the editor
     #[export]
@@ -29,6 +33,7 @@ impl INode for GameManagerBridge {
     fn init(base: Base<Node>) -> Self {
         Self {
             base,
+            game_manager: None,
             debug_mode: false,
             current_state: -1, // Not initialized
             auto_update: true,
@@ -60,6 +65,22 @@ impl GameManagerBridge {
     
     #[signal]
     fn game_error(error_message: GString);
+
+    /// Set the game manager reference
+    pub fn set_config_manager(&mut self, game_manager: Arc<Mutex<GameManager>>) {
+        // Store a clone of the game manager
+        let manager_clone = game_manager.clone();
+        self.game_manager = Some(game_manager);
+        
+        // Try to update the state property using the cloned reference
+        if let Ok(locked_manager) = manager_clone.lock() {
+            self.update_state_property(&locked_manager);
+        }
+        
+        if self.debug_mode {
+            godot_print!("GameManagerBridge: Game manager reference set externally");
+        }
+    }
     
     /// Start the game after initialization
     /// 
