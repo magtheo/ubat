@@ -130,8 +130,14 @@ pub struct ThreadSafeBiomeData {
     world_height: f32,
     seed: u32,
     sections: Vec<ThreadSafeBiomeSection>,
-    blend_distance: f32,
+    pub blend_distance: i32,
+
+    // Add reference to image data
+    image_data: Vec<u8>,
+    image_width: i32,
+    image_height: i32,
 }
+
 
 struct ThreadSafeBiomeSection {
     section_id: u8,
@@ -173,7 +179,7 @@ pub struct BiomeManager {
     
     // Biome configuration
     sections: Vec<BiomeSection>,
-    blend_distance: f32,   // Distance over which biomes blend
+    blend_distance: i32,   // Distance over which biomes blend
     noise: Option<Gd<FastNoiseLite>>, // Noise for biome blending
     
     // Is the system initialized
@@ -209,7 +215,7 @@ impl INode for BiomeManager {
             biome_mask_image_path: GString::from("res://textures/biomeMask_image.png"),
             noise_path: GString::from("res://resources/noise/biome_blend_noise.tres"),
             sections: Vec::new(),
-            blend_distance: 200.0,
+            blend_distance: 200,
             noise: None,
             initialized: false,
             seed: 12345,
@@ -317,21 +323,33 @@ impl BiomeManager {
     }
 
     fn internal_load_mask(&mut self, path: GString) -> Result<(), String> {
-        // Existing mask loading logic, but returning Result
+        // Check if path exists and is a PNG
+        let path_str = path.to_string();
+        godot_print!("Loading biome mask from: {}", path_str);
+  
+        // Load with resource manager
         let texture = resource_manager::load_and_cast::<Texture2D>(path.clone())
             .ok_or_else(|| format!("Failed to load texture from path: {}", path))?;
-
+  
         let image = texture.get_image()
             .ok_or_else(|| "Failed to get image from texture".to_string())?;
-
+  
         self.biome_image = Some(image.clone());
-        
+  
         self.mask_width = image.get_width();
         self.mask_height = image.get_height();
-        
+  
         godot_print!("Biome image loaded: {}x{}", self.mask_width, self.mask_height);
+  
+        // Log a warning if the image is very small
+        if self.mask_width < 100 || self.mask_height < 100 {
+            godot_print!("WARNING: Biome mask image is very small ({}x{}), which may result in low-detail section boundaries",
+            self.mask_width, self.mask_height);
+        }
+  
         Ok(())
     }
+  
 
     #[func]
     pub fn load_noise(&mut self, path: GString) -> bool {
@@ -536,74 +554,54 @@ impl BiomeManager {
     
     // Get the section ID from color
     #[func]
-    pub fn get_section_id(&mut self, world_x: f32, world_y: f32) -> u8 {
-        let key = format!("section_{}_{}", world_x as i32, world_y as i32);
-    
-        // Thread-safe cache check with read lock
-        {
-            let cache = self.section_cache.read().expect("Failed to acquire read lock on section cache");
-            if let Some(&section_id) = cache.get(&key) {
-                return section_id;
-            }
-        }
-        
-        // If biome image is missing, use a fallback based on position
-        if self.biome_image.is_none() {
-            // Simple fallback: divide world into three horizontal sections
-            let relative_y = world_y / self.world_height;
-            let fallback_id = if relative_y < 0.33 {
-                1 // Section 1
-            } else if relative_y < 0.66 {
-                2 // Section 2
+    pub fn get_section_id(&self, world_x: f32, world_y: f32) -> u8 {
+        // If we have a biome image, use it for section detection
+        if let Some(ref img) = self.biome_image {
+            let coords = self.world_to_mask_coords(world_x, world_y);
+            
+            // Get the pixel color
+            let color = img.get_pixel(coords.x, coords.y);
+            
+            // Map color to section ID
+            if color.r > 0.7 && color.g < 0.3 && color.b < 0.3 {
+                return 1; // Red section
+            } else if color.r < 0.3 && color.g > 0.7 && color.b < 0.3 {
+                return 2; // Green section
+            } else if color.r < 0.3 && color.g < 0.3 && color.b > 0.7 {
+                return 3; // Blue section
+            } else if color.r > 0.7 && color.g > 0.7 && color.b < 0.3 {
+                return 4; // Yellow section
+            } else if color.r > 0.7 && color.g < 0.3 && color.b > 0.7 {
+                return 5; // Purple section  
+            } else if color.r < 0.3 && color.g > 0.7 && color.b > 0.7 {
+                return 6; // Cyan section
             } else {
-                3 // Section 3
-            };
-            
-            // Cache the result
-            {
-                let mut cache = self.section_cache.write().expect("Failed to acquire write lock on section cache");
-                cache.insert(key, fallback_id);
+                // Handle mixed colors
+                let max_component = f32::max(f32::max(color.r, color.g), color.b);
+
+                if max_component < 0.1 {
+                    return 0; // Very dark: undefined section
+                } else if color.r >= color.g && color.r >= color.b {
+                    return 1; // Red dominant: Section 1
+                } else if color.g >= color.r && color.g >= color.b {
+                    return 2; // Green dominant: Section 2
+                } else {
+                    return 3; // Blue dominant: Section 3
+                }
             }
-            
-            return fallback_id;
-        }
-        
-        // Get the color from the biome mask
-        let color = self.get_biome_color(world_x, world_y);
-        
-        // Map colors to sections based on your biomeMask_image.png
-        // Red components (r > 0.7) = Section 1 (Coral/Sand)
-        // Green components (g > 0.7) = Section 2 (Rock/Kelp)
-        // Blue components (b > 0.7) = Section 3 (Rock/Lavarock)
-        
-        let section_id = if color.r > 0.7 {
-            1 // Section 1: Coral & Sand
-        } else if color.g > 0.7 {
-            2 // Section 2: Rock & Kelp
-        } else if color.b > 0.7 {
-            3 // Section 3: Rock & Lavarock
-        } else {
-            // For mixed colors or undefined areas, determine section by dominance
-            let max_component = f32::max(f32::max(color.r, color.g), color.b);
-            
-            if max_component < 0.1 {
-                0 // Very dark: undefined section
-            } else if color.r >= color.g && color.r >= color.b {
-                1 // Red dominant: Section 1
-            } else if color.g >= color.r && color.g >= color.b {
-                2 // Green dominant: Section 2
-            } else {
-                3 // Blue dominant: Section 3
-            }
-        };
-        
-        // Thread-safe cache insertion with write lock
-        {
-            let mut cache = self.section_cache.write().expect("Failed to acquire write lock on section cache");
-            cache.insert(key, section_id);
         }
 
-        section_id
+        // Fallback to original behavior if no image data or other error
+        let relative_x = world_x / self.world_width;
+        let relative_y = world_y / self.world_height;
+
+        if relative_x < 0.33 {
+            1 // Section 1
+        } else if relative_x < 0.66 {
+            2 // Section 2
+        } else {
+            3 // Section 3
+        }
     }
     
     // Get the biome ID at a specific world position
@@ -651,7 +649,7 @@ impl BiomeManager {
             
             // Use spatial grid for efficient lookup if available
             if let Some(grid) = &self.spatial_grid {
-                let nearby_indices = grid.get_nearby_points(world_x, world_y, self.blend_distance * 2.0);
+                let nearby_indices = grid.get_nearby_points(world_x, world_y, self.blend_distance as f32 * 2.0);
                 
                 // Filter to only points in the current section
                 let section_points: Vec<_> = nearby_indices.iter()
@@ -677,7 +675,7 @@ impl BiomeManager {
                         let (dist2, biome2) = distances[1];
                         
                         // If the points are close enough, blend between them
-                        if (dist2 - dist1) < self.blend_distance {
+                        if (dist2 - dist1) < self.blend_distance as f32 {
                             // Calculate blend factor with noise influence for natural borders
                             let noise_val = if let Some(ref noise) = self.noise {
                                 // Use Godot's FastNoiseLite
@@ -687,7 +685,7 @@ impl BiomeManager {
                                 0.5
                             };
                             
-                            let blend_factor = ((dist2 - dist1) / self.blend_distance).min(1.0);
+                            let blend_factor = ((dist2 - dist1) / self.blend_distance as f32).min(1.0);
                             let adjusted_blend = blend_factor * (1.0 - noise_val * 0.3); // Noise influence
                             
                             // Choose biome based on blend factor
@@ -795,7 +793,7 @@ impl BiomeManager {
     // Set blend distance for smoother transitions
     #[func]
     pub fn set_blend_distance(&mut self, distance: f32) {
-        self.blend_distance = distance;
+        self.blend_distance = distance as i32;
         self.clear_cache();
 
         // Notify ChunkManager if possible
@@ -810,7 +808,7 @@ impl BiomeManager {
         let warnings = validated_rules.validate_and_fix();
         
         // Apply the validated rules
-        self.blend_distance = validated_rules.biome_blend_distance;
+        self.blend_distance = validated_rules.biome_blend_distance as i32;
         
         // Update noise settings if available
         if let Some(ref mut noise) = self.noise {
@@ -914,9 +912,28 @@ impl BiomeManager {
 impl ThreadSafeBiomeData {
     // Update only changed properties
     pub fn update_from_biome_manager(&mut self, biome_mgr: &BiomeManager) {
+        // Update image data if needed
+        if let Some(ref img) = biome_mgr.biome_image {
+            let image_width = img.get_width();
+            let image_height = img.get_height();
+            
+            // Check if image dimensions changed
+            if self.image_width != image_width || self.image_height != image_height {
+                self.image_width = image_width;
+                self.image_height = image_height;
+                
+                // Get raw image data
+                let img_data = img.get_data();
+                self.image_data = img_data.to_vec();
+            }
+        }
+        
         // Only update these if they've changed
-        if self.world_width != biome_mgr.world_width || self.world_height != biome_mgr.world_height {
+        if self.world_width != biome_mgr.world_width {
             self.world_width = biome_mgr.world_width;
+        }
+        
+        if self.world_height != biome_mgr.world_height {
             self.world_height = biome_mgr.world_height;
         }
         
@@ -970,22 +987,77 @@ impl ThreadSafeBiomeData {
             });
         }
         
+        // Copy image data from biome_mgr.biome_image
+        let mut image_data = Vec::new();
+        let mut image_width = 0;
+        let mut image_height = 0;
+        
+        if let Some(ref img) = biome_mgr.biome_image {
+          image_width = img.get_width();
+          image_height = img.get_height();
+          image_data = img.get_data().to_vec();
+        }
+
+        
         ThreadSafeBiomeData {
             world_width: biome_mgr.world_width,
             world_height: biome_mgr.world_height,
             seed: biome_mgr.seed,
             sections,
             blend_distance: biome_mgr.blend_distance,
+            image_data,
+            image_width,
+            image_height,
         }
     }
     
     // Get section ID based on world coordinates
     pub fn get_section_id(&self, world_x: f32, world_y: f32) -> u8 {
-        // Simple fallback that doesn't depend on biome mask
-        // Basic section determination based on position
+        // Use image data if available
+        if !self.image_data.is_empty() && self.image_width > 0 && self.image_height > 0 {
+            let mask_x = ((world_x / self.world_width) * self.image_width as f32) as i32;
+            let mask_y = ((world_y / self.world_height) * self.image_height as f32) as i32;
+  
+            let x = mask_x.clamp(0, self.image_width - 1) as usize;
+            let y = mask_y.clamp(0, self.image_height - 1) as usize;
+  
+            // Get the pixel data (RGBA format)
+            let idx = (y * self.image_width as usize + x) * 4;
+  
+            if idx + 2 < self.image_data.len() {
+                let r = self.image_data[idx] as f32 / 255.0;
+                let g = self.image_data[idx + 1] as f32 / 255.0;
+                let b = self.image_data[idx + 2] as f32 / 255.0;
+  
+                // Use the same section detection logic as BiomeManager
+                if r > 0.7 && g < 0.3 && b < 0.3 {
+                    return 1; // Red section
+                } else if r < 0.3 && g > 0.7 && b < 0.3 {
+                    return 2; // Green section
+                } else if r < 0.3 && g < 0.3 && b > 0.7 {
+                    return 3; // Blue section
+                } else {
+                    // For mixed colors, use dominant component
+                    let max_component = f32::max(f32::max(r, g), b);
+  
+                    if max_component < 0.1 {
+                        return 0; // Very dark: undefined section
+                    } else if r >= g && r >= b {
+                        return 1; // Red dominant: Section 1
+                    } else if g >= r && g >= b {
+                        return 2; // Green dominant: Section 2
+                    } else {
+                        return 3; // Blue dominant: Section 3
+                    }
+                }
+            }
+        }
+  
+        // Fallback to simpler logic
+        // (same as current implementation)
         let relative_x = world_x / self.world_width;
         let relative_y = world_y / self.world_height;
-        
+  
         if relative_x < 0.33 {
             1 // Section 1
         } else if relative_x < 0.66 {
@@ -994,7 +1066,7 @@ impl ThreadSafeBiomeData {
             3 // Section 3
         }
     }
-    
+  
     // Get biome ID at world coordinates
     pub fn get_biome_id(&self, world_x: f32, world_y: f32) -> u8 {
         // Get the section for this position

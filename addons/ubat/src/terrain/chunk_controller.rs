@@ -1,6 +1,5 @@
 use godot::prelude::*;
-use godot::classes::{MeshInstance3D, Node3D, ArrayMesh};
-use std::sync::Arc;
+use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, BoxMesh};
 use std::collections::{HashMap, HashSet};
 
 use crate::terrain::BiomeManager;
@@ -221,10 +220,18 @@ impl ChunkController {
     
     // Create or update a mesh for a specific chunk
     fn create_or_update_chunk_mesh(&mut self, chunk_x: i32, chunk_z: i32) {
+        let debug = chunk_x == 0 && chunk_z == 0;
+        if debug {
+            godot_print!("TERRAIN: Creating mesh for chunk at ({}, {})", chunk_x, chunk_z);
+        }
+        
         // First get all the data we need from the immutable borrow
         let heightmap = if let Some(ref chunk_mgr) = self.chunk_manager {
             let heightmap = chunk_mgr.bind().get_chunk_heightmap(chunk_x, chunk_z);
             if heightmap.is_empty() {
+                if debug {
+                    godot_print!("TERRAIN: Heightmap is empty for chunk ({}, {})", chunk_x, chunk_z);
+                }
                 return;
             }
             heightmap
@@ -232,33 +239,226 @@ impl ChunkController {
             return;
         };
         
+        if debug {
+            godot_print!("TERRAIN: Got heightmap with {} values", heightmap.len());
+        }
+        
         let chunk_key = (chunk_x, chunk_z);
+        
+        // Create a simple plane mesh directly using arrays
+        let chunk_size = (heightmap.len() as f32).sqrt() as u32;
+        if debug {
+            godot_print!("TERRAIN: Chunk size calculated as {}", chunk_size);
+        }
+        
+        // Create mesh arrays
+        let mut vertices = Vec::new();
+        let mut normals = Vec::new();
+        let mut uvs = Vec::new();
+        let mut indices = Vec::new();
+        
+        // First fill vertex data
+        for z in 0..chunk_size {
+            for x in 0..chunk_size {
+                let idx = (z * chunk_size + x) as usize;
+                let h = heightmap[idx];
+                                
+                // Add vertex
+                vertices.push(Vector3::new(x as f32, h, z as f32));
+                
+                // Simple normal
+                normals.push(Vector3::UP);
+                
+                // Simple UV
+                uvs.push(Vector2::new(
+                    x as f32 / (chunk_size - 1) as f32,
+                    z as f32 / (chunk_size - 1) as f32
+                ));
+            }
+        }
+        
+        // Create triangles
+        for z in 0..chunk_size-1 {
+            for x in 0..chunk_size-1 {
+                let idx00 = (z * chunk_size + x) as i32;
+                let idx10 = (z * chunk_size + x + 1) as i32;
+                let idx01 = ((z + 1) * chunk_size + x) as i32;
+                let idx11 = ((z + 1) * chunk_size + x + 1) as i32;
+                
+                // First triangle (bottom-left to top-right)
+                indices.push(idx00);
+                indices.push(idx10);
+                indices.push(idx01);
+                
+                // Second triangle (top-right to bottom-right)
+                indices.push(idx10);
+                indices.push(idx11);
+                indices.push(idx01);
+            }
+        }
+        
+        // Create mesh and array mesh
+        let array_mesh = ArrayMesh::new_gd();
+        
+        // Convert arrays to Godot arrays
+        let mut godot_vertices = PackedVector3Array::new();
+        for v in vertices {
+            godot_vertices.push(v);
+        }
+        
+        let mut godot_normals = PackedVector3Array::new();
+        for n in normals {
+            godot_normals.push(n);
+        }
+        
+        let mut godot_uvs = PackedVector2Array::new();
+        for uv in uvs {
+            godot_uvs.push(uv);
+        }
+        
+        let mut godot_indices = PackedInt32Array::new();
+        for i in indices {
+            godot_indices.push(i);
+        }
+        
+        // Skip mesh creation in Rust - we'll create a temporary placeholder in GDScript
+        // This works around limitations with the Rust-Godot API for now
+        // We'll log this so we know to come back to it
+        if debug {
+            godot_print!("TERRAIN: Creating placeholder for chunk, will be replaced in GDScript");
+        }
+        
+        // Use a temporary reference for now
+        let array_mesh = ArrayMesh::new_gd();
         
         // Now no immutable borrows are active, so we can do mutable operations
         if !self.chunk_meshes.contains_key(&chunk_key) {
             let mut mesh_instance = MeshInstance3D::new_alloc();
             mesh_instance.set_position(Vector3::new(
-                chunk_x as f32 * 32.0, 
+                chunk_x as f32 * chunk_size as f32, 
                 0.0, 
-                chunk_z as f32 * 32.0
+                chunk_z as f32 * chunk_size as f32
             ));
+            
+            // Set the mesh (placeholder - will be replaced in GDScript)
+            mesh_instance.set_mesh(&array_mesh);
+            
+            // Set material from GDScript if available
+            // That will be handled by GDScript since we don't have direct access here
             
             // Now we can safely call base_mut()
             let node = mesh_instance.clone().upcast::<Node>();
             self.base_mut().add_child(&node);
             
             self.chunk_meshes.insert(chunk_key, mesh_instance);
-        }
-        
-        // Update existing mesh
-        if let Some(mesh_ref) = self.chunk_meshes.get(&chunk_key) {
-            let mut mesh_mut = mesh_ref.clone();
             
-            mesh_mut.set_position(Vector3::new(
-                chunk_x as f32 * 32.0, 
-                0.0, 
-                chunk_z as f32 * 32.0
-            ));
+            if debug {
+                godot_print!("TERRAIN: Created new mesh for chunk ({}, {})", chunk_x, chunk_z);
+            }
+        } else {
+            // Update existing mesh
+            if let Some(mesh_ref) = self.chunk_meshes.get(&chunk_key) {
+                let mut mesh_mut = mesh_ref.clone();
+                
+                mesh_mut.set_mesh(&array_mesh);
+                mesh_mut.set_position(Vector3::new(
+                    chunk_x as f32 * chunk_size as f32, 
+                    0.0, 
+                    chunk_z as f32 * chunk_size as f32
+                ));
+                
+                if debug {
+                    godot_print!("TERRAIN: Updated existing mesh for chunk ({}, {})", chunk_x, chunk_z);
+                }
+            }
         }
     }
+
+  // Helper function to blend heights at biome boundaries
+  fn blend_heights(
+      heightmap: &mut [f32],
+      biome_ids: &[u8],
+      chunk_size: u32,
+      blend_distance: f32
+  ) {
+      // Create a copy of the original heightmap
+      let original_heights = heightmap.to_vec();
+
+      // Blend heights at biome boundaries
+      for z in 0..chunk_size {
+          for x in 0..chunk_size {
+              let idx = (z * chunk_size + x) as usize;
+
+              // Check if this vertex is at a biome boundary
+              if Self::is_at_biome_boundary(biome_ids, idx, chunk_size) {
+                  // Blend with neighbors
+                  let mut total_weight = 1.0;
+                  let mut weighted_height = original_heights[idx];
+
+                  // Get all neighbors within blend distance
+                  for dz in -2..=2 {
+                      for dx in -2..=2 {
+                          if dx == 0 && dz == 0 {
+                              continue;
+                          }
+
+                          let nx = x as i32 + dx;
+                          let nz = z as i32 + dz;
+
+                          if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
+                              let nidx = (nz * chunk_size as i32 + nx) as usize;
+
+                              // Weight based on distance
+                              let distance = ((dx * dx + dz * dz) as f32).sqrt();
+                              let weight = (1.0 - distance / 3.0).max(0.0);
+
+                              total_weight += weight;
+                              weighted_height += original_heights[nidx] * weight;
+                          }
+                      }
+                  }
+
+                  // Update height with weighted average
+                  heightmap[idx] = weighted_height / total_weight;
+              }
+          }
+      }
+  }
+
+  fn is_at_biome_boundary(biome_ids: &[u8], idx: usize, chunk_size: u32) -> bool {
+      let x = (idx as u32) % chunk_size;
+      let z = (idx as u32) / chunk_size;
+
+      let current = biome_ids[idx];
+
+      // Check neighboring vertices
+      let mut has_different_neighbor = false;
+
+      // Check neighbors in all 8 directions
+      for dz in -1..=1 {
+          for dx in -1..=1 {
+              if dx == 0 && dz == 0 {
+                  continue;
+              }
+
+              let nx = x as i32 + dx;
+              let nz = z as i32 + dz;
+
+              if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
+                  let nidx = (nz * chunk_size as i32 + nx) as usize;
+                  if biome_ids[nidx] != current {
+                      has_different_neighbor = true;
+                      break;
+                  }
+              }
+          }
+          if has_different_neighbor {
+              break;
+          }
+      }
+
+      has_different_neighbor
+  }
+
+
 }

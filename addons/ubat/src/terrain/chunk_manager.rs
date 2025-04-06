@@ -91,7 +91,8 @@ impl INode for ChunkManager {
     }
     
     fn ready(&mut self) {
-        godot_print!("RUST: ChunkManager: Initializing...");
+        let start_time = std::time::Instant::now();
+        godot_print!("TERRAIN: ChunkManager initializing...");
         
         // Try to find BiomeManager in the scene tree
         let parent = self.base().get_parent();
@@ -99,20 +100,38 @@ impl INode for ChunkManager {
             // Try to find BiomeManager as a sibling node
             let biome_manager = parent.get_node_as::<BiomeManager>("BiomeManager");
             
+            // Time the thread-safe biome data creation
+            let biome_data_start = std::time::Instant::now();
+            godot_print!("TERRAIN: Creating thread-safe biome data...");
+            
             // Create thread-safe biome data first
             self.thread_safe_biome_data = Some(Arc::new(
                 ThreadSafeBiomeData::from_biome_manager(&biome_manager.bind())
             ));
             
+            godot_print!("TERRAIN: Thread-safe biome data created in {}ms", 
+                         biome_data_start.elapsed().as_millis());
+            
             // Then set the biome_manager field (clone to avoid move)
             self.biome_manager = Some(biome_manager.clone());
             
-            godot_print!("ChunkManager: Successfully connected to BiomeManager");
+            godot_print!("TERRAIN: ChunkManager successfully connected to BiomeManager");
         } else {
-            godot_error!("ChunkManager: Could not find parent node");
+            godot_error!("TERRAIN: ChunkManager could not find parent node");
         }
 
-        godot_print!("ChunkManager: Initialization complete");
+        // Initialize thread pool configuration
+        let thread_pool_start = std::time::Instant::now();
+        godot_print!("TERRAIN: Configuring chunk generation thread pool...");
+        
+        // The thread pool is already initialized in init() with 4 threads
+        
+        godot_print!("TERRAIN: Thread pool configured in {}ms", 
+                     thread_pool_start.elapsed().as_millis());
+        
+        // Log total initialization time
+        godot_print!("TERRAIN: ChunkManager initialization completed in {}ms", 
+                     start_time.elapsed().as_millis());
     }
 }
 
@@ -126,18 +145,33 @@ impl ChunkManager {
     // Get a chunk by position, load if necessary
     #[func]
     pub fn get_chunk(&self, position_x: i32, position_z: i32) -> bool {
+        let timer = std::time::Instant::now();
         let position = ChunkPosition { x: position_x, z: position_z };
+        
+        // Log for debugging on first access
+        let is_debug = position_x == 0 && position_z == 0;
+        if is_debug {
+            godot_print!("TERRAIN: Getting initial chunk at position ({}, {})", position_x, position_z);
+        }
+        
         let chunks_result = self.chunks.lock();
         
         let mut chunks = match chunks_result {
             Ok(chunks) => chunks,
             Err(e) => {
-                godot_error!("Failed to lock chunks: {}", e);
+                godot_error!("TERRAIN: Failed to lock chunks: {}", e);
                 return false;
             }
         };
         
+        // Timer for lock acquisition
+        if is_debug {
+            godot_print!("TERRAIN: Acquired chunks lock in {}μs", timer.elapsed().as_micros());
+        }
+        
         if let Some(chunk) = chunks.get(&position) {
+            let update_timer = std::time::Instant::now();
+            
             // Update last accessed time
             if let Ok(mut chunk_guard) = chunk.lock() {
                 chunk_guard.last_accessed = Instant::now();
@@ -146,9 +180,18 @@ impl ChunkManager {
                 if chunk_guard.state == ChunkState::Inactive {
                     chunk_guard.state = ChunkState::Active;
                 }
+                
+                if is_debug {
+                    godot_print!("TERRAIN: Chunk found, updated state in {}μs", 
+                              update_timer.elapsed().as_micros());
+                }
             }
             
             return true;
+        }
+        
+        if is_debug {
+            godot_print!("TERRAIN: Chunk not found, starting generation/loading");
         }
         
         // Chunk not in memory, start loading process
@@ -163,27 +206,59 @@ impl ChunkManager {
         
         // Pass thread-safe biome data to thread
         let thread_safe_biome = self.thread_safe_biome_data.as_ref().map(Arc::clone);
+        
+        // Track if this is a special position for debugging
+        let debug_chunk = is_debug;
     
         self.thread_pool.execute(move || {
+            let thread_timer = std::time::Instant::now();
+            
+            if debug_chunk {
+                godot_print!("TERRAIN: Thread started for chunk generation at ({}, {})", 
+                          position.x, position.z);
+            }
+            
             if storage_clone.chunk_exists(position) {
                 // Chunk exists in storage, load it
                 if let Ok(mut chunk_guard) = new_chunk_clone.lock() {
                     chunk_guard.state = ChunkState::Loading;
                 }
                 
+                let load_timer = std::time::Instant::now();
                 if let Some(loaded_data) = storage_clone.load_chunk(position) {
                     if let Ok(mut chunk_guard) = new_chunk_clone.lock() {
                         // Update chunk with loaded data
                         chunk_guard.heightmap = loaded_data.heightmap;
                         chunk_guard.biome_ids = loaded_data.biome_ids;
                         chunk_guard.state = ChunkState::Active;
+                        
+                        if debug_chunk {
+                            godot_print!("TERRAIN: Loaded chunk from storage in {}ms", 
+                                      load_timer.elapsed().as_millis());
+                        }
                     }
                 }
             } else {
                 // Chunk doesn't exist, generate it
+                let gen_timer = std::time::Instant::now();
                 Self::generate_chunk(new_chunk_clone, position, storage_clone, thread_safe_biome);
+                
+                if debug_chunk {
+                    godot_print!("TERRAIN: Generated new chunk in {}ms", 
+                              gen_timer.elapsed().as_millis());
+                }
+            }
+            
+            if debug_chunk {
+                godot_print!("TERRAIN: Total thread execution time for chunk: {}ms", 
+                          thread_timer.elapsed().as_millis());
             }
         });
+        
+        if is_debug {
+            godot_print!("TERRAIN: Total get_chunk operation took {}ms", 
+                      timer.elapsed().as_millis());
+        }
         
         true
     }
@@ -195,13 +270,22 @@ impl ChunkManager {
         storage: Arc<ChunkStorage>,
         thread_safe_biome: Option<Arc<ThreadSafeBiomeData>>
     ) {
+        let is_debug = position.x == 0 && position.z == 0;
+        let gen_timer = std::time::Instant::now();
+        
+        if is_debug {
+            godot_print!("TERRAIN: Starting detailed chunk generation for ({}, {})", position.x, position.z);
+        }
 
         // Generate heightmap
         let mut heightmap = vec![0.0; (CHUNK_SIZE * CHUNK_SIZE) as usize];
         let mut biome_ids = vec![0; (CHUNK_SIZE * CHUNK_SIZE) as usize];
         
-        for x in 0..CHUNK_SIZE {
-            for z in 0..CHUNK_SIZE {
+        let heightmap_timer = std::time::Instant::now();
+        
+        // Process chunk in rows for better cache locality
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
                 let world_x = position.x as f32 * CHUNK_SIZE as f32 + x as f32;
                 let world_z = position.z as f32 * CHUNK_SIZE as f32 + z as f32;
                 
@@ -212,14 +296,25 @@ impl ChunkManager {
                     // Default generation if no BiomeManager
                     ((world_x.cos() * 0.5 + world_z.sin() * 0.5) * 2.0) as u8
                 };
+            
                 
-                // Simple example noise function
+                 // Simple example noise function (should be enhanced for specific biomes)
                 let height = (world_x.cos() * 0.5 + world_z.sin() * 0.5) * 10.0;
                 let idx = (z * CHUNK_SIZE + x) as usize;
-                
+
                 heightmap[idx] = height;
                 biome_ids[idx] = biome_id;
             }
+        }
+        
+        // Apply height blending at biome boundaries
+        if let Some(ref biome_data) = thread_safe_biome {
+            Self::blend_heights(&mut heightmap, &biome_ids, CHUNK_SIZE, biome_data.blend_distance);
+        }
+        
+        if is_debug {
+            godot_print!("TERRAIN: Heightmap and biome generation took {}ms", 
+                      heightmap_timer.elapsed().as_millis());
         }
         
         // Clone data before potential move
@@ -227,15 +322,103 @@ impl ChunkManager {
         let saved_biome_ids = biome_ids.clone();
         
         // Update chunk data
+        let update_timer = std::time::Instant::now();
         if let Ok(mut chunk_guard) = chunk.lock() {
             chunk_guard.heightmap = heightmap;
             chunk_guard.biome_ids = biome_ids;
             chunk_guard.state = ChunkState::Active;
+            
+            if is_debug {
+                godot_print!("TERRAIN: Chunk data update took {}μs", 
+                          update_timer.elapsed().as_micros());
+            }
         }
         
         // Save to storage
+        let storage_timer = std::time::Instant::now();
         storage.save_chunk(position, &saved_heightmap, &saved_biome_ids);
+        
+        if is_debug {
+            godot_print!("TERRAIN: Chunk storage save took {}ms", 
+                      storage_timer.elapsed().as_millis());
+            godot_print!("TERRAIN: Complete chunk generation process took {}ms", 
+                      gen_timer.elapsed().as_millis());
+        }
     }
+
+    fn blend_heights(heightmap: &mut [f32], biome_ids: &[u8], chunk_size: u32, blend_radius: i32) {
+            // Create a copy of the original heightmap to read from
+            let original_heights = heightmap.to_vec();
+      
+            // Process each vertex
+            for z in 0..chunk_size {
+                for x in 0..chunk_size {
+                    let idx = (z * chunk_size + x) as usize;
+                    let current_biome = biome_ids[idx];
+      
+                    // Check if this is a boundary vertex (has neighbors with different biome IDs)
+                    let mut is_boundary = false;
+                    for dz in -1..=1 {
+                        for dx in -1..=1 {
+                            if dx == 0 && dz == 0 {
+                                continue; // Skip self
+                            }
+      
+                            let nx = x as i32 + dx;
+                            let nz = z as i32 + dz;
+      
+                            // Check if neighbor is within chunk bounds
+                            if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
+                                let nidx = (nz as u32 * chunk_size + nx as u32) as usize;
+                                if biome_ids[nidx] != current_biome {
+                                    is_boundary = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if is_boundary {
+                            break;
+                        }
+                    }
+      
+                    // If this is a boundary vertex, blend the heights
+                    if is_boundary {
+                        let mut total_weight = 1.0; // Weight for the current vertex
+                        let mut weighted_height = original_heights[idx];
+      
+                        // Check all neighbors within blend_radius
+                        for dz in -blend_radius..=blend_radius {
+                            for dx in -blend_radius..=blend_radius {
+                                if dx == 0 && dz == 0 {
+                                    continue; // Skip self
+                                }
+      
+                                let nx = x as i32 + dx;
+                                let nz = z as i32 + dz;
+      
+                                // Check if neighbor is within chunk bounds
+                                if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
+                                    let nidx = (nz as u32 * chunk_size + nx as u32) as usize;
+      
+                                    // Calculate distance-based weight (further = less influence)
+                                    let distance = ((dx * dx + dz * dz) as f32).sqrt();
+                                    let weight = 1.0 / (1.0 + distance);
+      
+                                    total_weight += weight;
+                                    weighted_height += original_heights[nidx] * weight;
+                                }
+                            }
+                        }
+      
+                        // Apply weighted average
+                        if total_weight > 0.0 {
+                            heightmap[idx] = weighted_height / total_weight;
+                        }
+                    }
+                }
+            }
+        }
+      
     
     // Update chunks based on player position
     #[func]
