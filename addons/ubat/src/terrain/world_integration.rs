@@ -11,16 +11,8 @@ use crate::terrain::chunk_manager::ChunkManager;
 use crate::terrain::biome_manager::BiomeManager;
 
 
-// Define a state enum for tracking initialization
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TerrainInitializationState {
-    Uninitialized,
-    ConfigLoaded,
-    BiomeInitialized,
-    ChunkManagerInitialized,
-    Ready,
-    Error,
-}
+// Import the shared state enum and timing tracker
+use crate::terrain::terrainInitState::{TerrainInitializationState, TerrainInitializationTiming};
 
 // Thread-safe struct that doesn't store Godot objects directly
 pub struct TerrainWorldIntegration {
@@ -31,8 +23,9 @@ pub struct TerrainWorldIntegration {
     current_seed: u32,
     current_dimensions: (f32, f32),
     
-    // Initialization state
+    // Initialization state and timing tracking
     initialization_state: TerrainInitializationState,
+    initialization_timing: TerrainInitializationTiming,
     
     // Using PhantomData to maintain type association without storing objects
     _marker: PhantomPinned,
@@ -40,11 +33,16 @@ pub struct TerrainWorldIntegration {
 
 impl TerrainWorldIntegration {
     pub fn new(world_manager: Arc<Mutex<WorldStateManager>>) -> Self {
+        // Create and start timing tracker
+        let timing = TerrainInitializationTiming::new();
+        godot_print!("TERRAIN: Starting initialization process");
+        
         Self {
             world_manager,
             current_seed: 0,
             current_dimensions: (0.0, 0.0),
             initialization_state: TerrainInitializationState::Uninitialized,
+            initialization_timing: timing,
             _marker: PhantomPinned,
         }
     }
@@ -52,23 +50,31 @@ impl TerrainWorldIntegration {
     // Initialize the terrain system - store configuration values, not Godot objects
     pub fn initialize_terrain(&mut self, biome_manager: Gd<BiomeManager>, 
             chunk_manager: Gd<ChunkManager>) -> Result<(), String> {
-        println!("TerrainWorldIntegration: Initializing terrain system");
+        godot_print!("TERRAIN: Initializing terrain system");
 
         // Set up initial state
         if let Ok(world_manager) = self.world_manager.lock() {
             let config = world_manager.get_config();
             self.current_seed = config.seed as u32;
             self.current_dimensions = (config.world_size.0 as f32, config.world_size.1 as f32);
-            }
+        }
+
+        // Update the initialization state for config loading
+        self.initialization_state = TerrainInitializationState::ConfigLoaded;
+        self.initialization_timing.update_state(TerrainInitializationState::ConfigLoaded);
 
         // Configure the biome manager
         {
             let mut bm = biome_manager.clone();
             bm.bind_mut().set_seed(self.current_seed);
             bm.bind_mut().set_world_dimensions(
-            self.current_dimensions.0,
-            self.current_dimensions.1
+                self.current_dimensions.0,
+                self.current_dimensions.1
             );
+            
+            // Track biome initialization
+            self.initialization_state = TerrainInitializationState::BiomeInitialized;
+            self.initialization_timing.update_state(TerrainInitializationState::BiomeInitialized);
         }
 
         // Set up the chunk manager
@@ -76,17 +82,24 @@ impl TerrainWorldIntegration {
             let mut cm = chunk_manager.clone();
             cm.bind_mut().set_biome_manager(biome_manager.clone());
             cm.bind_mut().update_thread_safe_biome_data();
+            
+            // Track chunk manager initialization
+            self.initialization_state = TerrainInitializationState::ChunkManagerInitialized;
+            self.initialization_timing.update_state(TerrainInitializationState::ChunkManagerInitialized);
         }
 
+        // Mark as ready and log completion
         self.initialization_state = TerrainInitializationState::Ready;
-        println!("TerrainWorldIntegration: Terrain system initialized successfully");
+        self.initialization_timing.update_state(TerrainInitializationState::Ready);
+        
+        godot_print!("TERRAIN: Terrain system initialized successfully");
         Ok(())
     }
 
     
     // Update the system with new configuration values
     pub fn update(&mut self) {
-        println!("TerrainWorldIntegration: Update called");
+        godot_print!("TERRAIN: World integration update called");
         
         // Update any system state here
         // This method doesn't use any Godot objects directly
