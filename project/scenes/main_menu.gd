@@ -153,8 +153,9 @@ func _on_StartStandaloneButton_pressed():
 	var init_result = game_init_helper.init_standalone(options)
 	if init_result:
 		print("Game initialized successfully, waiting before scene transition")
-		# Wait a bit for any backend initialization to complete
-		await get_tree().create_timer(0.5).timeout
+		# Wait longer for terrain initialization to complete
+		print("Waiting for terrain initialization to complete...")
+		await get_tree().create_timer(2.0).timeout
 		
 		# Change to game scene
 		print("Changing to game scene: " + GAME_WORLD)
@@ -210,8 +211,9 @@ func _on_StartServerButton_pressed():
 	var init_result = game_init_helper.init_host(options)
 	if init_result:
 		print("Game initialized successfully, waiting before scene transition")
-		# Wait a bit for any backend initialization to complete
-		await get_tree().create_timer(0.5).timeout
+		# Wait longer for terrain initialization to complete
+		print("Waiting for terrain initialization to complete...")
+		await get_tree().create_timer(2.0).timeout
 		
 		# Change to game scene
 		print("Changing to game scene: " + GAME_WORLD)
@@ -266,8 +268,9 @@ func _on_ConnectButton_pressed():
 	var init_result = game_init_helper.init_client(options)
 	if init_result:
 		print("Game initialized successfully, waiting before scene transition")
-		# Wait a bit for any backend initialization to complete
-		await get_tree().create_timer(0.5).timeout
+		# Wait longer for terrain initialization to complete
+		print("Waiting for terrain initialization to complete...")
+		await get_tree().create_timer(2.0).timeout
 		
 		# Change to game scene
 		print("Changing to game scene: " + GAME_WORLD)
