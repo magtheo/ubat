@@ -1,7 +1,7 @@
 use godot::prelude::*;
+use std::sync::{Arc, Mutex};
 use crate::core::system_initializer::SystemInitializer;
 use crate::bridge::{ConfigBridge, GameManagerBridge, NetworkManagerBridge, EventBridge};
-use std::cell::RefCell;
 
 /// Helper class for simplified game initialization
 ///
@@ -15,9 +15,8 @@ pub struct GameInitHelper {
     #[export]
     debug_mode: bool,
     
-    // Reference to the system initializer
-    // Now using a standard Rust module rather than a Godot object
-    system_initializer: Option<RefCell<SystemInitializer>>,
+    // Use a thread-safe approach with Arc<Mutex>
+    system_initializer: Arc<Mutex<SystemInitializer>>,
 }
 
 #[godot_api]
@@ -26,18 +25,13 @@ impl INode for GameInitHelper {
         Self {
             base,
             debug_mode: false,
-            system_initializer: None,
+            system_initializer: Arc::new(Mutex::new(SystemInitializer::new())),
         }
     }
     
     fn ready(&mut self) {
-        // Initialize the system initializer
-        if self.system_initializer.is_none() {
-            self.system_initializer = Some(RefCell::new(SystemInitializer::new()));
-            
-            if self.debug_mode {
-                godot_print!("GameInitHelper: SystemInitializer created");
-            }
+        if self.debug_mode {
+            godot_print!("GameInitHelper: SystemInitializer created");
         }
     }
 }
@@ -45,136 +39,131 @@ impl INode for GameInitHelper {
 #[godot_api]
 impl GameInitHelper {
     /// Initialize the game in standalone mode
-    #[func]
-    pub fn init_standalone(&self, options: Dictionary) -> bool {
-        godot_print!("GameInitHelper: init_standalone called with options: {:?}", options);
+    fn initialize_game(&mut self, mode: i64, options: Dictionary) -> bool {
+        godot_print!("GameInitHelper: Initializing game with mode: {}", mode);
         
-        // Borrow the system initializer immutably
-        if let Some(system_init_cell) = &self.system_initializer {
-            let mut system_init = system_init_cell.borrow_mut();
-            
-            // Add network_mode to options
-            let mut full_options = options.clone();
-            full_options.insert("network_mode".to_variant(), 0.to_variant());
-            
-            // Use the system initializer directly
-            match system_init.initialize_standalone(&full_options) {
-                Ok(_) => {
-                    godot_print!("GameInitHelper: Standalone mode initialized successfully");
-                    true
-                },
-                Err(err) => {
-                    godot_error!("GameInitHelper: Failed to initialize standalone mode: {}", err);
-                    false
-                }
+        // Use a blocking lock instead of try_lock
+        let mut system_init = match self.system_initializer.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                godot_error!("GameInitHelper: Could not acquire lock on SystemInitializer");
+                return false;
             }
-        } else {
-            godot_error!("GameInitHelper: SystemInitializer not initialized");
-            false
+        };
+        
+        // Prepare options with network mode
+        let mut full_options = options.clone();
+        full_options.insert("network_mode".to_variant(), mode.to_variant());
+        
+        // Select initialization method based on mode
+        let init_result = match mode {
+            0 => system_init.initialize_standalone(&full_options),
+            1 => system_init.initialize_host(&full_options),
+            2 => system_init.initialize_client(&full_options),
+            _ => {
+                godot_error!("GameInitHelper: Invalid network mode");
+                return false;
+            }
+        };
+        
+        // Handle initialization result
+        match init_result {
+            Ok(_) => {
+                godot_print!("GameInitHelper: Game initialization successful");
+                true
+            },
+            Err(err) => {
+                godot_error!("GameInitHelper: Initialization failed: {}", err);
+                false
+            }
         }
     }
-    
-    /// Initialize the game in host mode
+
+    /// Standalone mode initialization
     #[func]
-    pub fn init_host(&self, options: Dictionary) -> bool {
-        godot_print!("GameInitHelper: init_host called with options: {:?}", options);
-        
-        if let Some(system_init_cell) = &self.system_initializer {
-            let mut system_init = system_init_cell.borrow_mut();
-            
-            let mut full_options = options.clone();
-            full_options.insert("network_mode".to_variant(), 1.to_variant());
-            
-            match system_init.initialize_host(&full_options) {
-                Ok(_) => {
-                    godot_print!("GameInitHelper: Host mode initialized successfully");
-                    true
-                },
-                Err(err) => {
-                    godot_error!("GameInitHelper: Failed to initialize host mode: {}", err);
-                    false
-                }
-            }
-        } else {
-            godot_error!("GameInitHelper: SystemInitializer not initialized");
-            false
-        }
+    pub fn init_standalone(&mut self, options: Dictionary) -> bool {
+        self.initialize_game(0, options)
     }
-    
+
+    /// Host mode initialization
     #[func]
-    pub fn init_client(&self, options: Dictionary) -> bool {
-        godot_print!("GameInitHelper: init_client called with options: {:?}", options);
-        
-        if let Some(system_init_cell) = &self.system_initializer {
-            let mut system_init = system_init_cell.borrow_mut();
-            
-            let mut full_options = options.clone();
-            full_options.insert("network_mode".to_variant(), 2.to_variant());
-            
-            match system_init.initialize_client(&full_options) {
-                Ok(_) => {
-                    godot_print!("GameInitHelper: Client mode initialized successfully");
-                    true
-                },
-                Err(err) => {
-                    godot_error!("GameInitHelper: Failed to initialize client mode: {}", err);
-                    false
-                }
-            }
-        } else {
-            godot_error!("GameInitHelper: SystemInitializer not initialized");
-            false
-        }
+    pub fn init_host(&mut self, options: Dictionary) -> bool {
+        self.initialize_game(1, options)
+    }
+
+    /// Client mode initialization
+    #[func]
+    pub fn init_client(&mut self, options: Dictionary) -> bool {
+        self.initialize_game(2, options)
     }
     
     /// Check if the system is ready
     #[func]
     pub fn is_system_ready(&self) -> bool {
-        self.system_initializer.is_some()
+        // Check if we can acquire a lock, which implies the system is initialized
+        self.system_initializer.try_lock().is_ok()
     }
 
+
+    /// Get bridge methods with shared access strategy
     #[func]
     pub fn get_game_bridge(&self) -> Variant {
-        if let Some(system_init_cell) = &self.system_initializer {
-            // Borrow the inner SystemInitializer
-            if let Some(bridge) = system_init_cell.borrow().get_game_bridge() {
-                return bridge.to_variant();
+        match self.system_initializer.lock() {
+            Ok(system_init) => {
+                system_init.get_game_bridge()
+                    .map(|bridge| bridge.to_variant())
+                    .unwrap_or(Variant::nil())
+            },
+            Err(_) =>{
+                godot_error!("Could not acquire lock to get game bridge");
+                Variant::nil()
             }
         }
-        Variant::nil()
     }
 
+    // Similar implementations for other bridge getters (config, network, event)
     #[func]
     pub fn get_config_bridge(&self) -> Variant {
-        if let Some(system_init_cell) = &self.system_initializer {
-            // Borrow the inner SystemInitializer
-            if let Some(bridge) = system_init_cell.borrow().get_config_bridge() {
-                return bridge.to_variant();
+        match self.system_initializer.lock() {
+            Ok(system_init) => {
+                system_init.get_config_bridge()
+                    .map(|bridge| bridge.to_variant())
+                    .unwrap_or(Variant::nil())
+            },
+            Err(_) => {
+                godot_error!("Could not acquire lock to get config bridge");
+                Variant::nil()
             }
         }
-        Variant::nil()
     }
 
     #[func]
     pub fn get_network_bridge(&self) -> Variant {
-        if let Some(system_init_cell) = &self.system_initializer {
-            // Borrow the inner SystemInitializer
-            if let Some(bridge) = system_init_cell.borrow().get_network_bridge() {
-                return bridge.to_variant();
+        match self.system_initializer.lock() {
+            Ok(system_init) => {
+                system_init.get_network_bridge()
+                    .map(|bridge| bridge.to_variant())
+                    .unwrap_or(Variant::nil())
+            },
+            Err(_) => {
+                godot_error!("Could not acquire lock to get network bridge");
+                Variant::nil()
             }
         }
-        Variant::nil()
     }
 
     #[func]
     pub fn get_event_bridge(&self) -> Variant {
-        if let Some(system_init_cell) = &self.system_initializer {
-            // Borrow the inner SystemInitializer
-            if let Some(bridge) = system_init_cell.borrow().get_event_bridge() {
-                return bridge.to_variant();
+        match self.system_initializer.lock() {
+            Ok(system_init) => {
+                system_init.get_event_bridge()
+                    .map(|bridge| bridge.to_variant())
+                    .unwrap_or(Variant::nil())
+            },
+            Err(_) => {
+                godot_error!("Could not acquire lock to get event bridge");
+                Variant::nil()
             }
         }
-        Variant::nil()
     }
-
 }
