@@ -14,9 +14,6 @@ pub struct GameInitHelper {
     
     #[export]
     debug_mode: bool,
-    
-    // Use a thread-safe approach with Arc<Mutex>
-    system_initializer: Arc<Mutex<SystemInitializer>>,
 }
 
 #[godot_api]
@@ -25,14 +22,16 @@ impl INode for GameInitHelper {
         Self {
             base,
             debug_mode: false,
-            system_initializer: Arc::new(Mutex::new(SystemInitializer::new())),
         }
     }
     
     fn ready(&mut self) {
         if self.debug_mode {
-            godot_print!("GameInitHelper: SystemInitializer created");
+            godot_print!("GameInitHelper: Ready, will use SystemInitializer singleton");
         }
+        
+        // Ensure the SystemInitializer is properly initialized once at startup
+        SystemInitializer::ensure_initialized();
     }
 }
 
@@ -42,8 +41,11 @@ impl GameInitHelper {
     fn initialize_game(&mut self, mode: i64, options: Dictionary) -> bool {
         godot_print!("GameInitHelper: Initializing game with mode: {}", mode);
         
-        // Use a blocking lock instead of try_lock
-        let mut system_init = match self.system_initializer.lock() {
+        // Get or create the SystemInitializer singleton
+        let system_initializer = SystemInitializer::ensure_initialized();
+        
+        // Use a blocking lock to access the initializer
+        let mut system_init = match system_initializer.lock() {
             Ok(guard) => guard,
             Err(_) => {
                 godot_error!("GameInitHelper: Could not acquire lock on SystemInitializer");
@@ -100,22 +102,41 @@ impl GameInitHelper {
     /// Check if the system is ready
     #[func]
     pub fn is_system_ready(&self) -> bool {
-        // Check if we can acquire a lock, which implies the system is initialized
-        self.system_initializer.try_lock().is_ok()
+        // Get the singleton instance
+        match SystemInitializer::get_instance() {
+            Some(system_initializer) => {
+                // Check if we can lock the initializer and if it's initialized
+                match system_initializer.try_lock() {
+                    Ok(initializer) => initializer.is_initialized(),
+                    Err(_) => {
+                        // If we can't lock it, it's probably in use, which means it exists
+                        true
+                    }
+                }
+            },
+            None => false
+        }
     }
-
 
     /// Get bridge methods with shared access strategy
     #[func]
     pub fn get_game_bridge(&self) -> Variant {
-        match self.system_initializer.lock() {
-            Ok(system_init) => {
-                system_init.get_game_bridge()
-                    .map(|bridge| bridge.to_variant())
-                    .unwrap_or(Variant::nil())
+        match SystemInitializer::get_instance() {
+            Some(system_initializer) => {
+                match system_initializer.lock() {
+                    Ok(system_init) => {
+                        system_init.get_game_bridge()
+                            .map(|bridge| bridge.to_variant())
+                            .unwrap_or(Variant::nil())
+                    },
+                    Err(_) => {
+                        godot_error!("Could not acquire lock to get game bridge");
+                        Variant::nil()
+                    }
+                }
             },
-            Err(_) =>{
-                godot_error!("Could not acquire lock to get game bridge");
+            None => {
+                godot_error!("SystemInitializer not initialized");
                 Variant::nil()
             }
         }
@@ -124,14 +145,22 @@ impl GameInitHelper {
     // Similar implementations for other bridge getters (config, network, event)
     #[func]
     pub fn get_config_bridge(&self) -> Variant {
-        match self.system_initializer.lock() {
-            Ok(system_init) => {
-                system_init.get_config_bridge()
-                    .map(|bridge| bridge.to_variant())
-                    .unwrap_or(Variant::nil())
+        match SystemInitializer::get_instance() {
+            Some(system_initializer) => {
+                match system_initializer.lock() {
+                    Ok(system_init) => {
+                        system_init.get_config_bridge()
+                            .map(|bridge| bridge.to_variant())
+                            .unwrap_or(Variant::nil())
+                    },
+                    Err(_) => {
+                        godot_error!("Could not acquire lock to get config bridge");
+                        Variant::nil()
+                    }
+                }
             },
-            Err(_) => {
-                godot_error!("Could not acquire lock to get config bridge");
+            None => {
+                godot_error!("SystemInitializer not initialized");
                 Variant::nil()
             }
         }
@@ -139,14 +168,22 @@ impl GameInitHelper {
 
     #[func]
     pub fn get_network_bridge(&self) -> Variant {
-        match self.system_initializer.lock() {
-            Ok(system_init) => {
-                system_init.get_network_bridge()
-                    .map(|bridge| bridge.to_variant())
-                    .unwrap_or(Variant::nil())
+        match SystemInitializer::get_instance() {
+            Some(system_initializer) => {
+                match system_initializer.lock() {
+                    Ok(system_init) => {
+                        system_init.get_network_bridge()
+                            .map(|bridge| bridge.to_variant())
+                            .unwrap_or(Variant::nil())
+                    },
+                    Err(_) => {
+                        godot_error!("Could not acquire lock to get network bridge");
+                        Variant::nil()
+                    }
+                }
             },
-            Err(_) => {
-                godot_error!("Could not acquire lock to get network bridge");
+            None => {
+                godot_error!("SystemInitializer not initialized");
                 Variant::nil()
             }
         }
@@ -154,14 +191,22 @@ impl GameInitHelper {
 
     #[func]
     pub fn get_event_bridge(&self) -> Variant {
-        match self.system_initializer.lock() {
-            Ok(system_init) => {
-                system_init.get_event_bridge()
-                    .map(|bridge| bridge.to_variant())
-                    .unwrap_or(Variant::nil())
+        match SystemInitializer::get_instance() {
+            Some(system_initializer) => {
+                match system_initializer.lock() {
+                    Ok(system_init) => {
+                        system_init.get_event_bridge()
+                            .map(|bridge| bridge.to_variant())
+                            .unwrap_or(Variant::nil())
+                    },
+                    Err(_) => {
+                        godot_error!("Could not acquire lock to get event bridge");
+                        Variant::nil()
+                    }
+                }
             },
-            Err(_) => {
-                godot_error!("Could not acquire lock to get event bridge");
+            None => {
+                godot_error!("SystemInitializer not initialized");
                 Variant::nil()
             }
         }

@@ -49,7 +49,7 @@ impl Error for SystemInitError {}
 
 // Thread-local storage for the SystemInitializer singleton
 thread_local! {
-    static SYSTEM_INITIALIZER: RefCell<Option<SystemInitializer>> = RefCell::new(None);
+    static SYSTEM_INITIALIZER: RefCell<Option<Arc<Mutex<SystemInitializer>>>> = RefCell::new(None);
 }
 
 pub struct SystemInitializer {
@@ -95,16 +95,24 @@ impl SystemInitializer {
     }
     
     /// Initialize the singleton instance if not already initialized
-    pub fn ensure_initialized() {
+    pub fn ensure_initialized() -> Arc<Mutex<SystemInitializer>> {
+        let mut instance = None;
+        
         SYSTEM_INITIALIZER.with(|cell| {
             if cell.borrow().is_none() {
-                *cell.borrow_mut() = Some(SystemInitializer::new());
+                let new_instance = Arc::new(Mutex::new(SystemInitializer::new()));
+                *cell.borrow_mut() = Some(new_instance.clone());
+                instance = Some(new_instance);
+            } else {
+                instance = Some(cell.borrow().clone().unwrap());
             }
         });
+        
+        instance.unwrap()
     }
     
     /// Get the singleton instance
-    pub fn get_instance() -> Option<SystemInitializer> {
+    pub fn get_instance() -> Option<Arc<Mutex<SystemInitializer>>> {
         let mut result = None;
         SYSTEM_INITIALIZER.with(|cell| {
             if let Some(initializer) = &*cell.borrow() {
@@ -115,7 +123,7 @@ impl SystemInitializer {
     }
     
     /// Set the singleton instance
-    pub fn set_instance(initializer: SystemInitializer) {
+    pub fn set_instance(initializer: Arc<Mutex<SystemInitializer>>) {
         SYSTEM_INITIALIZER.with(|cell| {
             *cell.borrow_mut() = Some(initializer);
         });
@@ -171,6 +179,9 @@ impl SystemInitializer {
             Some(network_manager.clone()),
         )));
         self.game_manager = Some(game_manager.clone());
+        
+        // Set the game manager in the thread-local storage so it can be accessed from anywhere
+        crate::core::game_manager::set_instance(game_manager.clone());
         
         // Create configuration service
         let configuration_service = ConfigurationService::new(
@@ -248,8 +259,8 @@ impl SystemInitializer {
         
         self.initialized = true;
         
-        // Update the singleton instance
-        SystemInitializer::set_instance(self.clone());
+        // Note: We no longer need to update the singleton instance here since
+        // we're using Arc<Mutex<>> and already modifying the instance in place
         
         godot_print!("SystemInitializer: Standalone initialization complete");
         Ok(())
@@ -275,8 +286,8 @@ impl SystemInitializer {
         
         self.initialized = true;
         
-        // Update the singleton instance
-        SystemInitializer::set_instance(self.clone());
+        // Note: We no longer need to update the singleton instance here since
+        // we're using Arc<Mutex<>> and already modifying the instance in place
         
         godot_print!("SystemInitializer: Host initialization complete");
         Ok(())
@@ -302,8 +313,8 @@ impl SystemInitializer {
         
         self.initialized = true;
         
-        // Update the singleton instance
-        SystemInitializer::set_instance(self.clone());
+        // Note: We no longer need to update the singleton instance here since
+        // we're using Arc<Mutex<>> and already modifying the instance in place
         
         godot_print!("SystemInitializer: Client initialization complete");
         Ok(())
@@ -404,29 +415,9 @@ impl SystemInitializer {
     }
 }
 
-// Implement Clone for SystemInitializer to allow getting a copy from the thread-local storage
-impl Clone for SystemInitializer {
-    fn clone(&self) -> Self {
-        Self {
-            game_bridge: self.game_bridge.clone(),
-            config_bridge: self.config_bridge.clone(),
-            network_bridge: self.network_bridge.clone(),
-            event_bridge: self.event_bridge.clone(),
-            
-            game_manager: self.game_manager.clone(),
-            config_manager: self.config_manager.clone(), 
-            network_manager: self.network_manager.clone(),
-            world_manager: self.world_manager.clone(),
-            event_bus: self.event_bus.clone(),
-            
-            // Note: We don't clone the configuration_service because it doesn't
-            // implement Clone. This is okay since we only need it during initialization.
-            configuration_service: None,
-            
-            initialized: self.initialized,
-        }
-    }
-}
+// We no longer need to implement Clone for SystemInitializer
+// Since we're now working with Arc<Mutex<SystemInitializer>> which already provides shared ownership
+// This removes a potentially problematic pattern where configuration_service couldn't be cloned
 
 // Implement Default for easy initialization
 impl Default for SystemInitializer {
@@ -438,17 +429,9 @@ impl Default for SystemInitializer {
 // Implement Drop trait for cleanup
 impl Drop for SystemInitializer {
     fn drop(&mut self) {
-        // Only attempt to shutdown if this is the singleton instance
-        SYSTEM_INITIALIZER.with(|cell| {
-            if let Some(instance) = &*cell.borrow() {
-                // Check if this instance is the singleton by comparing addresses
-                let instance_ptr = instance as *const SystemInitializer;
-                let self_ptr = self as *const SystemInitializer;
-                
-                if instance_ptr == self_ptr && self.initialized {
-                    let _ = self.shutdown();
-                }
-            }
-        });
+        if self.initialized {
+            godot_print!("SystemInitializer: Dropping initialized instance - performing cleanup");
+            let _ = self.shutdown();
+        }
     }
 }
