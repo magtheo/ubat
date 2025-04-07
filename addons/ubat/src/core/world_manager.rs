@@ -178,9 +178,14 @@ impl WorldStateManager {
         biome_manager: Gd<BiomeManager>, 
         chunk_manager: Gd<ChunkManager>) -> Result<(), String> {
         // If terrain integration is not initialized, try to initialize the whole world state
+        println!("WorldStateManager: Initializing terrain with provided components");
         if self.terrain_integration.is_none() {
             // Use ? to propagate any initialization errors
             self.initialize()?;
+            let self_arc = Arc::new(Mutex::new(self.clone()));
+            let terrain_integration = TerrainWorldIntegration::new(self_arc);
+            self.terrain_integration = Some(terrain_integration);
+
         }
     
         // Clone the terrain integration to avoid moving
