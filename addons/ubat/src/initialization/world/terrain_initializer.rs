@@ -4,15 +4,14 @@ use godot::classes::Node;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::terrain::TerrainInitializationState;
-use crate::terrain::terrainInitState::TerrainInitializationTiming;
+use crate::terrain::biome_manager::ThreadSafeBiomeData;
+use crate::initialization::world::terrainInitState::{TerrainInitializationTiming, TerrainInitializationState};
 use crate::terrain::BiomeManager;
 use crate::terrain::ChunkManager;
 use crate::terrain::ChunkController;
 use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
 use crate::core::event_bus::EventBus;
 
-use super::biome_manager::ThreadSafeBiomeData;
 
 // TerrainSystemContext stores references to initialized terrain components
 pub struct TerrainSystemContext {
@@ -63,7 +62,7 @@ impl TerrainInitializer {
 
     // This is the main method to initialize the terrain system
     pub fn initialize_terrain_system(&mut self) -> Result<(), String> {
-        godot_print!("TERRAIN: TerrainInitializer starting initialization...");
+        godot_print!("TerrainInitializer: TerrainInitializer starting initialization...");
         
         // Create BiomeManager
         let mut biome_manager = BiomeManager::new_alloc();
@@ -106,7 +105,7 @@ impl TerrainInitializer {
         // Update initialization state
         self.timing.update_state(TerrainInitializationState::Ready);
 
-        godot_print!("TERRAIN: Terrain system fully initialized in Rust");
+        godot_print!("TerrainInitializer: Terrain system fully initialized in Rust");
         Ok(())
     }
 
