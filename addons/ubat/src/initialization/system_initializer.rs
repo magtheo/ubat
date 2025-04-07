@@ -20,8 +20,10 @@ use crate::core::game_manager;
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode};
 
+use crate::initialization::world_initializer::WorldInitializer;
+
 // Import the configuration service
-use crate::core::initialization::configuration_service::ConfigurationService;
+use crate::initialization::configuration_service::ConfigurationService;
 
 // Custom error type for system initialization
 #[derive(Debug)]
@@ -141,21 +143,6 @@ impl SystemInitializer {
         let config_manager = Arc::new(Mutex::new(config_manager::ConfigurationManager::default()));
         self.config_manager = Some(config_manager.clone());
         
-        // Prepare default world configuration
-        let default_world_config = WorldStateConfig {
-            seed: 12345, // Default seed
-            world_size: (1024, 1024), // Default world size
-            generation_parameters: Default::default(), // Use default generation rules
-        };
-        
-        // Initialize world manager with default configuration
-        let world_manager = Arc::new(Mutex::new(WorldStateManager::new_with_dependencies(
-            default_world_config,
-            Some(event_bus.clone()),
-            None // TerrainWorldIntegration will be created later if needed
-        )));
-        self.world_manager = Some(world_manager.clone());
-        
         // Prepare default network configuration
         let default_network_config = NetworkConfig {
             mode: NetworkMode::Standalone,
@@ -171,11 +158,29 @@ impl SystemInitializer {
         ));
         self.network_manager = Some(network_manager.clone());
         
+        // Create and use WorldInitializer
+        let mut world_initializer = WorldInitializer::new(
+            config_manager.clone(),
+            event_bus.clone()
+        );
+        
+        // Initialize all world-related systems
+        if let Err(e) = world_initializer.initialize() {
+            return Err(SystemInitError::ManagerError(format!("World initialization failed: {}", e)));
+        }
+        
+        // Get initialized world manager and store it
+        if let Some(world_manager) = world_initializer.get_world_manager() {
+            self.world_manager = Some(world_manager);
+        } else {
+            return Err(SystemInitError::ManagerError("Failed to get world manager from initializer".to_string()));
+        }
+        
         // Initialize game manager with dependencies
         let game_manager = Arc::new(Mutex::new(game_manager::GameManager::new_with_dependencies(
             config_manager.clone(),
             event_bus.clone(),
-            Some(world_manager.clone()),
+            self.world_manager.clone(),
             Some(network_manager.clone()),
         )));
         self.game_manager = Some(game_manager.clone());
@@ -183,17 +188,21 @@ impl SystemInitializer {
         // Set the game manager in the thread-local storage so it can be accessed from anywhere
         crate::core::game_manager::set_instance(game_manager.clone());
         
-        // Create configuration service
+        // Create configuration service (optional, remove if not needed)
         let configuration_service = ConfigurationService::new(
             game_manager.clone(),
             config_manager.clone(),
             network_manager.clone(),
-            world_manager.clone(),
+            self.world_manager.clone().unwrap(),
             event_bus.clone(),
         );
         self.configuration_service = Some(configuration_service);
         
         godot_print!("SystemInitializer: Core systems initialized");
+        
+        // Initialize bridges after all systems are ready
+        self.initialize_bridges()?;
+        
         Ok(())
     }
     

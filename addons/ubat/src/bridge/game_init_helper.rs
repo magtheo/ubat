@@ -1,6 +1,6 @@
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
-use crate::core::system_initializer::SystemInitializer;
+use crate::initialization::system_initializer::SystemInitializer;
 use crate::bridge::{ConfigBridge, GameManagerBridge, NetworkManagerBridge, EventBridge};
 
 /// Helper class for simplified game initialization
