@@ -222,7 +222,7 @@ impl ChunkController {
     fn create_or_update_chunk_mesh(&mut self, chunk_x: i32, chunk_z: i32) {
         let debug = chunk_x == 0 && chunk_z == 0;
         if debug {
-            godot_print!("TERRAIN: Creating mesh for chunk at ({}, {})", chunk_x, chunk_z);
+            godot_print!("ChunkController: Creating mesh for chunk at ({}, {})", chunk_x, chunk_z);
         }
         
         // First get all the data we need from the immutable borrow
@@ -230,7 +230,7 @@ impl ChunkController {
             let heightmap = chunk_mgr.bind().get_chunk_heightmap(chunk_x, chunk_z);
             if heightmap.is_empty() {
                 if debug {
-                    godot_print!("TERRAIN: Heightmap is empty for chunk ({}, {})", chunk_x, chunk_z);
+                    godot_print!("ChunkController: Heightmap is empty for chunk ({}, {})", chunk_x, chunk_z);
                 }
                 return;
             }
@@ -240,7 +240,7 @@ impl ChunkController {
         };
         
         if debug {
-            godot_print!("TERRAIN: Got heightmap with {} values", heightmap.len());
+            godot_print!("ChunkController: Got heightmap with {} values", heightmap.len());
         }
         
         let chunk_key = (chunk_x, chunk_z);
@@ -248,7 +248,7 @@ impl ChunkController {
         // Create a simple plane mesh directly using arrays
         let chunk_size = (heightmap.len() as f32).sqrt() as u32;
         if debug {
-            godot_print!("TERRAIN: Chunk size calculated as {}", chunk_size);
+            godot_print!("ChunkController: Chunk size calculated as {}", chunk_size);
         }
         
         // Create mesh arrays
@@ -325,7 +325,7 @@ impl ChunkController {
         // This works around limitations with the Rust-Godot API for now
         // We'll log this so we know to come back to it
         if debug {
-            godot_print!("TERRAIN: Creating placeholder for chunk, will be replaced in GDScript");
+            godot_print!("ChunkController: Creating placeholder for chunk, will be replaced in GDScript");
         }
         
         // Use a temporary reference for now
@@ -353,7 +353,7 @@ impl ChunkController {
             self.chunk_meshes.insert(chunk_key, mesh_instance);
             
             if debug {
-                godot_print!("TERRAIN: Created new mesh for chunk ({}, {})", chunk_x, chunk_z);
+                godot_print!("ChunkController: Created new mesh for chunk ({}, {})", chunk_x, chunk_z);
             }
         } else {
             // Update existing mesh
@@ -368,7 +368,7 @@ impl ChunkController {
                 ));
                 
                 if debug {
-                    godot_print!("TERRAIN: Updated existing mesh for chunk ({}, {})", chunk_x, chunk_z);
+                    godot_print!("ChunkController: Updated existing mesh for chunk ({}, {})", chunk_x, chunk_z);
                 }
             }
         }

@@ -92,7 +92,7 @@ impl INode for ChunkManager {
     
     fn ready(&mut self) {
         let start_time = std::time::Instant::now();
-        godot_print!("TERRAIN: ChunkManager initializing...");
+        godot_print!("ChunkManager: ChunkManager initializing...");
         
         // Try to find BiomeManager in the scene tree
         let parent = self.base().get_parent();
@@ -102,35 +102,35 @@ impl INode for ChunkManager {
             
             // Time the thread-safe biome data creation
             let biome_data_start = std::time::Instant::now();
-            godot_print!("TERRAIN: Creating thread-safe biome data...");
+            godot_print!("ChunkManager: Creating thread-safe biome data...");
             
             // Create thread-safe biome data first
             self.thread_safe_biome_data = Some(Arc::new(
                 ThreadSafeBiomeData::from_biome_manager(&biome_manager.bind())
             ));
             
-            godot_print!("TERRAIN: Thread-safe biome data created in {}ms", 
+            godot_print!("ChunkManager: Thread-safe biome data created in {}ms", 
                          biome_data_start.elapsed().as_millis());
             
             // Then set the biome_manager field (clone to avoid move)
             self.biome_manager = Some(biome_manager.clone());
             
-            godot_print!("TERRAIN: ChunkManager successfully connected to BiomeManager");
+            godot_print!("ChunkManager: ChunkManager successfully connected to BiomeManager");
         } else {
-            godot_error!("TERRAIN: ChunkManager could not find parent node");
+            godot_error!("ChunkManager: ChunkManager could not find parent node");
         }
 
         // Initialize thread pool configuration
         let thread_pool_start = std::time::Instant::now();
-        godot_print!("TERRAIN: Configuring chunk generation thread pool...");
+        godot_print!("ChunkManager: Configuring chunk generation thread pool...");
         
         // The thread pool is already initialized in init() with 4 threads
         
-        godot_print!("TERRAIN: Thread pool configured in {}ms", 
+        godot_print!("ChunkManager: Thread pool configured in {}ms", 
                      thread_pool_start.elapsed().as_millis());
         
         // Log total initialization time
-        godot_print!("TERRAIN: ChunkManager initialization completed in {}ms", 
+        godot_print!("ChunkManager: ChunkManager initialization completed in {}ms", 
                      start_time.elapsed().as_millis());
     }
 }
@@ -151,7 +151,7 @@ impl ChunkManager {
         // Log for debugging on first access
         let is_debug = position_x == 0 && position_z == 0;
         if is_debug {
-            godot_print!("TERRAIN: Getting initial chunk at position ({}, {})", position_x, position_z);
+            godot_print!("ChunkManager: Getting initial chunk at position ({}, {})", position_x, position_z);
         }
         
         let chunks_result = self.chunks.lock();
@@ -159,14 +159,14 @@ impl ChunkManager {
         let mut chunks = match chunks_result {
             Ok(chunks) => chunks,
             Err(e) => {
-                godot_error!("TERRAIN: Failed to lock chunks: {}", e);
+                godot_error!("ChunkManager: Failed to lock chunks: {}", e);
                 return false;
             }
         };
         
         // Timer for lock acquisition
         if is_debug {
-            godot_print!("TERRAIN: Acquired chunks lock in {}μs", timer.elapsed().as_micros());
+            godot_print!("ChunkManager: Acquired chunks lock in {}μs", timer.elapsed().as_micros());
         }
         
         if let Some(chunk) = chunks.get(&position) {
@@ -182,7 +182,7 @@ impl ChunkManager {
                 }
                 
                 if is_debug {
-                    godot_print!("TERRAIN: Chunk found, updated state in {}μs", 
+                    godot_print!("ChunkManager: Chunk found, updated state in {}μs", 
                               update_timer.elapsed().as_micros());
                 }
             }
@@ -191,7 +191,7 @@ impl ChunkManager {
         }
         
         if is_debug {
-            godot_print!("TERRAIN: Chunk not found, starting generation/loading");
+            godot_print!("ChunkManager: Chunk not found, starting generation/loading");
         }
         
         // Chunk not in memory, start loading process
@@ -214,7 +214,7 @@ impl ChunkManager {
             let thread_timer = std::time::Instant::now();
             
             if debug_chunk {
-                godot_print!("TERRAIN: Thread started for chunk generation at ({}, {})", 
+                godot_print!("ChunkManager: Thread started for chunk generation at ({}, {})", 
                           position.x, position.z);
             }
             
@@ -233,7 +233,7 @@ impl ChunkManager {
                         chunk_guard.state = ChunkState::Active;
                         
                         if debug_chunk {
-                            godot_print!("TERRAIN: Loaded chunk from storage in {}ms", 
+                            godot_print!("ChunkManager: Loaded chunk from storage in {}ms", 
                                       load_timer.elapsed().as_millis());
                         }
                     }
@@ -244,19 +244,19 @@ impl ChunkManager {
                 Self::generate_chunk(new_chunk_clone, position, storage_clone, thread_safe_biome);
                 
                 if debug_chunk {
-                    godot_print!("TERRAIN: Generated new chunk in {}ms", 
+                    godot_print!("ChunkManager: Generated new chunk in {}ms", 
                               gen_timer.elapsed().as_millis());
                 }
             }
             
             if debug_chunk {
-                godot_print!("TERRAIN: Total thread execution time for chunk: {}ms", 
+                godot_print!("ChunkManager: Total thread execution time for chunk: {}ms", 
                           thread_timer.elapsed().as_millis());
             }
         });
         
         if is_debug {
-            godot_print!("TERRAIN: Total get_chunk operation took {}ms", 
+            godot_print!("ChunkManager: Total get_chunk operation took {}ms", 
                       timer.elapsed().as_millis());
         }
         
@@ -274,7 +274,7 @@ impl ChunkManager {
         let gen_timer = std::time::Instant::now();
         
         if is_debug {
-            godot_print!("TERRAIN: Starting detailed chunk generation for ({}, {})", position.x, position.z);
+            godot_print!("ChunkManager: Starting detailed chunk generation for ({}, {})", position.x, position.z);
         }
 
         // Generate heightmap
@@ -313,7 +313,7 @@ impl ChunkManager {
         }
         
         if is_debug {
-            godot_print!("TERRAIN: Heightmap and biome generation took {}ms", 
+            godot_print!("ChunkManager: Heightmap and biome generation took {}ms", 
                       heightmap_timer.elapsed().as_millis());
         }
         
@@ -329,7 +329,7 @@ impl ChunkManager {
             chunk_guard.state = ChunkState::Active;
             
             if is_debug {
-                godot_print!("TERRAIN: Chunk data update took {}μs", 
+                godot_print!("ChunkManager: Chunk data update took {}μs", 
                           update_timer.elapsed().as_micros());
             }
         }
@@ -339,9 +339,9 @@ impl ChunkManager {
         storage.save_chunk(position, &saved_heightmap, &saved_biome_ids);
         
         if is_debug {
-            godot_print!("TERRAIN: Chunk storage save took {}ms", 
+            godot_print!("ChunkManager: Chunk storage save took {}ms", 
                       storage_timer.elapsed().as_millis());
-            godot_print!("TERRAIN: Complete chunk generation process took {}ms", 
+            godot_print!("ChunkManager: Complete chunk generation process took {}ms", 
                       gen_timer.elapsed().as_millis());
         }
     }

@@ -20,7 +20,7 @@ use crate::core::game_manager;
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode};
 
-use crate::initialization::world_initializer::WorldInitializer;
+use crate::initialization::world::world_initializer::WorldInitializer;
 
 // Import the configuration service
 use crate::initialization::configuration_service::ConfigurationService;
