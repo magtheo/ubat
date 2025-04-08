@@ -298,9 +298,11 @@ impl ChunkManager {
                 };
             
                 
-                 // Simple example noise function (should be enhanced for specific biomes)
+                 // TODO: Simple example noise function (should be enhanced for specific biomes)
                 let height = (world_x.cos() * 0.5 + world_z.sin() * 0.5) * 10.0;
                 let idx = (z * CHUNK_SIZE + x) as usize;
+
+                godot_print!("Generated chunk at ({}, {}) and added to scene", x, z);
 
                 heightmap[idx] = height;
                 biome_ids[idx] = biome_id;
