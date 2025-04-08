@@ -201,7 +201,7 @@ impl SystemInitializer {
         godot_print!("SystemInitializer: Core systems initialized");
         
         // Initialize bridges after all systems are ready
-        self.initialize_bridges()?;
+        // self.initialize_bridges()?;
         
         Ok(())
     }

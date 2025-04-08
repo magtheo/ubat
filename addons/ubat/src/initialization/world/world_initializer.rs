@@ -110,12 +110,11 @@ impl WorldInitializer {
             }
         };
         
-        // Create the world manager
+        // Create the world manager - FIXED: removed the third argument
         let world_manager = Arc::new(Mutex::new(
             WorldStateManager::new_with_dependencies(
                 world_config,
-                Some(self.event_bus.clone()),
-                None // TerrainWorldIntegration will be created by WorldStateManager
+                Some(self.event_bus.clone())
             )
         ));
         
@@ -163,17 +162,20 @@ impl WorldInitializer {
         terrain_init.initialize_terrain_system()
             .map_err(|e| WorldInitError::TerrainError(e))?;
         
-        // Connect terrain systems with world manager
+        // Connect terrain systems directly with world manager
         if let Some(world_manager) = &self.world_manager {
             let mut world_mgr = world_manager.lock()
                 .map_err(|_| WorldInitError::WorldStateError("Failed to lock world manager".to_string()))?;
             
-            // Get the initialized components
+            // Get the initialized components from terrain initializer
             let terrain_context = terrain_init.get_terrain_context();
             
-            // Connect to world manager
+            // Initialize terrain components directly in world manager
             if let (Some(biome_mgr), Some(chunk_mgr)) = (terrain_context.biome_manager, terrain_context.chunk_manager) {
-                // Initialize the world manager's terrain integration with these components
+                println!("WorldInitializer: Connecting BiomeManager and ChunkManager to WorldStateManager");
+                
+                // Store references to these managers directly in world_mgr
+                // This replaces the need for TerrainWorldIntegration
                 world_mgr.initialize_terrain(biome_mgr, chunk_mgr)
                     .map_err(|e| WorldInitError::TerrainError(e))?;
             } else {

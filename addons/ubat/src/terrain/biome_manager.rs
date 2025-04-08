@@ -213,7 +213,7 @@ impl INode for BiomeManager {
             section_cache: Arc::new(RwLock::new(HashMap::new())),
             biome_cache: Arc::new(RwLock::new(HashMap::new())),
             biome_mask_image_path: GString::from("res://textures/biomeMask_image.png"),
-            noise_path: GString::from("res://resources/noise/biome_blend_noise.tres"),
+            noise_path: GString::from("res://project/terrain/noise/blendNoise.tres"),
             sections: Vec::new(),
             blend_distance: 200,
             noise: None,
@@ -229,7 +229,17 @@ impl INode for BiomeManager {
         let error_logger = Arc::new(ErrorLogger::new(100)); // 100 max log entries
         self.error_logger = Some(error_logger.clone());
         
-        godot_print!("RUST: BiomeManager: Initializing...");
+        godot_print!("BiomeManager: Created but waiting for explicit initialization");
+        // Don't auto-initialize - wait for TerrainInitializer to initialize
+    }
+}
+
+#[godot_api]
+impl BiomeManager {
+
+    #[func]
+    pub fn initialize_explicitly(&mut self) -> bool {
+        godot_print!("BiomeManager: Starting explicit initialization...");
         self.initialization_state = BiomeManagerState::ResourcesLoading;
         
         // Initialize resource manager if needed
@@ -256,11 +266,10 @@ impl INode for BiomeManager {
             
             godot_error!("BiomeManager initialization failed");
         }
+        
+        init_result
     }
-}
 
-#[godot_api]
-impl BiomeManager {
     #[func]
     pub fn comprehensive_initialization(&mut self) -> bool {
         // Wrap error handling in a method that returns a boolean
@@ -325,7 +334,7 @@ impl BiomeManager {
     fn internal_load_mask(&mut self, path: GString) -> Result<(), String> {
         // Check if path exists and is a PNG
         let path_str = path.to_string();
-        godot_print!("Loading biome mask from: {}", path_str);
+        godot_print!("BiomeManager: Loading biome mask from: {}", path_str);
   
         // Load with resource manager
         let texture = resource_manager::load_and_cast::<Texture2D>(path.clone())
@@ -388,7 +397,7 @@ impl BiomeManager {
                     );
                 }
                 
-                Err(format!("Failed to load noise from: {}, using fallback", path))
+                Err(format!("BiomeManager: Failed to load noise from: {}, using fallback", path))
             }
         }
     }
@@ -452,7 +461,7 @@ impl BiomeManager {
             self.noise = Some(noise);
         }
         
-        godot_print!("Biome sections initialized");
+        godot_print!("BiomeManager: Biome sections initialized");
     }
     
     // Initialize Voronoi points for each section
@@ -482,7 +491,7 @@ impl BiomeManager {
                 });
             }
         }        
-        godot_print!("Voronoi points initialized for all sections ({} total sections)", self.sections.len());
+        godot_print!("BiomeManager: Voronoi points initialized for all sections ({} total sections)", self.sections.len());
         
         // Build the spatial grid
         self.build_spatial_grid();

@@ -67,11 +67,16 @@ impl TerrainInitializer {
         // Create BiomeManager
         let mut biome_manager = BiomeManager::new_alloc();
 
-        // Configure BiomeManager
+        // Configure BiomeManager before initialization
         {
             let mut biome_mgr_mut = biome_manager.bind_mut();
             biome_mgr_mut.set_world_dimensions(self.world_width, self.world_height);
             biome_mgr_mut.set_seed(self.seed);
+            
+            // Now explicitly initialize the BiomeManager
+            if !biome_mgr_mut.initialize_explicitly() {
+                return Err("Failed to initialize BiomeManager".to_string());
+            }
         }
 
         // We're not adding to scene tree in this pure Rust approach
