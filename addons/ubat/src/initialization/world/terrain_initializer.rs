@@ -1,6 +1,6 @@
 // File: terrain_initializer.rs
 use godot::prelude::*;
-use godot::classes::Node;
+use godot::classes::{Node, Engine, SceneTree};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -104,11 +104,23 @@ impl TerrainInitializer {
         self.timing.update_state(TerrainInitializationState::ChunkManagerInitialized);
 
         // Create ChunkController
-        let chunk_controller = ChunkController::new_alloc();
-        self.chunk_controller = Some(chunk_controller);
+    let chunk_controller = ChunkController::new_alloc();
 
-        // Update initialization state
-        self.timing.update_state(TerrainInitializationState::Ready);
+    // Get a reference to the scene root
+    if let Some(mut root) = TerrainInitializer::get_scene_root() {
+        let mut cc_node = chunk_controller.clone().upcast::<Node>();
+        root.call_deferred("add_child", &[cc_node.to_variant()]);
+        cc_node.set_owner(&root.clone());
+        cc_node.set_name("ChunkController");
+    } else {
+        godot_error!("Failed to retrieve the scene root.");
+        return Err("Failed to retrieve the scene root.".to_string());
+    }
+
+    self.chunk_controller = Some(chunk_controller);
+
+    // Update initialization state
+    self.timing.update_state(TerrainInitializationState::Ready);
 
         godot_print!("TerrainInitializer: Terrain system fully initialized in Rust");
         Ok(())
@@ -126,6 +138,17 @@ impl TerrainInitializer {
             },
         }
     }
+
+    fn get_scene_root() -> Option<Gd<Node>> {
+        // Access the root node of the scene tree
+        Engine::singleton()
+            .get_main_loop()
+            .and_then(|main_loop| Some(main_loop.cast::<SceneTree>())) // Returns Option<Gd<SceneTree>>
+            .and_then(|scene_tree| scene_tree.get_root())             // Returns Option<Gd<Window>>
+            .map(|root_window| root_window.upcast::<Node>())      // Converts Gd<Window> to Gd<Node>
+    }
+    
+    
 
     pub fn get_initialization_status(&self) -> Dictionary {
         let mut result = Dictionary::new();

@@ -45,8 +45,8 @@ impl INode3D for ChunkController {
         godot_print!("RUST: ChunkController: Initializing...");
         
         // Find the ChunkManager and BiomeManager in the scene tree
-        let chunk_manager = self.base().get_node_as::<ChunkManager>("../ChunkManager");
-        let biome_manager = self.base().get_node_as::<BiomeManager>("../BiomeManager");
+        let chunk_manager = self.base().get_node_as::<ChunkManager>("/root/ChunkManager"); // claude: how should this be correctly accesses, pleas take my init system indo account
+        let biome_manager = self.base().get_node_as::<BiomeManager>("/root/BiomeManager");
         
         if chunk_manager.is_instance_valid() {
             self.chunk_manager = Some(chunk_manager);
@@ -117,6 +117,8 @@ impl ChunkController {
         let new_chunk_x = (position.x / 32.0).floor() as i32;
         let new_chunk_z = (position.z / 32.0).floor() as i32;
         
+        godot_print!("ChunkController: New chunk position: {},{}", new_chunk_x, new_chunk_z);
+
         // Only flag for update if the player moved to a different chunk
         if old_chunk_x != new_chunk_x || old_chunk_z != new_chunk_z {
             self.needs_update = true;
