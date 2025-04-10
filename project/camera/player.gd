@@ -12,12 +12,14 @@ var last_chunk_x = 0
 var last_chunk_z = 0
 var chunk_size = 32.0  # Make sure this matches the value in your Rust code // TODO, make a central point where this data is set and sendt to the correct components
 
+signal player_chunk_changed(chunk_x: int, chunk_z: int)
+
 func _ready():
 	# Find the chunk controller in the scene
 	chunk_controller = get_node("/root/ChunkController")
 	if chunk_controller:
-		# Initialize the chunk controller with our current position
-		chunk_controller.update_player_position(global_position)
+		chunk_controller.connect_player_signal(self)
+
 		# Store initial chunk coordinates
 		last_chunk_x = floor(global_position.x / chunk_size)
 		last_chunk_z = floor(global_position.z / chunk_size)
@@ -66,14 +68,9 @@ func update_terrain_if_needed():
 	var current_chunk_x = floor(global_position.x / chunk_size)
 	var current_chunk_z = floor(global_position.z / chunk_size)
 	
-	# Only notify the terrain system when we've changed chunks
 	if current_chunk_x != last_chunk_x or current_chunk_z != last_chunk_z:
-		# Update the chunk controller with our new position
-		chunk_controller.update_player_position(global_position)
-		
-		# Update our stored chunk coordinates
 		last_chunk_x = current_chunk_x
 		last_chunk_z = current_chunk_z
 		
-		# Optional debug output
-		print("PPlayer contoller: Player moved to chunk: ", current_chunk_x, ", ", current_chunk_z)
+		emit_signal("player_chunk_changed", current_chunk_x, current_chunk_z)
+		print("Signal emitted: player moved to chunk: ", current_chunk_x, ", ", current_chunk_z)

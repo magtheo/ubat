@@ -64,64 +64,53 @@ impl TerrainInitializer {
     pub fn initialize_terrain_system(&mut self) -> Result<(), String> {
         godot_print!("TerrainInitializer: TerrainInitializer starting initialization...");
         
-        // Create BiomeManager
+        // 1. Create BiomeManager with CRITICAL configuration steps
         let mut biome_manager = BiomeManager::new_alloc();
-
-        // Configure BiomeManager before initialization
+    
+        // IMPORTANT: Configure BiomeManager BEFORE initialization
         {
             let mut biome_mgr_mut = biome_manager.bind_mut();
             biome_mgr_mut.set_world_dimensions(self.world_width, self.world_height);
             biome_mgr_mut.set_seed(self.seed);
             
-            // Now explicitly initialize the BiomeManager
+            // CRITICAL: Explicit initialization method
             if !biome_mgr_mut.initialize_explicitly() {
                 return Err("Failed to initialize BiomeManager".to_string());
             }
         }
-
-        // We're not adding to scene tree in this pure Rust approach
-
-        // Store reference
-        self.biome_manager = Some(biome_manager);
-
-        // Update initialization state
-        self.timing.update_state(TerrainInitializationState::BiomeInitialized);
-
-        // Create ChunkManager
+    
+        // 2. ChunkManager setup
         let mut chunk_manager = ChunkManager::new_alloc();
-
+    
         // Connect the ChunkManager to BiomeManager
         if let Some(biome_mgr) = &self.biome_manager {
             let mut chunk_mgr_mut = chunk_manager.bind_mut();
             chunk_mgr_mut.set_biome_manager(biome_mgr.clone());
             chunk_mgr_mut.set_render_distance(self.render_distance);
         }
-
-        // Store reference
+    
+        // 3. ChunkController with scene tree addition
+        let chunk_controller = ChunkController::new_alloc();
+    
+        // IMPORTANT: Get scene root and add children
+        if let Some(mut root) = TerrainInitializer::get_scene_root() {
+            let mut cc_node = chunk_controller.clone().upcast::<Node>();
+            root.call_deferred("add_child", &[cc_node.to_variant()]);
+            cc_node.set_owner(&root.clone());
+            cc_node.set_name("ChunkController");
+        } else {
+            godot_error!("Failed to retrieve the scene root.");
+            return Err("Failed to retrieve the scene root.".to_string());
+        }
+    
+        // Store references
+        self.biome_manager = Some(biome_manager);
         self.chunk_manager = Some(chunk_manager);
-
-        // Update initialization state
-        self.timing.update_state(TerrainInitializationState::ChunkManagerInitialized);
-
-        // Create ChunkController
-    let chunk_controller = ChunkController::new_alloc();
-
-    // Get a reference to the scene root
-    if let Some(mut root) = TerrainInitializer::get_scene_root() {
-        let mut cc_node = chunk_controller.clone().upcast::<Node>();
-        root.call_deferred("add_child", &[cc_node.to_variant()]);
-        cc_node.set_owner(&root.clone());
-        cc_node.set_name("ChunkController");
-    } else {
-        godot_error!("Failed to retrieve the scene root.");
-        return Err("Failed to retrieve the scene root.".to_string());
-    }
-
-    self.chunk_controller = Some(chunk_controller);
-
-    // Update initialization state
-    self.timing.update_state(TerrainInitializationState::Ready);
-
+        self.chunk_controller = Some(chunk_controller);
+    
+        // Update initialization state - KEEP this for tracking
+        self.timing.update_state(TerrainInitializationState::Ready);
+    
         godot_print!("TerrainInitializer: Terrain system fully initialized in Rust");
         Ok(())
     }

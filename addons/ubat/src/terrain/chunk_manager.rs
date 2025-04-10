@@ -276,6 +276,8 @@ impl ChunkManager {
         if is_debug {
             godot_print!("ChunkManager: Starting detailed chunk generation for ({}, {})", position.x, position.z);
         }
+        godot_print!("ChunkManager: Starting chunk generation for ({}, {})", position.x, position.z);
+
 
         // Generate heightmap
         let mut heightmap = vec![0.0; (CHUNK_SIZE * CHUNK_SIZE) as usize];

@@ -62,11 +62,9 @@ impl TerrainBridge {
                 let mut cc = controller.clone();
                 cc.bind_mut().update_player_position(position);
                 
-                // Emit signal for other systems
-                self.base_mut().emit_signal("terrain_updated".into(), &[
-                    Vector2::new(new_chunk_x as f32, new_chunk_z as f32).to_variant()
-                ]);
-                
+                // Emit signal for other systems. TODO: should this emit the position?
+                self.base_mut().emit_signal("terrain_updated", &[]);
+
                 godot_print!("Player moved to chunk: {}, {}", new_chunk_x, new_chunk_z);
                 return true;
             }
@@ -93,5 +91,5 @@ impl TerrainBridge {
     }
     
     #[signal]
-    fn terrain_updated(position: Vector2) {}
+    fn terrain_updated();
 }

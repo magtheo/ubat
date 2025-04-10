@@ -106,7 +106,52 @@ impl INode3D for ChunkController {
 
 #[godot_api]
 impl ChunkController {
-    // Update player position (call this from Godot)
+
+    #[func]
+    pub fn connect_player_signal(&mut self, mut player_node: Gd<Node>) -> Variant { // TODO: is there a better solution where MUT player is not needed
+        let chunk_controller_obj = self.base().clone().upcast::<Object>();
+
+        // Create a slice of Variants directly
+        let args = &[
+            StringName::from("player_chunk_changed").to_variant(),
+            chunk_controller_obj.to_variant(),
+            StringName::from("on_player_chunk_changed").to_variant()
+        ];
+
+        // Directly call and return the result
+        let result = player_node.call("connect", args);
+        
+        godot_print!("Signal connection result: {:?}", result);
+        
+        // Convert the result directly to a Variant
+        // If the call was successful, result will already be a Variant
+        result
+    }
+
+    #[func]
+    fn on_player_chunk_changed(&mut self, chunk_x: Variant, chunk_z: Variant) {
+        let chunk_x: i64 = chunk_x.try_to().unwrap_or_else(|_| {
+            godot_error!("Failed to convert chunk_x");
+            0
+        });
+
+        let chunk_z: i64 = chunk_z.try_to().unwrap_or_else(|_| {
+            godot_error!("Failed to convert chunk_z");
+            0
+        });
+
+        let new_position = Vector3::new(
+            chunk_x as f32 * 32.0, 
+            0.0, 
+            chunk_z as f32 * 32.0
+        );
+        
+        self.update_player_position(new_position);
+    }
+
+
+
+    // Update player position 
     #[func]
     pub fn update_player_position(&mut self, position: Vector3) {
         let old_chunk_x = (self.player_position.x / 32.0).floor() as i32;
@@ -462,5 +507,5 @@ impl ChunkController {
       has_different_neighbor
   }
 
-
+  
 }

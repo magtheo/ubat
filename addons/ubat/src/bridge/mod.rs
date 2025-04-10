@@ -34,6 +34,6 @@ pub mod network {
     pub use super::network_bridge::*;
 }
 
-pub mod world {
+pub mod terrain {
     pub use super::terrain_bridge::*;
 }
