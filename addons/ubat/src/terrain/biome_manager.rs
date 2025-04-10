@@ -15,9 +15,7 @@ use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BiomeManagerState {
     Uninitialized,
-    ResourcesLoading,
-    ResourcesLoaded,
-    VoronoiPointsGenerated,
+    Initializing,
     Initialized,
     Error,
 }
@@ -157,8 +155,11 @@ struct ThreadSafeVoronoiPoint {
 pub struct BiomeManager {
     #[base]
     base: Base<Node>,
+
     initialization_state: BiomeManagerState,
-    
+    error_logger: Option<Arc<ErrorLogger>>,
+
+
     // Biome Mask Texture
     biome_image: Option<Gd<Image>>,
     mask_width: i32,
@@ -188,7 +189,6 @@ pub struct BiomeManager {
     
     // Random number generator for voronoi points
     rng: Gd<RandomNumberGenerator>,
-    error_logger: Option<Arc<ErrorLogger>>,
 
     // Spatial partitioning grid
     spatial_grid: Option<SpatialGrid>,
@@ -237,73 +237,64 @@ impl INode for BiomeManager {
 #[godot_api]
 impl BiomeManager {
 
+    //initialize_explicitly
     #[func]
-    pub fn initialize_explicitly(&mut self) -> bool {
-        godot_print!("BiomeManager: Starting explicit initialization...");
-        self.initialization_state = BiomeManagerState::ResourcesLoading;
+    pub fn initialize(&mut self, world_width: f32, world_height: f32, seed: u32) -> bool {
+        // Prevent re-initialization
+        if self.initialization_state != BiomeManagerState::Uninitialized {
+            godot_print!("BiomeManager: Already initialized");
+            return false;
+        }
+
+        // Set initialization state
+        self.initialization_state = BiomeManagerState::Initializing;
         
-        // Initialize resource manager if needed
+        // Update world parameters
+        self.world_width = world_width;
+        self.world_height = world_height;
+        self.seed = seed;
+        
+        // Initialize resource manager
         resource_manager::init();
         
-        // Comprehensive initialization with error handling
-        let init_result = self.comprehensive_initialization();
+        // Perform initialization steps with error handling
+        let result = self.perform_initialization();
         
-        if init_result {
-            self.initialization_state = BiomeManagerState::Initialized;
-            godot_print!("BiomeManager: Initialization complete");
-        } else {
-            self.initialization_state = BiomeManagerState::Error;
-            
-            // Log the error
-            if let Some(logger) = &self.error_logger {
-                logger.log_error(
-                    "BiomeManager",
-                    "Initialization failed",
-                    ErrorSeverity::Critical,
-                    None
-                );
-            }
-            
-            godot_error!("BiomeManager initialization failed");
-        }
-        
-        init_result
-    }
-
-    #[func]
-    pub fn comprehensive_initialization(&mut self) -> bool {
-        // Wrap error handling in a method that returns a boolean
-        match self.internal_initialization() {
-            Ok(_) => true,
+        // Update final state
+        match result {
+            Ok(_) => {
+                self.initialization_state = BiomeManagerState::Initialized;
+                godot_print!("BiomeManager: Initialization complete");
+                true
+            },
             Err(e) => {
+                self.initialization_state = BiomeManagerState::Error;
+                
                 // Log the error
                 if let Some(logger) = &self.error_logger {
                     logger.log_error(
-                        "BiomeManager", 
-                        &format!("Initialization failed: {}", e), 
-                        ErrorSeverity::Critical, 
+                        "BiomeManager",
+                        &format!("Initialization failed: {}", e),
+                        ErrorSeverity::Critical,
                         None
                     );
                 }
                 
-                // Godot-friendly error reporting
                 godot_error!("BiomeManager initialization failed: {}", e);
                 false
             }
         }
     }
 
-    // Internal method that uses Result for actual error handling
-    fn internal_initialization(&mut self) -> Result<(), String> {
-        // Load mask with detailed error handling
-        if !self.load_mask(self.biome_mask_image_path.clone()) {
-            return Err("Mask loading failed".to_string());
-        }
+    // Internal initialization method
+    fn perform_initialization(&mut self) -> Result<(), String> {
+        // Load mask image
+        self.load_mask(self.biome_mask_image_path.clone())
+            .map_err(|e| format!("Mask loading failed: {}", e))?;
         
-        // Load noise with detailed error handling
-        if !self.load_noise(self.noise_path.clone()) {
-            return Err("Noise loading failed".to_string());
-        }
+        // Load noise
+        self.load_noise(self.noise_path.clone())
+            .map_err(|e| format!("Noise loading failed: {}", e))?;
         
         // Setup biome sections
         self.setup_biome_sections();
@@ -312,67 +303,48 @@ impl BiomeManager {
         self.initialize_voronoi_points();
         
         // Validate initialization
-        if !self.is_fully_initialized() {
+        if !self.validate_initialization() {
             return Err("Incomplete initialization".to_string());
         }
         
         Ok(())
     }
 
-    // Modify existing load_mask and load_noise to return bool
-    #[func]
-    pub fn load_mask(&mut self, path: GString) -> bool {
-        match self.internal_load_mask(path) {
-            Ok(_) => true,
-            Err(e) => {
-                godot_error!("Failed to load biome mask: {}", e);
-                false
-            }
-        }
+    // Validate initialization
+    fn validate_initialization(&self) -> bool {
+        self.noise.is_some() && 
+        !self.sections.is_empty() && 
+        self.biome_image.is_some() && 
+        self.spatial_grid.is_some()
     }
 
-    fn internal_load_mask(&mut self, path: GString) -> Result<(), String> {
-        // Check if path exists and is a PNG
-        let path_str = path.to_string();
-        godot_print!("BiomeManager: Loading biome mask from: {}", path_str);
-  
-        // Load with resource manager
+    // Modify existing load_mask and load_noise to return bool
+    fn load_mask(&mut self, path: GString) -> Result<(), String> {
+        godot_print!("BiomeManager: Loading biome mask from: {}", path);
+        
+        // Load texture
         let texture = resource_manager::load_and_cast::<Texture2D>(path.clone())
             .ok_or_else(|| format!("Failed to load texture from path: {}", path))?;
-  
+        
         let image = texture.get_image()
             .ok_or_else(|| "Failed to get image from texture".to_string())?;
-  
+        
         self.biome_image = Some(image.clone());
-  
-        self.mask_width = image.get_width();
-        self.mask_height = image.get_height();
-  
-        godot_print!("Biome image loaded: {}x{}", self.mask_width, self.mask_height);
-  
-        // Log a warning if the image is very small
-        if self.mask_width < 100 || self.mask_height < 100 {
-            godot_print!("WARNING: Biome mask image is very small ({}x{}), which may result in low-detail section boundaries",
-            self.mask_width, self.mask_height);
+        let width = image.get_width();
+        let height = image.get_height();
+        
+        godot_print!("Biome image loaded: {}x{}", width, height);
+        
+        // Warn about small images
+        if width < 100 || height < 100 {
+            godot_print!("WARNING: Biome mask image is very small ({}x{})", width, height);
         }
-  
+        
         Ok(())
     }
   
 
-    #[func]
-    pub fn load_noise(&mut self, path: GString) -> bool {
-        match self.internal_load_noise(path) {
-            Ok(_) => true,
-            Err(e) => {
-                godot_error!("Failed to load noise: {}", e);
-                false
-            }
-        }
-    }
-
-    fn internal_load_noise(&mut self, path: GString) -> Result<(), String> {
-        // Existing noise loading logic, but returning Result
+    fn load_noise(&mut self, path: GString) -> Result<(), String> {
         match resource_manager::load_and_cast::<FastNoiseLite>(path.clone()) {
             Some(noise) => {
                 self.noise = Some(noise);
@@ -380,24 +352,14 @@ impl BiomeManager {
                 Ok(())
             },
             None => {
-                // Create a fallback noise
+                // Create fallback noise
                 let mut noise = FastNoiseLite::new_gd();
                 noise.set_seed(self.seed as i32);
                 noise.set_frequency(0.01);
                 noise.set_fractal_octaves(4);
                 self.noise = Some(noise);
                 
-                // Log a warning about fallback
-                if let Some(logger) = &self.error_logger {
-                    logger.log_error(
-                        "BiomeManager", 
-                        &format!("Fallback noise used for: {}", path), 
-                        ErrorSeverity::Warning, 
-                        None
-                    );
-                }
-                
-                Err(format!("BiomeManager: Failed to load noise from: {}, using fallback", path))
+                Err(format!("Failed to load noise from: {}, using fallback", path))
             }
         }
     }
@@ -414,10 +376,8 @@ impl BiomeManager {
     pub fn get_initialization_state(&self) -> i32 {
         match self.initialization_state {
             BiomeManagerState::Uninitialized => 0,
-            BiomeManagerState::ResourcesLoading => 1,
-            BiomeManagerState::ResourcesLoaded => 2,
-            BiomeManagerState::VoronoiPointsGenerated => 3,
-            BiomeManagerState::Initialized => 4,
+            BiomeManagerState::Initializing => 1,
+            BiomeManagerState::Initialized => 2,
             BiomeManagerState::Error => -1,
         }
     }
@@ -890,7 +850,13 @@ impl BiomeManager {
     #[func]
     pub fn set_noise_resource(&mut self, path: GString) -> bool {
         self.noise_path = path.clone();
-        self.load_noise(path)
+        match self.load_noise(path) {
+            Ok(_) => true,
+            Err(e) => {
+                godot_error!("Failed to set noise resource: {}", e);
+                false
+            }
+        }
     }
     
     // Export section data for debugging

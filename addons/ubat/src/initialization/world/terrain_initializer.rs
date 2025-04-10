@@ -62,55 +62,73 @@ impl TerrainInitializer {
 
     // This is the main method to initialize the terrain system
     pub fn initialize_terrain_system(&mut self) -> Result<(), String> {
-        godot_print!("TerrainInitializer: TerrainInitializer starting initialization...");
+        godot_print!("TerrainInitializer: Starting initialization...");
         
-        // 1. Create BiomeManager with CRITICAL configuration steps
+        // 1. Create parent node for our terrain system
+        let mut parent_node = Node::new_alloc();
+        parent_node.set_name("TerrainSystem");
+        
+        // 2. Create BiomeManager with CRITICAL configuration steps
         let mut biome_manager = BiomeManager::new_alloc();
-    
-        // IMPORTANT: Configure BiomeManager BEFORE initialization
+        biome_manager.set_name("BiomeManager");
+        
+        // IMPORTANT: Initialize BiomeManager with world parameters
         {
             let mut biome_mgr_mut = biome_manager.bind_mut();
-            biome_mgr_mut.set_world_dimensions(self.world_width, self.world_height);
-            biome_mgr_mut.set_seed(self.seed);
+            let init_result = biome_mgr_mut.initialize(
+                self.world_width, 
+                self.world_height, 
+                self.seed
+            );
             
-            // CRITICAL: Explicit initialization method
-            if !biome_mgr_mut.initialize_explicitly() {
+            if !init_result {
                 return Err("Failed to initialize BiomeManager".to_string());
             }
         }
     
-        // 2. ChunkManager setup
+        // 3. ChunkManager setup
         let mut chunk_manager = ChunkManager::new_alloc();
+        chunk_manager.set_name("ChunkManager");
     
-        // Connect the ChunkManager to BiomeManager
-        if let Some(biome_mgr) = &self.biome_manager {
-            let mut chunk_mgr_mut = chunk_manager.bind_mut();
-            chunk_mgr_mut.set_biome_manager(biome_mgr.clone());
-            chunk_mgr_mut.set_render_distance(self.render_distance);
-        }
-    
-        // 3. ChunkController with scene tree addition
-        let chunk_controller = ChunkController::new_alloc();
-    
-        // IMPORTANT: Get scene root and add children
+        // 4. ChunkController setup
+        let mut chunk_controller = ChunkController::new_alloc();
+        chunk_controller.set_name("ChunkController");
+        
+        // 5. Add all nodes to the parent
+        let mut biome_node = biome_manager.clone().upcast::<Node>();
+        let mut chunk_mgr_node = chunk_manager.clone().upcast::<Node>();
+        let mut controller_node = chunk_controller.clone().upcast::<Node>();
+        
+        parent_node.add_child(&biome_node);
+        parent_node.add_child(&chunk_mgr_node);
+        parent_node.add_child(&controller_node);
+        
+        // 6. Add parent to scene
         if let Some(mut root) = TerrainInitializer::get_scene_root() {
-            let mut cc_node = chunk_controller.clone().upcast::<Node>();
-            root.call_deferred("add_child", &[cc_node.to_variant()]);
-            cc_node.set_owner(&root.clone());
-            cc_node.set_name("ChunkController");
+            let terrain_node = parent_node.clone().upcast::<Node>(); // No 'mut' needed if just adding
+        
+            // Add synchronously
+            root.add_child(&terrain_node.clone()); // Clone if you need terrain_node later
+        
+            // Now set_owner should work immediately after
+            biome_node.set_owner(&root);
+            chunk_mgr_node.set_owner(&root);
+            controller_node.set_owner(&root);
+            parent_node.set_owner(&root); // Set owner on the parent_node itself too!
+        
         } else {
             godot_error!("Failed to retrieve the scene root.");
             return Err("Failed to retrieve the scene root.".to_string());
         }
-    
+        
         // Store references
         self.biome_manager = Some(biome_manager);
         self.chunk_manager = Some(chunk_manager);
         self.chunk_controller = Some(chunk_controller);
-    
+        
         // Update initialization state - KEEP this for tracking
         self.timing.update_state(TerrainInitializationState::Ready);
-    
+        
         godot_print!("TerrainInitializer: Terrain system fully initialized in Rust");
         Ok(())
     }
