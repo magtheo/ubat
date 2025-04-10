@@ -258,18 +258,18 @@ impl SystemInitializer {
             self.initialize_bridges()?;
         }
         
-        // Configure system using the configuration service
-        if let Some(ref mut config_service) = self.configuration_service {
-            config_service.configure(options)
-                .map_err(|e| SystemInitError::ManagerError(e))?;
-        } else {
-            return Err(SystemInitError::ManagerError("Configuration service not initialized".into()));
+        // Use a scope to ensure borrows are dropped
+        {
+            // Configure system using the configuration service
+            if let Some(ref mut config_service) = self.configuration_service {
+                config_service.configure(options)
+                    .map_err(|e| SystemInitError::ManagerError(e))?;
+            } else {
+                return Err(SystemInitError::ManagerError("Configuration service not initialized".into()));
+            }
         }
         
         self.initialized = true;
-        
-        // Note: We no longer need to update the singleton instance here since
-        // we're using Arc<Mutex<>> and already modifying the instance in place
         
         godot_print!("SystemInitializer: Standalone initialization complete");
         Ok(())

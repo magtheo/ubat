@@ -38,64 +38,77 @@ impl INode for GameInitHelper {
 #[godot_api]
 impl GameInitHelper {
     /// Initialize the game in standalone mode
-    fn initialize_game(&mut self, mode: i64, options: Dictionary) -> bool {
+    fn initialize_game(&self, mode: i64, options: Dictionary) -> bool {
         godot_print!("GameInitHelper: Initializing game with mode: {}", mode);
         
         // Get or create the SystemInitializer singleton
         let system_initializer = SystemInitializer::ensure_initialized();
         
-        // Use a blocking lock to access the initializer
-        let mut system_init = match system_initializer.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                godot_error!("GameInitHelper: Could not acquire lock on SystemInitializer");
-                return false;
+        // Create a cloned options dictionary to avoid mutations
+        let mut _options = options.clone();
+        
+        // Use a separate scope to handle initialization
+        {
+            // Use a blocking lock to access the initializer
+            let mut system_init = match system_initializer.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    godot_error!("GameInitHelper: Could not acquire lock on SystemInitializer");
+                    return false;
+                }
+            };
+            
+            // Prepare options with network mode
+            let mut full_options = Dictionary::new();
+            
+            // Copy all values from the original dictionary
+            for (key, value) in options.iter_shared() {
+                full_options.insert(key, value);
             }
-        };
-        
-        // Prepare options with network mode
-        let mut full_options = options.clone();
-        full_options.insert("network_mode".to_variant(), mode.to_variant());
-        
-        // Select initialization method based on mode
-        let init_result = match mode {
-            0 => system_init.initialize_standalone(&full_options),
-            1 => system_init.initialize_host(&full_options),
-            2 => system_init.initialize_client(&full_options),
-            _ => {
-                godot_error!("GameInitHelper: Invalid network mode");
-                return false;
-            }
-        };
-        
-        // Handle initialization result
-        match init_result {
-            Ok(_) => {
-                godot_print!("GameInitHelper: Game initialization successful");
-                true
-            },
-            Err(err) => {
-                godot_error!("GameInitHelper: Initialization failed: {}", err);
-                false
+            
+            // Add network mode
+            full_options.insert("network_mode".to_variant(), mode.to_variant());
+            
+            // Select initialization method based on mode
+            let init_result = match mode {
+                0 => system_init.initialize_standalone(&full_options),
+                1 => system_init.initialize_host(&full_options),
+                2 => system_init.initialize_client(&full_options),
+                _ => {
+                    godot_error!("GameInitHelper: Invalid network mode");
+                    return false;
+                }
+            };
+            
+            // Handle initialization result
+            match init_result {
+                Ok(_) => {
+                    godot_print!("GameInitHelper: Game initialization successful");
+                    true
+                },
+                Err(err) => {
+                    godot_error!("GameInitHelper: Initialization failed: {}", err);
+                    false
+                }
             }
         }
     }
 
     /// Standalone mode initialization
     #[func]
-    pub fn init_standalone(&mut self, options: Dictionary) -> bool {
+    pub fn init_standalone(&self, options: Dictionary) -> bool {
         self.initialize_game(0, options)
     }
 
     /// Host mode initialization
     #[func]
-    pub fn init_host(&mut self, options: Dictionary) -> bool {
+    pub fn init_host(&self, options: Dictionary) -> bool {
         self.initialize_game(1, options)
     }
 
     /// Client mode initialization
     #[func]
-    pub fn init_client(&mut self, options: Dictionary) -> bool {
+    pub fn init_client(&self, options: Dictionary) -> bool {
         self.initialize_game(2, options)
     }
     
