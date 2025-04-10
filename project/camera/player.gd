@@ -15,17 +15,25 @@ var chunk_size = 32.0  # Make sure this matches the value in your Rust code // T
 signal player_chunk_changed(chunk_x: int, chunk_z: int)
 
 func _ready():
-	# Find the chunk controller in the scene
-	chunk_controller = get_node("/root/ChunkController")
+	var terrain_system = get_node_or_null("/root/TerrainSystem")
+	
+	if terrain_system:
+		chunk_controller = terrain_system.get_node_or_null("ChunkController")
+	else:
+		chunk_controller = get_node_or_null("/root/ChunkController")
+	
 	if chunk_controller:
-		chunk_controller.connect_player_signal(self)
-
-		# Store initial chunk coordinates
-		last_chunk_x = floor(global_position.x / chunk_size)
-		last_chunk_z = floor(global_position.z / chunk_size)
-		print("Connected to terrain system")
+		var success = chunk_controller.connect_player_signal(self)
+		if success:
+			# Store initial chunk coordinates
+			last_chunk_x = floor(global_position.x / chunk_size)
+			last_chunk_z = floor(global_position.z / chunk_size)
+			print("Connected to terrain system")
+		else:
+			push_error("Failed to connect player signal to ChunkController")
 	else:
 		push_error("Could not find ChunkController node")
+		
 
 func _physics_process(_delta):
 	var local_velocity = Vector3()

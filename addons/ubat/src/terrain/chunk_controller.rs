@@ -44,29 +44,38 @@ impl INode3D for ChunkController {
     fn ready(&mut self) {
         godot_print!("RUST: ChunkController: Initializing...");
         
-        // Find the ChunkManager and BiomeManager in the scene tree
-        let chunk_manager = self.base().get_node_as::<ChunkManager>("/root/ChunkManager"); // claude: how should this be correctly accesses, pleas take my init system indo account
-        let biome_manager = self.base().get_node_as::<BiomeManager>("/root/BiomeManager");
+        // Get nodes from the scene tree using proper paths
+        // Look for sibling nodes rather than relative paths
+        let chunk_manager = self.base().get_node_as::<ChunkManager>("../ChunkManager");
+        let biome_manager = self.base().get_node_as::<BiomeManager>("../BiomeManager");
         
-        if chunk_manager.is_instance_valid() {
-            self.chunk_manager = Some(chunk_manager);
-            godot_print!("ChunkController: Found ChunkManager");
+        // Use get_parent to find parent node, then find siblings 
+        if let Some(parent) = self.base().get_parent() {
+            let chunk_manager = parent.get_node_as::<ChunkManager>("ChunkManager");
+            let biome_manager = parent.get_node_as::<BiomeManager>("BiomeManager");
+            
+            if chunk_manager.is_instance_valid() {
+                self.chunk_manager = Some(chunk_manager);
+                godot_print!("ChunkController: Found ChunkManager");
+            } else {
+                godot_error!("ChunkController: Could not find ChunkManager in scene tree");
+            }
+            
+            if biome_manager.is_instance_valid() {
+                self.biome_manager = Some(biome_manager);
+                godot_print!("ChunkController: Found BiomeManager");
+            } else {
+                godot_error!("ChunkController: Could not find BiomeManager in scene tree");
+            }
+            
+            // Set the reference in ChunkManager to BiomeManager (if needed)
+            if let (Some(chunk_mgr), Some(biome_mgr)) = (&self.chunk_manager, &self.biome_manager) {
+                let mut chunk_mgr_mut = chunk_mgr.clone();
+                chunk_mgr_mut.bind_mut().set_biome_manager(biome_mgr.clone());
+                godot_print!("ChunkController: Connected ChunkManager to BiomeManager");
+            }
         } else {
-            godot_error!("ChunkController: Could not find ChunkManager in scene tree");
-        }
-        
-        if biome_manager.is_instance_valid() {
-            self.biome_manager = Some(biome_manager);
-            godot_print!("ChunkController: Found BiomeManager");
-        } else {
-            godot_error!("ChunkController: Could not find BiomeManager in scene tree");
-        }
-        
-        // Set the reference in ChunkManager to BiomeManager (if needed)
-        if let (Some(chunk_mgr), Some(biome_mgr)) = (&self.chunk_manager, &self.biome_manager) {
-            let mut chunk_mgr_mut = chunk_mgr.clone();
-            chunk_mgr_mut.bind_mut().set_biome_manager(biome_mgr.clone());
-            godot_print!("ChunkController: Connected ChunkManager to BiomeManager");
+            godot_error!("ChunkController: No parent node found");
         }
         
         // Initialize the render distance in the ChunkManager
@@ -108,24 +117,35 @@ impl INode3D for ChunkController {
 impl ChunkController {
 
     #[func]
-    pub fn connect_player_signal(&mut self, mut player_node: Gd<Node>) -> Variant { // TODO: is there a better solution where MUT player is not needed
-        let chunk_controller_obj = self.base().clone().upcast::<Object>();
-
-        // Create a slice of Variants directly
-        let args = &[
-            StringName::from("player_chunk_changed").to_variant(),
-            chunk_controller_obj.to_variant(),
-            StringName::from("on_player_chunk_changed").to_variant()
-        ];
-
-        // Directly call and return the result
-        let result = player_node.call("connect", args);
+    pub fn connect_player_signal(&mut self, player_node: Gd<Node>) -> bool {
+        godot_print!("ChunkController: Connecting player signal from {:?}", player_node);
         
-        godot_print!("Signal connection result: {:?}", result);
+        // Get a mutable reference to the player node
+        let mut player = player_node;
         
-        // Convert the result directly to a Variant
-        // If the call was successful, result will already be a Variant
-        result
+        // Create a callable for the ChunkController's on_player_chunk_changed method
+        let self_variant = self.base().to_variant();
+        
+        // Connect the signal using the try_call approach for safety
+        let result = player.try_call(
+            "connect", 
+            &[
+                "player_chunk_changed".to_variant(),
+                self_variant,
+                "on_player_chunk_changed".to_variant(),
+            ]
+        );
+        
+        match result {
+            Ok(_) => {
+                godot_print!("ChunkController: Successfully connected player signal");
+                true
+            },
+            Err(e) => {
+                godot_error!("ChunkController: Failed to connect player signal: {:?}", e);
+                false
+            }
+        }
     }
 
     #[func]
