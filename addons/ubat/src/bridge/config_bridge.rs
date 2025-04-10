@@ -1,6 +1,5 @@
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
-use std::path::Path;
 
 use crate::core::config_manager::{
     ConfigurationManager, 

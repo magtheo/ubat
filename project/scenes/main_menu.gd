@@ -123,7 +123,11 @@ func _on_StartStandaloneButton_pressed():
 	
 	# Show loading
 	_show_panel(loading_overlay)
-	
+
+	# Defer the initialization to ensure proper scene tree setup
+	call_deferred("_initialize_standalone_game")
+
+func _initialize_standalone_game():
 	# Find input elements
 	var seed_input = find_node_recursive(standalone_options, "SeedInput")
 	var width_input = find_node_recursive(standalone_options, "WorldWidthInput")
@@ -149,12 +153,17 @@ func _on_StartStandaloneButton_pressed():
 		"world_height": height_value
 	}
 	
+	# Ensure game_init_helper is ready
+	if not game_init_helper:
+		_show_error("Game initialization helper not available")
+		return
+	
 	# Use the GameInitHelper to handle the initialization
 	var init_result = game_init_helper.init_standalone(options)
 	if init_result:
 		print("Game initialized successfully, waiting before scene transition")
-		# Wait a bit for any backend initialization to complete
-		await get_tree().create_timer(0.5).timeout
+		# Wait longer for terrain initialization to complete
+		await get_tree().create_timer(2.0).timeout
 		
 		# Change to game scene
 		print("Changing to game scene: " + GAME_WORLD)
@@ -164,6 +173,7 @@ func _on_StartStandaloneButton_pressed():
 	else:
 		print("Failed to initialize standalone game")
 		_show_error("Failed to initialize game in standalone mode")
+	
 		
 func _on_RandomSeedStandaloneButton_pressed():
 	print("Random Seed button pressed")
@@ -210,8 +220,9 @@ func _on_StartServerButton_pressed():
 	var init_result = game_init_helper.init_host(options)
 	if init_result:
 		print("Game initialized successfully, waiting before scene transition")
-		# Wait a bit for any backend initialization to complete
-		await get_tree().create_timer(0.5).timeout
+		# Wait longer for terrain initialization to complete
+		print("Waiting for terrain initialization to complete...")
+		await get_tree().create_timer(2.0).timeout
 		
 		# Change to game scene
 		print("Changing to game scene: " + GAME_WORLD)
@@ -266,8 +277,9 @@ func _on_ConnectButton_pressed():
 	var init_result = game_init_helper.init_client(options)
 	if init_result:
 		print("Game initialized successfully, waiting before scene transition")
-		# Wait a bit for any backend initialization to complete
-		await get_tree().create_timer(0.5).timeout
+		# Wait longer for terrain initialization to complete
+		print("Waiting for terrain initialization to complete...")
+		await get_tree().create_timer(2.0).timeout
 		
 		# Change to game scene
 		print("Changing to game scene: " + GAME_WORLD)

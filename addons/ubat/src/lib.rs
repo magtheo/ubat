@@ -4,6 +4,7 @@ mod core;
 mod resource;
 mod networking;
 mod terrain;
+mod initialization;
 
 mod bridge;
 mod utils;

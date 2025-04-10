@@ -15,6 +15,7 @@ var event_bridge = null
 var all_bridges_initialized = false
 
 # Called when the node enters the scene tree for the first time
+# In your bridge_manager.gd
 func _ready():
 	print("BridgeManager: Initializing...")
 	
@@ -26,8 +27,22 @@ func _ready():
 	# Wait a frame to ensure everything is set up
 	await get_tree().process_frame
 	
-	# Initialize all bridge components
-	_initialize_bridges()
+	# Set options
+	var options = {
+		"world_seed": randi(),
+		"world_width": 10000,
+		"world_height": 10000
+	}
+	
+	# # Initialize the system first
+	# if game_init_helper.init_standalone(options):
+	# 	# Give it another frame to finish initialization
+	# 	await get_tree().process_frame
+		
+	# 	# Now try to get the bridges
+	# 	_initialize_bridges()
+	# else:
+	# 	push_error("Failed to initialize system")
 	
 # Initialize bridge components
 func _initialize_bridges():
@@ -48,14 +63,14 @@ func _initialize_bridges():
 
 # Fetch bridge instances from the SystemInitializer
 func _fetch_bridge_instances():
-	# These calls go through the GameInitHelper which accesses the SystemInitializer
-	var helper_script = load("res://addons/game_init_helper.gdns")
-	if helper_script:
-		var helper = helper_script.new()
-		game_bridge = helper.get_game_bridge()
-		config_bridge = helper.get_config_bridge()
-		network_bridge = helper.get_network_bridge()
-		event_bridge = helper.get_event_bridge()
+	# Get bridges directly from the game_init_helper instance you already created
+	# No need to load any .gdns file
+	
+	# Make sure your GameInitHelper exposes a way to get these bridges
+	game_bridge = game_init_helper.get_game_bridge()
+	config_bridge = game_init_helper.get_config_bridge()
+	network_bridge = game_init_helper.get_network_bridge()
+	event_bridge = game_init_helper.get_event_bridge()
 
 # Verify that all bridges are properly initialized
 func _verify_bridges() -> bool:

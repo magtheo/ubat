@@ -4,12 +4,9 @@ pub mod chunk_manager;
 pub mod chunk_controller;
 pub mod chunk_storage;
 pub mod biome_manager;
-pub mod world_integration;
 pub mod thread_pool;
 
 pub mod generation_rules;
-
-pub mod terrainInitState;
 
 
 // Re-export main types for easier access
@@ -17,8 +14,6 @@ pub use chunk_manager::ChunkManager;
 pub use chunk_controller::ChunkController;
 pub use chunk_storage::ChunkStorage;
 pub use biome_manager::BiomeManager;
-pub use world_integration::TerrainWorldIntegration;
-pub use terrainInitState::TerrainInitializationState;
 
 pub use thread_pool::ThreadPool;
 

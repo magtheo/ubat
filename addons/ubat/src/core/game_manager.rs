@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::thread_local;
+use std::cell::RefCell;
 
 use crate::core::config_manager::{ConfigurationManager, GameConfiguration, GameModeConfig};
 use crate::core::event_bus::{EventBus, PlayerConnectedEvent, WorldGeneratedEvent};
@@ -69,12 +71,26 @@ pub struct GameManager {
     initialized: bool,
 }
 
-// Static module functions for system integration
-pub fn get_instance() -> Option<Arc<Mutex<GameManager>>> {
-    unsafe {
-        INSTANCE.clone()
-    }
+thread_local! {
+    static GAME_MANAGER_INSTANCE: RefCell<Option<Arc<Mutex<GameManager>>>> = RefCell::new(None);
 }
+
+pub fn get_instance() -> Option<Arc<Mutex<GameManager>>> {
+    let mut result = None;
+    GAME_MANAGER_INSTANCE.with(|cell| {
+        if let Some(instance) = &*cell.borrow() {
+            result = Some(instance.clone());
+        }
+    });
+    result
+}
+
+pub fn set_instance(instance: Arc<Mutex<GameManager>>) {
+    GAME_MANAGER_INSTANCE.with(|cell| {
+        *cell.borrow_mut() = Some(instance);
+    });
+}
+
 
 impl GameManager {
     // Create a new game manager without configuration - for initialization by system_initializer

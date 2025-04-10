@@ -1,3 +1,5 @@
+pub mod world;
+
 pub mod system_initializer;
 pub mod configuration_service;
 

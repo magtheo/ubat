@@ -15,7 +15,7 @@ size = Vector3(6.19775, 8.35993, 1)
 
 [node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("1_kv0ei")]
 script = ExtResource("2_dsn4j")
-speed = 1
+speed = 0.5
 
 [node name="Preformance node" type="Node2D" parent="."]
 position = Vector2(0, 304)
