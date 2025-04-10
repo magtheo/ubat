@@ -15,7 +15,7 @@ void vertex() {
 void fragment() {
     // Basic color based on height
     vec4 base_color;
-    
+
     if (height < 0.0) {
         // Water color for below sea level
         base_color = color_water;
@@ -27,15 +27,15 @@ void fragment() {
         // Ground color
         base_color = color_ground;
     }
-    
+
     // Add noise for texture
     float noise = fract(sin(dot(FRAGCOORD.xy, vec2(12.9898, 78.233))) * 43758.5453);
     base_color.rgb += (noise * 0.1 - 0.05); // Subtle noise variation
-    
+
     // Lighting
     float ndotl = dot(NORMAL, normalize(vec3(1.0, 2.0, 1.0)));
     float light_intensity = max(0.2, ndotl);
-    
+
     // Apply final color
     ALBEDO = base_color.rgb * light_intensity;
     ROUGHNESS = 0.9;
