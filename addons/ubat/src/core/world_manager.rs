@@ -118,6 +118,18 @@ impl WorldStateManager {
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
+
+    pub fn set_terrain_managers(&mut self,
+            biome_manager: Gd<BiomeManager>,
+            chunk_manager: Gd<ChunkManager>) {
+        godot_print!("WorldStateManager: Receiving terrain manager references.");
+        self.biome_manager = Some(biome_manager);
+        self.chunk_manager = Some(chunk_manager);
+        // Mark terrain as initialized *logically* from WSM's perspective
+        // Note: Actual node initialization already happened in TerrainInitializer
+        self.is_terrain_initialized = true;
+    }
+
        
     // Initialize terrain with BiomeManager and ChunkManager
     pub fn initialize_terrain(&mut self, 
