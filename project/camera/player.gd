@@ -19,8 +19,10 @@ func _ready():
 	
 	if terrain_system:
 		chunk_controller = terrain_system.get_node_or_null("ChunkController")
+		print("Player: chunkController node path: ", chunk_controller.get_path())
 	else:
-		chunk_controller = get_node_or_null("/root/ChunkController")
+		chunk_controller = get_node_or_null("/root/TerrainSystem/ChunkController")
+		print("Player: chunkController node path: ", chunk_controller.get_path())
 	
 	if chunk_controller:
 		var success = chunk_controller.connect_player_signal(self)

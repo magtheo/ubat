@@ -1,4 +1,5 @@
 use godot::prelude::*;
+use godot::global::Error;
 use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, BoxMesh};
 use std::collections::{HashMap, HashSet};
 
@@ -43,11 +44,11 @@ impl INode3D for ChunkController {
     
     fn ready(&mut self) {
         godot_print!("RUST: ChunkController: Initializing...");
-        
-        // Get nodes from the scene tree using proper paths
-        // Look for sibling nodes rather than relative paths
-        let chunk_manager = self.base().get_node_as::<ChunkManager>("../ChunkManager");
-        let biome_manager = self.base().get_node_as::<BiomeManager>("../BiomeManager");
+
+        // Print the path to the Godot output console
+        let node_path: NodePath = self.base().get_path();
+        let path_string: String = node_path.to_string();
+        godot_print!("ChunkController: My scene tree path is: {}", path_string);
         
         // Use get_parent to find parent node, then find siblings 
         if let Some(parent) = self.base().get_parent() {
@@ -118,50 +119,79 @@ impl ChunkController {
 
     #[func]
     pub fn connect_player_signal(&mut self, player_node: Gd<Node>) -> bool {
-        godot_print!("ChunkController: Connecting player signal from {:?}", player_node);
-        
-        // Get a mutable reference to the player node
         let mut player = player_node;
-        
-        // Create a callable for the ChunkController's on_player_chunk_changed method
-        let self_variant = self.base().to_variant();
-        
-        // Connect the signal using the try_call approach for safety
+        let target_object: Gd<ChunkController> = self.base().clone().cast::<ChunkController>();
+        let method_name = StringName::from("on_player_chunk_changed");
+        let target_callable = Callable::from_object_method(&target_object, &method_name);
+        let callable_variant = target_callable.to_variant();
+
         let result = player.try_call(
-            "connect", 
+            "connect",
             &[
                 "player_chunk_changed".to_variant(),
-                self_variant,
-                "on_player_chunk_changed".to_variant(),
-            ]
+                callable_variant,
+            ],
         );
-        
+
         match result {
-            Ok(_) => {
-                godot_print!("ChunkController: Successfully connected player signal");
-                true
-            },
+            Ok(return_value) => {
+                // try_to returns a Result, handle Ok and Err
+                match return_value.try_to::<i64>() {
+                    Ok(error_code) => {
+                        // Compare directly with the integer value 0, which is Error::OK in Godot
+                        if error_code == 0 { 
+                            godot_print!("ChunkController: Successfully connected player signal via Object.connect");
+                            true
+                        } else {
+                            godot_error!("ChunkController: Object.connect returned engine error code: {}", error_code);
+                            // You could potentially match other known error codes here if needed
+                            // else if error_code == Error::ERR_INVALID_PARAMETER as i64 { ... } // Still might need cast for other errors
+                            false
+                        }
+                    }
+                    Err(e) => {
+                        // The return value from connect wasn't convertible to i64
+                        godot_error!("ChunkController: Object.connect returned unexpected variant type, cannot convert to i64: {:?}. Variant was: {:?}", e, return_value);
+                        false
+                    }
+                }
+            }
             Err(e) => {
-                godot_error!("ChunkController: Failed to connect player signal: {:?}", e);
+                godot_error!("ChunkController: Failed to connect player signal (try_call failed): {:?}", e);
                 false
             }
         }
     }
 
     #[func]
-    fn on_player_chunk_changed(&mut self, chunk_x: Variant, chunk_z: Variant) {
-        let chunk_x: i64 = chunk_x.try_to().unwrap_or_else(|_| {
-            godot_error!("Failed to convert chunk_x");
-            0
-        });
+    fn on_player_chunk_changed(&mut self, chunk_x_var: Variant, chunk_z_var: Variant) {
 
-        let chunk_z: i64 = chunk_z.try_to().unwrap_or_else(|_| {
-            godot_error!("Failed to convert chunk_z");
-            0
-        });
+        // 1. Try to convert the Variant to f64 (Godot's float type)
+        let chunk_x_float = match chunk_x_var.try_to::<f64>() {
+            Ok(f) => f,
+            Err(e) => {
+                godot_error!("Failed to convert chunk_x Variant to f64: {:?}", e);
+                // Decide how to handle: return, use 0, etc.
+                return; // Stop processing if we can't get the float
+            }
+        };
+
+        let chunk_z_float = match chunk_z_var.try_to::<f64>() {
+            Ok(f) => f,
+            Err(e) => {
+                godot_error!("Failed to convert chunk_z Variant to f64: {:?}", e);
+                // Decide how to handle: return, use 0, etc.
+                return; // Stop processing if we can't get the float
+            }
+        };
+
+        // 2. Cast the f64 float to your desired integer type (e.g., i64 or i32)
+        // Using i64 here to match your original attempt, though i32 might be sufficient
+        let chunk_x: i64 = chunk_x_float as i64;
+        let chunk_z: i64 = chunk_z_float as i64;
 
         let new_position = Vector3::new(
-            chunk_x as f32 * 32.0, 
+            chunk_x as f32 * 32.0, // TODO 32.0 is the chunkSize. Setting this value should be moved to a centralized 
             0.0, 
             chunk_z as f32 * 32.0
         );
