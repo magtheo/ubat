@@ -1082,4 +1082,13 @@ impl ThreadSafeBiomeData {
             _ => Color::from_rgba(1.0, 0.0, 1.0, 1.0), // Magenta for unknown
         }
     }
+
+    pub fn seed(&self) -> u32 {
+        self.seed
+    }
+    
+    pub fn blend_distance(&self) -> i32 {
+        self.blend_distance
+    }
+
 }
