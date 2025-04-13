@@ -225,11 +225,14 @@ impl ChunkStorage {
     }
     
     // Process IO queue using thread pool
-    fn process_io_queue(self: Arc<Self>) { // <-- Takes ownership of the Arc
+    pub fn process_io_queue(self: Arc<Self>) { // <-- Takes ownership of the Arc
         // Ensure we only process the queue once at a time
         // Use the is_processing_queue from the Arc<Self>
+        godot_print!("ChunkStorage: process_io_queue called.");
         let mut is_processing = self.is_processing_queue.lock().unwrap();
+        // Check if poisoned (optional but good practice)
         if *is_processing {
+            godot_print!("ChunkStorage: process_io_queue: Already processing, returning.");
             // If already processing, another thread will handle it.
             // We drop the Arc here, decrementing the count.
             return;

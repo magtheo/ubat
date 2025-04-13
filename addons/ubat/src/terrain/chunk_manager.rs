@@ -136,6 +136,7 @@ impl ChunkManager {
 
     // Ensure chunk data is loaded or generation is triggered.
     fn ensure_chunk_is_ready(&self, pos: ChunkPosition) {
+        // godot_print!("ChunkManager: ensure_chunk_position: {:?}", pos);
         // Fast path: Check read lock first
         let current_state = self.chunk_states.read().unwrap().get(&pos).cloned();
 
@@ -167,11 +168,14 @@ impl ChunkManager {
 
                 let storage_for_inner_closure = Arc::clone(&storage_clone);
 
+                godot_print!("ChunkManager::ensure_chunk_is_ready: Queuing load for {:?}", pos); // ADD
                 storage_clone.queue_load_chunk(pos, move |load_result| {
+                    godot_print!("ChunkManager: Load callback executed for {:?}. Found data: {}", pos, load_result.is_some());
 
                 match load_result {
                         Some(_chunk_data) => {
                             // Loaded from storage
+                            godot_print!("ChunkManager: Load callback: Found data for {:?}, setting Ready.", pos); // ADD
                             let mut states_w = states_clone.write().unwrap();
                             states_w.insert(pos, ChunkGenState::Ready(Instant::now()));
                             // godot_print!("ChunkManager: Chunk {:?} loaded from storage.", pos);
@@ -179,6 +183,7 @@ impl ChunkManager {
                         None => {
                             // Not in storage, trigger generation
                             {
+                                godot_print!("ChunkManager: Load callback: No data for {:?}, proceeding to generate.", pos); // ADD
                                 let mut states_w = states_clone.write().unwrap();
                                 // Ensure state is still Loading before switching to Generating
                                 if states_w.get(&pos) == Some(&ChunkGenState::Loading) {
@@ -189,7 +194,7 @@ impl ChunkManager {
                                 }
                             } // Write lock released
 
-                        //  godot_print!("ChunkManager: Chunk {:?} not found in storage. Triggering generation.", pos);
+                            godot_print!("ChunkManager: Chunk {:?} not found in storage. Triggering generation.", pos);
                             compute_pool_clone.read().unwrap().execute(move || {
                                 Self::generate_and_save_chunk(
                                     pos,
@@ -370,9 +375,11 @@ impl ChunkManager {
     // Called by ChunkController to update based on player position
     #[func]
     pub fn update(&self, player_x: f32, _player_y: f32, player_z: f32) {
+        
         let player_chunk_x = (player_x / self.chunk_size as f32).floor() as i32;
         let player_chunk_z = (player_z / self.chunk_size as f32).floor() as i32;
-
+        godot_print!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
+        
         let mut required_chunks = HashSet::new();
         for x in (player_chunk_x - self.render_distance)..=(player_chunk_x + self.render_distance) {
             for z in (player_chunk_z - self.render_distance)..=(player_chunk_z + self.render_distance) {
@@ -381,6 +388,12 @@ impl ChunkManager {
                 self.ensure_chunk_is_ready(pos); // Request load/generation if needed
             }
         }
+        // After queueing all potential loads for this update cycle,
+        // explicitly trigger the IO queue processing.
+        // process_io_queue takes Arc<Self>, so we clone the storage Arc.
+        // godot_print!("ChunkManager::update: Finished queuing loads. Triggering IO processing.");
+        // Arc::clone(&self.storage).process_io_queue();
+        // adding this above coused a crash witout any error ar warnings
 
         // Perform unload check now that we know required chunks
         self.unload_distant_chunks(&required_chunks);
