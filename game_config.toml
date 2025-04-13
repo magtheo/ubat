@@ -12,10 +12,6 @@ biome_blend_distance = 100.0
 biome_transition_noise = 0.2
 feature_density = 0.1
 
-mountain_threshold = 0.7 # TODO: Should be removed, but make sure rest of the system is chagned first 
-river_width = 5.0
-tree_density = 0.2
-grass_coverage = 0.5
 
 # Network Configuration
 [network]

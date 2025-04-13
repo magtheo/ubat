@@ -5,6 +5,7 @@ mod resource;
 mod networking;
 mod terrain;
 mod initialization;
+mod threading;
 
 mod bridge;
 mod utils;
