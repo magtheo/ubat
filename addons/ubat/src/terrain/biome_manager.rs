@@ -800,22 +800,12 @@ impl BiomeManager {
     
     // Helper method to notify ChunkManager
     fn notify_data_change(&self) {
-        // Try to find ChunkManager in the scene tree
-        if let Some(parent) = self.base().get_parent() {
-            // Use a string literal directly
-            let node_path = "ChunkManager";
-            if let Some(chunk_manager) = parent.get_node_or_null(node_path) {
-                // Use match for Result instead of if let for Option
-                match chunk_manager.try_cast::<ChunkManager>() {
-                    Ok(mut chunk_manager) => {
-                        chunk_manager.bind_mut().update_thread_safe_biome_data();
-                    },
-                    Err(_) => {
-                        godot_print!("Failed to cast node to ChunkManager");
-                    }
-                }
-            }
-        }
+        godot_print!("BiomeManager: Data changed (notification)");
+        // REMOVED THE CALL TO CHUNK MANAGER UPDATE HERE
+
+        // Optional: If you want to use signals (more complex setup needed)
+        // self.base.emit_signal("biome_data_changed".into(), &[]);
+
     }
 
     // Get a biome name for display
@@ -1092,4 +1082,13 @@ impl ThreadSafeBiomeData {
             _ => Color::from_rgba(1.0, 0.0, 1.0, 1.0), // Magenta for unknown
         }
     }
+
+    pub fn seed(&self) -> u32 {
+        self.seed
+    }
+    
+    pub fn blend_distance(&self) -> i32 {
+        self.blend_distance
+    }
+
 }

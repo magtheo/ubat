@@ -19,8 +19,10 @@ func _ready():
 	
 	if terrain_system:
 		chunk_controller = terrain_system.get_node_or_null("ChunkController")
+		print("Player: chunkController node path: ", chunk_controller.get_path())
 	else:
-		chunk_controller = get_node_or_null("/root/ChunkController")
+		chunk_controller = get_node_or_null("/root/TerrainSystem/ChunkController")
+		print("Player: chunkController node path: ", chunk_controller.get_path())
 	
 	if chunk_controller:
 		var success = chunk_controller.connect_player_signal(self)
@@ -73,8 +75,8 @@ func update_terrain_if_needed():
 	if chunk_controller == null:
 		return
 		
-	var current_chunk_x = floor(global_position.x / chunk_size)
-	var current_chunk_z = floor(global_position.z / chunk_size)
+	var current_chunk_x = floori(global_position.x / chunk_size)
+	var current_chunk_z = floori(global_position.z / chunk_size)
 	
 	if current_chunk_x != last_chunk_x or current_chunk_z != last_chunk_z:
 		last_chunk_x = current_chunk_x

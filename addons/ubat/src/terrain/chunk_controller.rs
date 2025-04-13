@@ -1,29 +1,36 @@
 use godot::prelude::*;
-use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, BoxMesh};
+use godot::global::Error;
+use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, ResourceLoader};
 use std::collections::{HashMap, HashSet};
+use godot::classes::mesh::PrimitiveType;
 
-use crate::terrain::BiomeManager;
-use crate::terrain::ChunkManager;
+// Use ChunkManager and its types
+use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
+// Use BiomeManager if needed for materials etc.
+use crate::terrain::biome_manager::BiomeManager;
+// Use TerrainConfig to get chunk size if needed
+use crate::terrain::terrain_config::TerrainConfigManager;
 
-// ChunkController - Main interface between Godot and the terrain generation system
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 pub struct ChunkController {
     #[base]
     base: Base<Node3D>,
-    
-    // References to other components
     chunk_manager: Option<Gd<ChunkManager>>,
-    biome_manager: Option<Gd<BiomeManager>>,
-    
-    // Configuration
+    // Keep BiomeManager ref if needed (e.g., for getting materials)
+    // biome_manager: Option<Gd<BiomeManager>>,
+
+    // Config/State
     render_distance: i32,
     player_position: Vector3,
     needs_update: bool,
-    
-    // Visualization - if true, will create mesh instances for chunks
+    chunk_size: u32, // Store chunk size locally for convenience
+
+    // Visualization
     visualization_enabled: bool,
-    chunk_meshes: HashMap<(i32, i32), Gd<MeshInstance3D>>,
+    chunk_meshes: HashMap<ChunkPosition, Gd<MeshInstance3D>>, // Use ChunkPosition as key
+    // Optional: Preload materials
+    // default_material: Option<Gd<Material>>,
 }
 
 #[godot_api]
@@ -32,80 +39,75 @@ impl INode3D for ChunkController {
         ChunkController {
             base,
             chunk_manager: None,
-            biome_manager: None,
+            // biome_manager: None,
             render_distance: 8,
             player_position: Vector3::ZERO,
             needs_update: true,
+            chunk_size: 32, // Default, will be updated in ready
             visualization_enabled: true,
             chunk_meshes: HashMap::new(),
+            // default_material: None,
         }
     }
-    
+
     fn ready(&mut self) {
-        godot_print!("RUST: ChunkController: Initializing...");
-        
-        // Get nodes from the scene tree using proper paths
-        // Look for sibling nodes rather than relative paths
-        let chunk_manager = self.base().get_node_as::<ChunkManager>("../ChunkManager");
-        let biome_manager = self.base().get_node_as::<BiomeManager>("../BiomeManager");
-        
-        // Use get_parent to find parent node, then find siblings 
+        godot_print!("ChunkController: Initializing...");
+
+        // Find ChunkManager sibling
         if let Some(parent) = self.base().get_parent() {
-            let chunk_manager = parent.get_node_as::<ChunkManager>("ChunkManager");
-            let biome_manager = parent.get_node_as::<BiomeManager>("BiomeManager");
-            
-            if chunk_manager.is_instance_valid() {
-                self.chunk_manager = Some(chunk_manager);
-                godot_print!("ChunkController: Found ChunkManager");
-            } else {
-                godot_error!("ChunkController: Could not find ChunkManager in scene tree");
-            }
-            
-            if biome_manager.is_instance_valid() {
-                self.biome_manager = Some(biome_manager);
-                godot_print!("ChunkController: Found BiomeManager");
-            } else {
-                godot_error!("ChunkController: Could not find BiomeManager in scene tree");
-            }
-            
-            // Set the reference in ChunkManager to BiomeManager (if needed)
-            if let (Some(chunk_mgr), Some(biome_mgr)) = (&self.chunk_manager, &self.biome_manager) {
-                let mut chunk_mgr_mut = chunk_mgr.clone();
-                chunk_mgr_mut.bind_mut().set_biome_manager(biome_mgr.clone());
-                godot_print!("ChunkController: Connected ChunkManager to BiomeManager");
+            self.chunk_manager = Some(parent.get_node_as::<ChunkManager>("ChunkManager"));
+            // self.biome_manager = parent.get_node_as::<BiomeManager>("BiomeManager"); // Find if needed
+
+            if self.chunk_manager.is_none() {
+                godot_error!("ChunkController: Could not find ChunkManager sibling!");
             }
         } else {
-            godot_error!("ChunkController: No parent node found");
+            godot_error!("ChunkController: No parent node found!");
         }
-        
-        // Initialize the render distance in the ChunkManager
-        if let Some(chunk_mgr) = &self.chunk_manager {
-            let mut chunk_mgr_mut = chunk_mgr.clone();
-            chunk_mgr_mut.bind_mut().set_render_distance(self.render_distance);
-            godot_print!("ChunkController: Set render distance to {}", self.render_distance);
+
+        // Get initial render distance and chunk size from ChunkManager/Config
+        if let Some(cm) = &self.chunk_manager {
+            let cm_bind = cm.bind();
+            self.render_distance = cm_bind.get_render_distance();
+
+            // Get chunk size directly from config manager for consistency
+            if let Some(config_arc) = TerrainConfigManager::get_config() {
+                if let Ok(guard) = config_arc.read() {
+                    self.chunk_size = guard.chunk_size();
+                } else {
+                     godot_error!("ChunkController: Failed to read config for chunk size.");
+                 }
+            } else {
+                 godot_warn!("ChunkController: Config manager not available for chunk size.");
+             }
+
+            godot_print!("ChunkController: Initial render distance: {}, chunk size: {}", self.render_distance, self.chunk_size);
+        } else {
+            godot_error!("ChunkController: Cannot get initial settings, ChunkManager not found!");
         }
-    
-        godot_print!("ChunkController: Initialization complete");
+
+        // Preload default material (example)
+        // let loader = ResourceLoader::singleton();
+        // self.default_material = loader.load("res://materials/default_terrain_mat.tres".into()); // Adjust path
+
+        godot_print!("ChunkController: Initialization complete.");
     }
-    
+
     fn process(&mut self, _delta: f64) {
-        // Only process if we have necessary components
-        if self.chunk_manager.is_none() {
-            return;
-        }
-        
-        // Update chunks based on player position if needed
+        if self.chunk_manager.is_none() { return; } // Need ChunkManager
+
         if self.needs_update {
             if let Some(ref chunk_mgr) = self.chunk_manager {
+                // Call update on ChunkManager
                 chunk_mgr.bind().update(
                     self.player_position.x,
-                    self.player_position.y,
+                    self.player_position.y, // Pass Y if needed
                     self.player_position.z
                 );
             }
-            self.needs_update = false;
-            
-            // Update visualization if enabled
+            self.needs_update = false; // Reset flag
+
+            // Update visualization only if needed and enabled
             if self.visualization_enabled {
                 self.update_visualization();
             }
@@ -115,417 +117,338 @@ impl INode3D for ChunkController {
 
 #[godot_api]
 impl ChunkController {
-
+    // Connect player signal (using Godot's built-in connect)
     #[func]
     pub fn connect_player_signal(&mut self, player_node: Gd<Node>) -> bool {
-        godot_print!("ChunkController: Connecting player signal from {:?}", player_node);
-        
-        // Get a mutable reference to the player node
-        let mut player = player_node;
-        
-        // Create a callable for the ChunkController's on_player_chunk_changed method
-        let self_variant = self.base().to_variant();
-        
-        // Connect the signal using the try_call approach for safety
-        let result = player.try_call(
-            "connect", 
-            &[
-                "player_chunk_changed".to_variant(),
-                self_variant,
-                "on_player_chunk_changed".to_variant(),
-            ]
+        let mut player = player_node; // Make mutable for connect
+        let target_object = self.base().clone().cast::<ChunkController>(); // Get self as Gd
+        let method_name = StringName::from("on_player_chunk_changed");
+        let target_callable = Callable::from_object_method(&target_object, &method_name);
+
+        // Connect signal directly
+        let result = player.connect(
+            "player_chunk_changed", // Signal name
+            &target_callable,
         );
-        
-        match result {
-            Ok(_) => {
-                godot_print!("ChunkController: Successfully connected player signal");
-                true
-            },
-            Err(e) => {
-                godot_error!("ChunkController: Failed to connect player signal: {:?}", e);
-                false
-            }
+
+        // Check result code (OK = 0)
+        if result == Error::OK {
+            godot_print!("ChunkController: Successfully connected 'player_chunk_changed' signal.");
+            true
+        } else {
+            godot_error!("ChunkController: Failed to connect player signal, error code: {:?}", result);
+            false
         }
     }
 
+    // Signal handler when player moves to a new chunk
     #[func]
-    fn on_player_chunk_changed(&mut self, chunk_x: Variant, chunk_z: Variant) {
-        let chunk_x: i64 = chunk_x.try_to().unwrap_or_else(|_| {
-            godot_error!("Failed to convert chunk_x");
-            0
-        });
-
-        let chunk_z: i64 = chunk_z.try_to().unwrap_or_else(|_| {
-            godot_error!("Failed to convert chunk_z");
-            0
-        });
-
-        let new_position = Vector3::new(
-            chunk_x as f32 * 32.0, 
-            0.0, 
-            chunk_z as f32 * 32.0
-        );
+    fn on_player_chunk_changed(&mut self, chunk_x_var: Variant, chunk_z_var: Variant) {
+        // First try to convert directly to i32
+        godot_print!("ChunkController Rust: on_player_chunk_changed CALLED with variants: {:?}, {:?}", chunk_x_var, chunk_z_var);
+        let chunk_x = match chunk_x_var.try_to::<i32>() {
+            Ok(x) => x,
+            Err(_) => {
+                // If that fails, try converting from float to i32
+                match chunk_x_var.try_to::<f32>() {
+                    Ok(x_float) => x_float.floor() as i32, // Convert float to int
+                    Err(e) => {
+                        godot_error!("Failed to convert chunk_x Variant to i32 or f32: {:?}", e);
+                        return;
+                    }
+                }
+            }
+        };
         
-        self.update_player_position(new_position);
+        // Same for z coordinate
+        let chunk_z = match chunk_z_var.try_to::<i32>() {
+            Ok(z) => z,
+            Err(_) => {
+                match chunk_z_var.try_to::<f32>() {
+                    Ok(z_float) => z_float.floor() as i32, // Convert float to int
+                    Err(e) => {
+                        godot_error!("Failed to convert chunk_z Variant to i32 or f32: {:?}", e);
+                        return;
+                    }
+                }
+            }
+        };
+    
+        // Calculate the *center* world position of the player's new chunk for update trigger
+        let new_position = Vector3::new(
+            (chunk_x as f32 + 0.5) * self.chunk_size as f32, // Center X
+            self.player_position.y, // Keep current Y? Or query ground height?
+            (chunk_z as f32 + 0.5) * self.chunk_size as f32  // Center Z
+        );
+    
+        self.update_player_position(new_position); // Trigger update logic
     }
 
-
-
-    // Update player position 
+    // Update internal player position and flag for chunk updates
     #[func]
     pub fn update_player_position(&mut self, position: Vector3) {
-        let old_chunk_x = (self.player_position.x / 32.0).floor() as i32;
-        let old_chunk_z = (self.player_position.z / 32.0).floor() as i32;
-        
-        self.player_position = position;
-        
-        let new_chunk_x = (position.x / 32.0).floor() as i32;
-        let new_chunk_z = (position.z / 32.0).floor() as i32;
-        
-        godot_print!("ChunkController: New chunk position: {},{}", new_chunk_x, new_chunk_z);
+        // Calculate old and new chunk coords based on stored chunk size
+        let old_chunk_x = (self.player_position.x / self.chunk_size as f32).floor() as i32;
+        let old_chunk_z = (self.player_position.z / self.chunk_size as f32).floor() as i32;
 
-        // Only flag for update if the player moved to a different chunk
+        self.player_position = position; // Update stored position
+
+        let new_chunk_x = (position.x / self.chunk_size as f32).floor() as i32;
+        let new_chunk_z = (position.z / self.chunk_size as f32).floor() as i32;
+
+        // If the player moved to a different chunk, set the update flag
         if old_chunk_x != new_chunk_x || old_chunk_z != new_chunk_z {
+            // godot_print!("ChunkController: Player entered chunk ({}, {})", new_chunk_x, new_chunk_z);
             self.needs_update = true;
         }
     }
-    
-    // Set render distance
+
+    // Set render distance and update ChunkManager
     #[func]
     pub fn set_render_distance(&mut self, distance: i32) {
-        self.render_distance = distance.max(1).min(32);
-        
-        if let Some(chunk_mgr) = &self.chunk_manager {
-            let mut cm = chunk_mgr.clone();
-            cm.bind_mut().set_render_distance(self.render_distance);
+        let new_distance = distance.max(1).min(32); // Clamp value
+        if new_distance != self.render_distance {
+            self.render_distance = new_distance;
+            // Update ChunkManager's render distance
+            if let Some(chunk_mgr) = &mut self.chunk_manager {
+                chunk_mgr.bind_mut().set_render_distance(self.render_distance);
+            } else {
+                 godot_warn!("ChunkController: ChunkManager not found when setting render distance.");
+            }
+            self.needs_update = true; // Force update to load/unload based on new distance
+            godot_print!("ChunkController: Render distance set to {}", self.render_distance);
         }
-        
-        // Force an update next frame
-        self.needs_update = true;
     }
-    
-    // Enable/disable visualization
+
+    // Enable/disable visualization and manage existing meshes
     #[func]
     pub fn set_visualization_enabled(&mut self, enabled: bool) {
-        self.visualization_enabled = enabled;
-        
-        // If disabling, clear all meshes
-        if !enabled {
-            for (_, mut mesh) in self.chunk_meshes.drain() {
-                mesh.queue_free();
+        if enabled != self.visualization_enabled {
+            self.visualization_enabled = enabled;
+            if !enabled {
+                // Clear all stored meshes if disabling
+                for (_, mut mesh_instance) in self.chunk_meshes.drain() {
+                    if mesh_instance.is_instance_valid() {
+                        mesh_instance.queue_free();
+                    }
+                }
+                godot_print!("ChunkController: Visualization disabled, meshes cleared.");
+            } else {
+                self.needs_update = true; // Force update to create meshes if enabling
+                godot_print!("ChunkController: Visualization enabled.");
             }
-        } else {
-            // If enabling, force an update next frame
-            self.needs_update = true;
         }
     }
-    
-    // Get stats as a dictionary
+
+    // Get stats dictionary
     #[func]
     pub fn get_stats(&self) -> Dictionary {
         let mut dict = Dictionary::new();
-        
         if let Some(ref chunk_mgr) = self.chunk_manager {
-            dict.insert("chunk_count", chunk_mgr.bind().get_chunk_count());
-            dict.insert("render_distance", chunk_mgr.bind().get_render_distance());
+            let cm_bind = chunk_mgr.bind();
+            dict.insert("managed_chunk_states", cm_bind.get_chunk_count());
+            dict.insert("render_distance", cm_bind.get_render_distance());
+        } else {
+            // Provide defaults if manager is missing
+            dict.insert("managed_chunk_states", 0);
+            dict.insert("render_distance", self.render_distance);
         }
-        
         dict.insert("visualization_enabled", self.visualization_enabled);
-        
+        dict.insert("visualized_mesh_count", self.chunk_meshes.len() as i64);
         dict
     }
-    
-    // Force an update on next frame
+
+    // Force an update in the next process frame
     #[func]
     pub fn force_update(&mut self) {
         self.needs_update = true;
     }
-    
-    // Update the mesh visualization for chunks
+
+    // Update the visual representation of chunks
     fn update_visualization(&mut self) {
-        // Collect all the chunks to process first
-        let mut chunks_to_process: Vec<(i32, i32, bool)> = Vec::new();
+        if self.chunk_manager.is_none() { return; }
         
-        if let Some(ref chunk_mgr) = self.chunk_manager {
-            let chunk_mgr_bind = chunk_mgr.bind();
-            let player_chunk_x = (self.player_position.x / 32.0).floor() as i32;
-            let player_chunk_z = (self.player_position.z / 32.0).floor() as i32;
-            
-            // Collect chunks in render distance
-            for x in (player_chunk_x - self.render_distance)..=(player_chunk_x + self.render_distance) {
-                for z in (player_chunk_z - self.render_distance)..=(player_chunk_z + self.render_distance) {
-                    let is_ready = chunk_mgr_bind.is_chunk_ready(x, z);
-                    chunks_to_process.push((x, z, is_ready));
+        // Fix: Create a local data copy to avoid borrow conflicts
+        let player_chunk_x = (self.player_position.x / self.chunk_size as f32).floor() as i32;
+        let player_chunk_z = (self.player_position.z / self.chunk_size as f32).floor() as i32;
+        let render_distance = self.render_distance;
+        let chunk_size = self.chunk_size;
+        
+        let mut active_chunks_in_view = HashSet::new();
+        let chunk_mgr = self.chunk_manager.as_ref().unwrap().clone();  // Clone to avoid borrow issues
+
+        // Iterate within render distance
+        for x in (player_chunk_x - render_distance)..=(player_chunk_x + render_distance) {
+            for z in (player_chunk_z - render_distance)..=(player_chunk_z + render_distance) {
+                let pos = ChunkPosition { x, z };
+                active_chunks_in_view.insert(pos); // Mark this chunk as required visually
+
+                // Check if the chunk data is ready in ChunkManager
+                if chunk_mgr.bind().is_chunk_ready(x, z) {
+                    // If ready, ensure its mesh exists
+                    if !self.chunk_meshes.contains_key(&pos) {
+                        // Mesh doesn't exist, need to create it. Get data.
+                        let heightmap = chunk_mgr.bind().get_chunk_heightmap(x, z);
+                        // let biomes = chunk_mgr.bind().get_chunk_biomes(x, z); // Get if needed
+
+                        if !heightmap.is_empty() {
+                             // Got data, create the mesh instance
+                            self.create_or_update_chunk_mesh(pos, &heightmap.to_vec());
+                        } else {
+                            // Chunk ready but data fetch failed (should be rare)
+                            godot_warn!("ChunkController: Chunk {:?} is Ready but heightmap is empty for visualization.", pos);
+                        }
+                    }
+                    // If mesh already exists, assume it's up-to-date for now
+                } else {
+                    // Chunk is not ready, remove its mesh if it exists
+                    if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
+                        if mesh_instance.is_instance_valid() {
+                            // godot_print!("ChunkController: Removing mesh for non-ready chunk {:?}", pos);
+                            mesh_instance.queue_free();
+                        }
+                    }
                 }
             }
         }
-        
-        // Now process chunks without holding the immutable borrow
-        let mut updated_chunks = HashSet::new();
-        
-        for (x, z, is_ready) in chunks_to_process {
-            updated_chunks.insert((x, z));
-            
-            // Only create mesh if chunk is ready
-            if is_ready {
-                self.create_or_update_chunk_mesh(x, z);
-            }
-        }
-        
-        // Remove meshes that are no longer in render distance
-        let keys_to_remove: Vec<(i32, i32)> = self.chunk_meshes.keys()
-            .filter(|&&key| !updated_chunks.contains(&key))
+
+        // Remove meshes that are no longer in the active view area
+        let keys_to_remove: Vec<ChunkPosition> = self.chunk_meshes.keys()
+            .filter(|&key| !active_chunks_in_view.contains(key))
             .cloned()
             .collect();
-                
+
         for key in keys_to_remove {
-            if let Some(mut mesh) = self.chunk_meshes.remove(&key) {
-                mesh.queue_free();
+            if let Some(mut mesh_instance) = self.chunk_meshes.remove(&key) {
+                if mesh_instance.is_instance_valid() {
+                    // godot_print!("ChunkController: Removing mesh for out-of-view chunk {:?}", key);
+                    mesh_instance.queue_free();
+                }
             }
         }
     }
-    
-    // Create or update a mesh for a specific chunk
-    fn create_or_update_chunk_mesh(&mut self, chunk_x: i32, chunk_z: i32) {
-        let debug = chunk_x == 0 && chunk_z == 0;
-        if debug {
-            godot_print!("ChunkController: Creating mesh for chunk at ({}, {})", chunk_x, chunk_z);
-        }
-        
-        // First get all the data we need from the immutable borrow
-        let heightmap = if let Some(ref chunk_mgr) = self.chunk_manager {
-            let heightmap = chunk_mgr.bind().get_chunk_heightmap(chunk_x, chunk_z);
-            if heightmap.is_empty() {
-                if debug {
-                    godot_print!("ChunkController: Heightmap is empty for chunk ({}, {})", chunk_x, chunk_z);
-                }
-                return;
-            }
-            heightmap
-        } else {
+
+    // Create or update a MeshInstance3D for a chunk
+    fn create_or_update_chunk_mesh(&mut self, pos: ChunkPosition, heightmap: &[f32]) {
+        // Ensure chunk size is valid and heightmap matches
+        let chunk_size = self.chunk_size;
+        if chunk_size == 0 { godot_error!("Chunk size is 0!"); return; }
+        let expected_len = (chunk_size * chunk_size) as usize;
+        if heightmap.len() != expected_len {
+            godot_error!("Heightmap size mismatch for chunk {:?}! Expected {}, got {}", pos, expected_len, heightmap.len());
             return;
-        };
-        
-        if debug {
-            godot_print!("ChunkController: Got heightmap with {} values", heightmap.len());
         }
-        
-        let chunk_key = (chunk_x, chunk_z);
-        
-        // Create a simple plane mesh directly using arrays
-        let chunk_size = (heightmap.len() as f32).sqrt() as u32;
-        if debug {
-            godot_print!("ChunkController: Chunk size calculated as {}", chunk_size);
-        }
-        
-        // Create mesh arrays
-        let mut vertices = Vec::new();
-        let mut normals = Vec::new();
-        let mut uvs = Vec::new();
-        let mut indices = Vec::new();
-        
-        // First fill vertex data
+    
+        // --- Generate Mesh Data (Vertices, Normals, UVs, Indices) ---
+        let mut vertices_vec = Vec::with_capacity(expected_len);
+        let mut normals_vec = Vec::with_capacity(expected_len);
+        let mut uvs_vec = Vec::with_capacity(expected_len);
+        // Calculate index count: (width-1) * (height-1) squares * 2 triangles/square * 3 indices/triangle
+        let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
+        let mut indices_vec = Vec::with_capacity(index_count);
+    
+        // Vertex generation loop
         for z in 0..chunk_size {
             for x in 0..chunk_size {
                 let idx = (z * chunk_size + x) as usize;
                 let h = heightmap[idx];
-                                
-                // Add vertex
-                vertices.push(Vector3::new(x as f32, h, z as f32));
-                
-                // Simple normal
-                normals.push(Vector3::UP);
-                
-                // Simple UV
-                uvs.push(Vector2::new(
-                    x as f32 / (chunk_size - 1) as f32,
-                    z as f32 / (chunk_size - 1) as f32
+                vertices_vec.push(Vector3::new(x as f32, h, z as f32));
+                // Placeholder normal - needs proper calculation
+                normals_vec.push(Vector3::UP);
+                uvs_vec.push(Vector2::new(
+                    x as f32 / (chunk_size - 1).max(1) as f32, // Avoid div by zero if chunksize=1
+                    z as f32 / (chunk_size - 1).max(1) as f32
                 ));
             }
         }
-        
-        // Create triangles
-        for z in 0..chunk_size-1 {
-            for x in 0..chunk_size-1 {
-                let idx00 = (z * chunk_size + x) as i32;
-                let idx10 = (z * chunk_size + x + 1) as i32;
-                let idx01 = ((z + 1) * chunk_size + x) as i32;
-                let idx11 = ((z + 1) * chunk_size + x + 1) as i32;
-                
-                // First triangle (bottom-left to top-right)
-                indices.push(idx00);
-                indices.push(idx10);
-                indices.push(idx01);
-                
-                // Second triangle (top-right to bottom-right)
-                indices.push(idx10);
-                indices.push(idx11);
-                indices.push(idx01);
+    
+        // Index generation loop
+        for z in 0..chunk_size - 1 {
+            for x in 0..chunk_size - 1 {
+                let idx00 = (z * chunk_size + x) as i32;        // Top-left
+                let idx10 = idx00 + 1;                          // Top-right
+                let idx01 = idx00 + chunk_size as i32;          // Bottom-left
+                let idx11 = idx01 + 1;                          // Bottom-right
+    
+                // Triangle 1 (Top-left -> Bottom-left -> Top-right)
+                indices_vec.push(idx00);
+                indices_vec.push(idx01);
+                indices_vec.push(idx10);
+    
+                // Triangle 2 (Top-right -> Bottom-left -> Bottom-right)
+                indices_vec.push(idx10);
+                indices_vec.push(idx01);
+                indices_vec.push(idx11);
             }
         }
         
-        // Create mesh and array mesh
-        let array_mesh = ArrayMesh::new_gd();
-        
-        // Convert arrays to Godot arrays
-        let mut godot_vertices = PackedVector3Array::new();
-        for v in vertices {
-            godot_vertices.push(v);
-        }
-        
-        let mut godot_normals = PackedVector3Array::new();
-        for n in normals {
-            godot_normals.push(n);
-        }
-        
-        let mut godot_uvs = PackedVector2Array::new();
-        for uv in uvs {
-            godot_uvs.push(uv);
-        }
-        
-        let mut godot_indices = PackedInt32Array::new();
-        for i in indices {
-            godot_indices.push(i);
-        }
-        
-        // Skip mesh creation in Rust - we'll create a temporary placeholder in GDScript
-        // This works around limitations with the Rust-Godot API for now
-        // We'll log this so we know to come back to it
-        if debug {
-            godot_print!("ChunkController: Creating placeholder for chunk, will be replaced in GDScript");
-        }
-        
-        // Use a temporary reference for now
-        let array_mesh = ArrayMesh::new_gd();
-        
-        // Now no immutable borrows are active, so we can do mutable operations
-        if !self.chunk_meshes.contains_key(&chunk_key) {
-            let mut mesh_instance = MeshInstance3D::new_alloc();
-            mesh_instance.set_position(Vector3::new(
-                chunk_x as f32 * chunk_size as f32, 
-                0.0, 
-                chunk_z as f32 * chunk_size as f32
-            ));
-            
-            // Set the mesh (placeholder - will be replaced in GDScript)
-            mesh_instance.set_mesh(&array_mesh);
-            
-            // Set material from GDScript if available
-            // That will be handled by GDScript since we don't have direct access here
-            
-            // Now we can safely call base_mut()
-            let node = mesh_instance.clone().upcast::<Node>();
-            self.base_mut().add_child(&node);
-            
-            self.chunk_meshes.insert(chunk_key, mesh_instance);
-            
-            if debug {
-                godot_print!("ChunkController: Created new mesh for chunk ({}, {})", chunk_x, chunk_z);
-            }
+        // Convert vectors to packed arrays
+        let vertices = PackedVector3Array::from(&vertices_vec[..]);
+        let normals = PackedVector3Array::from(&normals_vec[..]);
+        let uvs = PackedVector2Array::from(&uvs_vec[..]);
+        let indices = PackedInt32Array::from(&indices_vec[..]);
+        // --- End Mesh Data Generation ---
+    
+        // --- Create/Update Godot Mesh ---
+        let mut array_mesh = ArrayMesh::new_gd();
+        let mut arrays = VariantArray::new();
+    
+        // Fix: Use usize for resize (first parameter)
+        arrays.resize(15_usize, &Variant::nil());
+    
+        // Fix: Convert packed arrays to Variant before setting in array
+        arrays.set(0, &vertices.to_variant());
+        arrays.set(1, &normals.to_variant());
+        arrays.set(2, &uvs.to_variant());
+        arrays.set(4, &indices.to_variant());
+    
+        // Add the surface to the ArrayMesh
+        array_mesh.add_surface_from_arrays(
+            PrimitiveType::TRIANGLES,
+            &arrays,
+        );
+    
+        // --- Create/Update MeshInstance3D ---
+        let chunk_world_pos = Vector3::new(
+            pos.x as f32 * chunk_size as f32,
+            0.0, // Base Y position
+            pos.z as f32 * chunk_size as f32
+        );
+    
+        if let Some(mesh_instance) = self.chunk_meshes.get_mut(&pos) {
+            // Update existing instance if valid
+             if mesh_instance.is_instance_valid() {
+                 // Fix: Specify the type for upcast to avoid ambiguity
+                 mesh_instance.set_mesh(&array_mesh.upcast::<Mesh>());
+                 mesh_instance.set_position(chunk_world_pos); // Ensure position is correct
+                 // Optional: Update material if needed
+             } else {
+                  // Instance became invalid somehow, remove it
+                  godot_error!("MeshInstance for chunk {:?} became invalid. Removing.", pos);
+                  self.chunk_meshes.remove(&pos);
+                  // Consider recreating it in the 'else' block below if needed
+             }
         } else {
-            // Update existing mesh
-            if let Some(mesh_ref) = self.chunk_meshes.get(&chunk_key) {
-                let mut mesh_mut = mesh_ref.clone();
-                
-                mesh_mut.set_mesh(&array_mesh);
-                mesh_mut.set_position(Vector3::new(
-                    chunk_x as f32 * chunk_size as f32, 
-                    0.0, 
-                    chunk_z as f32 * chunk_size as f32
-                ));
-                
-                if debug {
-                    godot_print!("ChunkController: Updated existing mesh for chunk ({}, {})", chunk_x, chunk_z);
-                }
-            }
+            // Create new MeshInstance3D
+            let mut mesh_instance = MeshInstance3D::new_alloc();
+            // Fix: Specify the type for upcast to avoid ambiguity
+            mesh_instance.set_mesh(&array_mesh.upcast::<Mesh>());
+            mesh_instance.set_position(chunk_world_pos);
+            // Fix: Convert String to GString with a reference
+            let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
+            mesh_instance.set_name(&mesh_name);
+    
+            // Apply default material if loaded
+            // if let Some(ref mat) = self.default_material {
+            //      mesh_instance.set_surface_override_material(0, mat.clone());
+            // }
+    
+            // Add to scene tree as child of ChunkController
+            // Fix: Specify the type for upcast to avoid ambiguity
+            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+            // Store the new mesh instance
+            self.chunk_meshes.insert(pos, mesh_instance);
+            // godot_print!("ChunkController: Created new mesh for chunk {:?}", pos);
         }
     }
-
-  // Helper function to blend heights at biome boundaries
-  fn blend_heights(
-      heightmap: &mut [f32],
-      biome_ids: &[u8],
-      chunk_size: u32,
-      blend_distance: f32
-  ) {
-      // Create a copy of the original heightmap
-      let original_heights = heightmap.to_vec();
-
-      // Blend heights at biome boundaries
-      for z in 0..chunk_size {
-          for x in 0..chunk_size {
-              let idx = (z * chunk_size + x) as usize;
-
-              // Check if this vertex is at a biome boundary
-              if Self::is_at_biome_boundary(biome_ids, idx, chunk_size) {
-                  // Blend with neighbors
-                  let mut total_weight = 1.0;
-                  let mut weighted_height = original_heights[idx];
-
-                  // Get all neighbors within blend distance
-                  for dz in -2..=2 {
-                      for dx in -2..=2 {
-                          if dx == 0 && dz == 0 {
-                              continue;
-                          }
-
-                          let nx = x as i32 + dx;
-                          let nz = z as i32 + dz;
-
-                          if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
-                              let nidx = (nz * chunk_size as i32 + nx) as usize;
-
-                              // Weight based on distance
-                              let distance = ((dx * dx + dz * dz) as f32).sqrt();
-                              let weight = (1.0 - distance / 3.0).max(0.0);
-
-                              total_weight += weight;
-                              weighted_height += original_heights[nidx] * weight;
-                          }
-                      }
-                  }
-
-                  // Update height with weighted average
-                  heightmap[idx] = weighted_height / total_weight;
-              }
-          }
-      }
-  }
-
-  fn is_at_biome_boundary(biome_ids: &[u8], idx: usize, chunk_size: u32) -> bool {
-      let x = (idx as u32) % chunk_size;
-      let z = (idx as u32) / chunk_size;
-
-      let current = biome_ids[idx];
-
-      // Check neighboring vertices
-      let mut has_different_neighbor = false;
-
-      // Check neighbors in all 8 directions
-      for dz in -1..=1 {
-          for dx in -1..=1 {
-              if dx == 0 && dz == 0 {
-                  continue;
-              }
-
-              let nx = x as i32 + dx;
-              let nz = z as i32 + dz;
-
-              if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
-                  let nidx = (nz * chunk_size as i32 + nx) as usize;
-                  if biome_ids[nidx] != current {
-                      has_different_neighbor = true;
-                      break;
-                  }
-              }
-          }
-          if has_different_neighbor {
-              break;
-          }
-      }
-
-      has_different_neighbor
-  }
-
-  
 }

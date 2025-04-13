@@ -19,6 +19,7 @@ use crate::core::event_bus;
 use crate::core::game_manager;
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode};
+use crate::terrain::terrain_config::TerrainConfigManager;
 
 use crate::initialization::world::world_initializer::WorldInitializer;
 
@@ -142,6 +143,10 @@ impl SystemInitializer {
         // Initialize configuration manager
         let config_manager = Arc::new(Mutex::new(config_manager::ConfigurationManager::default()));
         self.config_manager = Some(config_manager.clone());
+        
+        let _terrain_config_arc = TerrainConfigManager::init();
+        godot_print!("SystemInitializer: Explicitly initialized TerrainConfigManager.");
+
         
         // Prepare default network configuration
         let default_network_config = NetworkConfig {

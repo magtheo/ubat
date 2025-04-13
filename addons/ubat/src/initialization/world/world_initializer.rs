@@ -10,6 +10,8 @@ use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::initialization::world::TerrainInitializer;
 use crate::networking::network_manager::{NetworkHandler, NetworkMode};
 
+use super::terrain_initializer::TerrainSystemContext;
+
 // Custom error type for world initialization
 #[derive(Debug)]
 pub enum WorldInitError {
@@ -79,15 +81,31 @@ impl WorldInitializer {
         // Phase 1: Initialize WorldStateManager
         self.initialize_world_manager()?;
         
-        // Phase 2: Initialize terrain systems
-        self.initialize_terrain_systems()?;
-        
-        // Phase 3: Initialize entity systems (placeholder for now)
-        self.initialize_entity_systems()?;
-        
+        // Phase 2: Initialize terrain systems (creates managers and returns Gd refs)
+        let terrain_context = self.initialize_terrain_systems()?; // Modify this to return context
+
+        // Phase 3: Connect WorldStateManager to Terrain Managers (NEW STEP)
+        if let (Some(world_manager_arc), Some(biome_mgr_gd), Some(chunk_mgr_gd)) =
+            (&self.world_manager, terrain_context.biome_manager, terrain_context.chunk_manager)
+        {
+             println!("WorldInitializer: Connecting WorldStateManager to terrain managers...");
+             let mut world_mgr_locked = world_manager_arc.lock()
+                .map_err(|_| WorldInitError::WorldStateError("Failed to lock world manager for setting terrain refs".to_string()))?;
+
+             // Call the new setter method
+             world_mgr_locked.set_terrain_managers(biome_mgr_gd, chunk_mgr_gd);
+
+             println!("WorldInitializer: WorldStateManager connected.");
+        } else {
+             // Handle error: WorldStateManager or terrain managers weren't properly initialized
+             return Err(WorldInitError::OtherError("Failed to get references for connecting WSM and terrain".to_string()));
+        }
+
+        // Phase x: Initialize entity systems (placeholder for now)
+        // self.initialize_entity_systems()?;
+
         self.initialized = true;
         println!("WorldInitializer: World initialization complete");
-        
         Ok(())
     }
     
@@ -135,7 +153,7 @@ impl WorldInitializer {
     }
     
     // Phase 2: Initialize terrain systems
-    fn initialize_terrain_systems(&mut self) -> Result<(), WorldInitError> {
+    fn initialize_terrain_systems(&mut self) -> Result<TerrainSystemContext, WorldInitError> {
         println!("WorldInitializer: Initializing terrain systems");
         
         // Create TerrainInitializer
@@ -162,32 +180,14 @@ impl WorldInitializer {
         terrain_init.initialize_terrain_system()
             .map_err(|e| WorldInitError::TerrainError(e))?;
         
-        // Connect terrain systems directly with world manager
-        if let Some(world_manager) = &self.world_manager {
-            let mut world_mgr = world_manager.lock()
-                .map_err(|_| WorldInitError::WorldStateError("Failed to lock world manager".to_string()))?;
-            
-            // Get the initialized components from terrain initializer
-            let terrain_context = terrain_init.get_terrain_context();
-            
-            // Initialize terrain components directly in world manager
-            if let (Some(biome_mgr), Some(chunk_mgr)) = (terrain_context.biome_manager, terrain_context.chunk_manager) {
-                println!("WorldInitializer: Connecting BiomeManager and ChunkManager to WorldStateManager");
-                
-                // Store references to these managers directly in world_mgr
-                // This replaces the need for TerrainWorldIntegration
-                world_mgr.initialize_terrain(biome_mgr, chunk_mgr)
-                    .map_err(|e| WorldInitError::TerrainError(e))?;
-            } else {
-                return Err(WorldInitError::TerrainError("Failed to get terrain components".to_string()));
-            }
-        }
-        
-        self.terrain_initialized = true;
-        self.terrain_initializer = Some(terrain_init);
-        
+        // Get the context containing the Gd references
+        let context = terrain_init.get_terrain_context();
+
+        self.terrain_initialized = true; // Mark WInitializer's terrain phase as done
+        self.terrain_initializer = Some(terrain_init); // Store TI if needed
+
         println!("WorldInitializer: Terrain systems initialized");
-        Ok(())
+        Ok(context) // Return the context
     }
     
     // Phase 3: Initialize entity systems (placeholder)
