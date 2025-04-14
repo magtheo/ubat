@@ -5,13 +5,14 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, Arc, RwLock};
 use rayon::prelude::*;
+use std::sync::mpsc::Sender; // Add import
 
 use crate::threading::thread_pool::{ThreadPool, global_thread_pool};
-use crate::terrain::chunk_manager::ChunkPosition;
+use crate::terrain::chunk_manager::{ChunkPosition, ChunkResult};
 use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
 
 // Data structure for serializing chunk data
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChunkData {
     pub position: ChunkPosition,
     pub heightmap: Vec<f32>,
@@ -19,20 +20,11 @@ pub struct ChunkData {
     // Add other data as needed
 }
 
-// Thread-safe queue for pending IO operations
-struct IOQueue {
-    save_queue: Mutex<Vec<(ChunkPosition, ChunkData)>>,
-    load_queue: Mutex<Vec<(ChunkPosition, Box<dyn FnOnce(Option<ChunkData>) + Send>)>>,
+struct LoadRequest {
+    position: ChunkPosition,
+    sender: Sender<ChunkResult>,
 }
 
-impl IOQueue {
-    fn new() -> Self {
-        IOQueue {
-            save_queue: Mutex::new(Vec::new()),
-            load_queue: Mutex::new(Vec::new()),
-        }
-    }
-}
 
 // ChunkStorage handles saving and loading chunks from disk
 pub struct ChunkStorage {
@@ -40,12 +32,14 @@ pub struct ChunkStorage {
     cache: RwLock<HashMap<ChunkPosition, ChunkData>>,
     cache_size_limit: RwLock<usize>,
     thread_pool: Option<ThreadPool>,
-    io_queue: Arc<IOQueue>,
+    result_sender: Sender<ChunkResult>, // Store a clone of the sender from ChunkManager
+    load_queue: Mutex<Vec<LoadRequest>>, // Simplified load queue
+    save_queue: Mutex<Vec<(ChunkPosition, ChunkData)>>, // Keep save queue
     is_processing_queue: Mutex<bool>,
 }
 
 impl ChunkStorage {
-    pub fn new(save_dir: &str) -> Self {
+    pub fn new(save_dir: &str, result_sender: Sender<ChunkResult>) -> Self {
         // Ensure directory exists
         fs::create_dir_all(save_dir).unwrap_or_else(|e| {
             eprintln!("Failed to create save directory: {}", e);
@@ -78,7 +72,9 @@ impl ChunkStorage {
             cache: RwLock::new(HashMap::new()),
             cache_size_limit: RwLock::new(cache_limit), // Store up to 100 chunks in memory
             thread_pool,
-            io_queue: Arc::new(IOQueue::new()),
+            result_sender, // Store the passed sender
+            load_queue: Mutex::new(Vec::new()), // Init new load queue
+            save_queue: Mutex::new(Vec::new()), // Init save queue
             is_processing_queue: Mutex::new(false),
         }
     }
@@ -103,28 +99,22 @@ impl ChunkStorage {
     }
     
     // Queue a chunk to be saved asynchronously
-    pub fn queue_save_chunk(self: Arc<Self>, position: ChunkPosition, heightmap: &[f32], biome_ids: &[u8]) {
+    pub fn queue_save_chunk(&self, position: ChunkPosition, heightmap: &[f32], biome_ids: &[u8]) {
         let chunk_data = ChunkData {
             position,
             heightmap: heightmap.to_vec(),
             biome_ids: biome_ids.to_vec(),
         };
-    
-        // Add to the save queue (self is Arc, but derefs to &self for accessing fields)
+   
+        // Add to the save queue
         {
-            let mut queue = self.io_queue.save_queue.lock().unwrap();
+            let mut queue = self.save_queue.lock().unwrap();
+            godot_print!("ChunkStorage: Queuing save for {:?}.", position);
             queue.push((position, chunk_data.clone()));
         }
-    
-        // Also update the cache immediately (update_cache takes &self, Arc derefs)
+   
+        // Update the cache immediately
         self.update_cache(position, chunk_data);
-    
-        // Process the queue if not already processing
-        // Now self is Arc<Self>, so this call is valid.
-        // Note: This consumes the Arc passed into queue_save_chunk.
-        // The caller will need to clone the Arc before calling queue_save_chunk
-        // if they want to use the storage object afterwards.
-        self.process_io_queue();
     }
     
     // Save a chunk to storage (synchronous version)
@@ -163,36 +153,35 @@ impl ChunkStorage {
    }
     
     // Queue a chunk to be loaded asynchronously
-    pub fn queue_load_chunk<F>(&self, position: ChunkPosition, callback: F)
-        where
-            F: FnOnce(Option<ChunkData>) + Send + 'static,
-    {
-        // Check cache first
-        if let Ok(cache) = self.cache.read() { // Read lock
+    pub fn queue_load_chunk(&self, position: ChunkPosition) {
+        // Check cache first (read lock)
+        if let Ok(cache) = self.cache.read() {
             if let Some(data) = cache.get(&position) {
-                callback(Some(data.clone()));
-                return;
+                // Cache hit: Send result immediately using the stored sender
+                godot_print!("ChunkStorage: Cache hit for {:?}. Sending Loaded result.", position);
+                let _ = self.result_sender.send(ChunkResult::Loaded(position, data.clone()));
+                return; // Don't queue if cache hit
             }
         }
         // Drop read lock here
-
+    
         // Add to the load queue
         {
-            let mut queue = self.io_queue.load_queue.lock().unwrap();
-            queue.push((position, Box::new(callback)));
-        } // Drop lock on load_queue
-
-        // Process the queue if not already processing
-        // This requires an Arc<Self> to call process_io_queue.
-        // This indicates queue_load_chunk should also potentially take Arc<Self>
-        // OR the caller needs to hold the Arc and call process_io_queue manually after queueing.
-        // Let's assume the caller manages the Arc and calls process_io_queue.
-        // If you want queue_load_chunk to trigger processing, it would need access
-        // to an Arc<ChunkStorage>.
-        // For now, let's leave this commented out, assuming manual trigger or trigger from queue_save_chunk
-        // self.clone().process_io_queue(); // Needs self to be Arc<Self>
-         println!("Chunk {:?} queued for load. Manual trigger of process_io_queue needed if not saving.", position);
-
+            let mut queue = self.load_queue.lock().unwrap();
+             // Avoid queueing duplicates if already loading? Optional check.
+             if !queue.iter().any(|req| req.position == position) {
+                 godot_print!("ChunkStorage: Cache miss for {:?}. Queuing load request.", position);
+                 queue.push(LoadRequest {
+                     position,
+                     sender: self.result_sender.clone(), // Clone sender for this request
+                 });
+             } else {
+                godot_print!("ChunkStorage: Load request for {:?} already in queue.", position);
+             }
+    
+        } // Drop lock on load_queue 
+        
+        println!("Chunk {:?} queued for load. Manual trigger of process_io_queue needed if not saving.", position);
     }
     
     // Load a chunk from storage (synchronous version)
@@ -248,66 +237,57 @@ impl ChunkStorage {
         let self_clone = Arc::clone(&self);
 
         // Function to process the queue in a thread
-        let process_queue = move || { // Closure now captures self_clone (Arc<ChunkStorage>)
-            // Clone fields needed from self_clone inside the closure
-            let io_queue = Arc::clone(&self_clone.io_queue);
-            let save_dir = self_clone.save_dir.clone(); // String implements Clone
-
-            // Process save queue
-            let save_tasks = {
-                let mut queue = io_queue.save_queue.lock().unwrap();
+        let process_queue = move || {
+            // --- Process save queue (Largely unchanged, just reads self_clone.save_queue) ---
+            // let save_tasks = {
+            //     let mut queue = self_clone.save_queue.lock().unwrap(); // Use self_clone
+            //     std::mem::take(&mut *queue)
+            // };
+            // if !save_tasks.is_empty() {
+            //     godot_print!("ChunkStorage: Processing {} save tasks.", save_tasks.len());
+            //     save_tasks.par_iter().for_each(|(position, chunk_data)| {
+            //         // ... file writing logic ...
+            //         // Optionally send ChunkResult::Saved(position) via self_clone.result_sender here
+            //     });
+            // }
+    
+            // --- Process load queue (Refactored) ---
+            let load_tasks = {
+                let mut queue = self_clone.load_queue.lock().unwrap(); // Use self_clone
                 std::mem::take(&mut *queue)
             };
-
-            if !save_tasks.is_empty() {
-                 // Process in parallel if we have multiple items
-                 // Use rayon's scope or pass necessary data directly if needed
-                save_tasks.par_iter().for_each(|(position, chunk_data)| {
-                    let path = format!("{}/chunk_{}_{}.json", save_dir, position.x, position.z);
-                    match serde_json::to_string(&chunk_data) {
-                         Ok(json) => {
-                            if let Err(e) = fs::write(&path, json) {
-                                eprintln!("Failed to write chunk data to {}: {}", path, e);
-                            }
+    
+            if !load_tasks.is_empty() {
+                 godot_print!("ChunkStorage: Processing {} load tasks.", load_tasks.len());
+                // Process sequentially or in parallel? Sequential is simpler for cache updates.
+                for load_request in load_tasks {
+                    let position = load_request.position;
+                    let sender = load_request.sender; // Use the sender captured with the request
+                    let path = self_clone.get_chunk_path(position); // Use self_clone
+    
+                    // --- File Reading and Deserialization ---
+                    let load_outcome = match fs::read_to_string(&path) {
+                        Ok(json) => match serde_json::from_str::<ChunkData>(&json) {
+                            Ok(data) => Ok(data),
+                            Err(e) => Err(format!("Deserialize error: {}", e)),
                         },
-                        Err(e) => {
-                             eprintln!("Failed to serialize chunk data for {}: {}", path, e);
+                        Err(e) => Err(format!("File read error: {}", e)), // File not found is an error here now
+                    };
+    
+                    // --- Update Cache & Send Result ---
+                    match load_outcome {
+                        Ok(data) => {
+                            self_clone.update_cache(position, data.clone()); // Update cache
+                            godot_print!("ChunkStorage: Load successful for {:?}. Sending Loaded.", position);
+                            let _ = sender.send(ChunkResult::Loaded(position, data));
+                        }
+                        Err(err_msg) => {
+                            // Log the actual error if needed
+                            // eprintln!("Failed to load chunk data from {}: {}", path, err_msg);
+                            godot_print!("ChunkStorage: Load failed for {:?}. Sending LoadFailed.", position);
+                            let _ = sender.send(ChunkResult::LoadFailed(position));
                         }
                     }
-                });
-            }
-
-            // Process load queue
-            let load_tasks = {
-                let mut queue = io_queue.load_queue.lock().unwrap();
-                std::mem::take(&mut *queue)
-            };
-
-            if !load_tasks.is_empty() {
-                // Process each load task sequentially
-                for (position, callback) in load_tasks {
-                    let path = format!("{}/chunk_{}_{}.json", save_dir, position.x, position.z);
-                    let result = match fs::read_to_string(&path) {
-                        Ok(json) => {
-                            match serde_json::from_str::<ChunkData>(&json) {
-                                Ok(data) => {
-                                    // Use self_clone to call update_cache
-                                    // update_cache takes &self, which Arc<T> can deref to
-                                    self_clone.update_cache(position, data.clone());
-                                    Some(data)
-                                },
-                                Err(e) => {
-                                    eprintln!("Failed to deserialize chunk data from {}: {}", path, e);
-                                    None
-                                }
-                            }
-                        },
-                        Err(_) => None, // Consider logging file read errors too
-                    };
-
-                    // Call the callback with the result
-                    // The callback is Box<dyn FnOnce>, so it's called here
-                    callback(result);
                 }
             }
 
@@ -316,6 +296,7 @@ impl ChunkStorage {
             let mut is_processing_guard = self_clone.is_processing_queue.lock().unwrap();
             *is_processing_guard = false;
             // Lock is released when is_processing_guard goes out of scope
+            godot_print!("process_queue: Finished."); // ADD LOG
         }; // End of closure definition
 
         // Use thread pool if available
@@ -428,9 +409,9 @@ impl ChunkStorage {
         
         // Queue them for loading
         for position in positions {
-            self.queue_load_chunk(position, |_| {
+            self.queue_load_chunk(position
                 // No callback action needed, just load into cache
-            });
+            );
         }
     }
 }

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize}; // Needed for ChunkPosition if defined here
 use godot::classes::fast_noise_lite::{NoiseType, FractalType};
+use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
 
 // Use ChunkData from ChunkStorage
 use crate::threading::chunk_storage::{ChunkData, ChunkStorage};
@@ -30,6 +31,16 @@ enum ChunkGenState {
     Ready(Instant), // Data is available (either loaded or generated)
 }
 
+#[derive(Debug, Clone)] // Make sure ChunkData also derives Clone
+pub enum ChunkResult {
+    Loaded(ChunkPosition, ChunkData),
+    LoadFailed(ChunkPosition),
+    Generated(ChunkPosition, ChunkData),
+    GenerationFailed(ChunkPosition, String),
+    // Saved(ChunkPosition), // Optional for now
+}
+
+
 // Constants
 const UNLOAD_CHECK_INTERVAL: Duration = Duration::from_secs(5); // How often to check for unloading
 
@@ -41,6 +52,11 @@ pub struct ChunkManager {
     base: Base<Node3D>,
 
     storage: Arc<ChunkStorage>,
+
+    // Channel for results from background tasks
+    result_sender: Sender<ChunkResult>,
+    result_receiver: Receiver<ChunkResult>,
+
     compute_pool: Arc<RwLock<ThreadPool>>,
     chunk_states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>,
     biome_manager: Option<Gd<BiomeManager>>,
@@ -58,7 +74,8 @@ pub struct ChunkManager {
 impl INode3D for ChunkManager {
     fn init(base: Base<Node3D>) -> Self {
         godot_print!("ChunkManager: Initializing...");
-        let storage = Arc::new(ChunkStorage::new("user://terrain_data"));
+        let (tx, rx) = channel(); // Create the channel
+        let storage = Arc::new(ChunkStorage::new("user://terrain_data", tx.clone()));
         let compute_pool = get_or_init_global_pool(); // Use global pool
 
         let chunk_size = if let Some(config_arc) = TerrainConfigManager::get_config() {
@@ -71,6 +88,9 @@ impl INode3D for ChunkManager {
             base,
             storage,
             compute_pool,
+            result_sender: tx, // Store sender
+            result_receiver: rx, // Store receiver
+
             chunk_states: Arc::new(RwLock::new(HashMap::new())),
             biome_manager: None,
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
@@ -114,6 +134,24 @@ impl INode3D for ChunkManager {
     }
 
     fn process(&mut self, _delta: f64) {
+        // Process results received from background tasks
+        loop {
+            match self.result_receiver.try_recv() {
+                Ok(result) => {
+                    // godot_print!("ChunkManager: Processing result: {:?}", result); // Debug log
+                    self.handle_chunk_result(result); // Separate function for clarity
+                }
+                Err(TryRecvError::Empty) => {
+                    // No more messages in the channel for now
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    godot_error!("ChunkManager: Result channel disconnected!");
+                    // Handle error appropriately, maybe break or panic
+                    break;
+                }
+            }
+        }
         // Periodic checks can happen here if needed,
         // but main update driven by ChunkController `update` call.
         // Example: check for timed unload independent of player movement
@@ -136,88 +174,103 @@ impl ChunkManager {
 
     // Ensure chunk data is loaded or generation is triggered.
     fn ensure_chunk_is_ready(&self, pos: ChunkPosition) {
-        // godot_print!("ChunkManager: ensure_chunk_position: {:?}", pos);
-        // Fast path: Check read lock first
+        // Fast path check (read lock) - unchanged
         let current_state = self.chunk_states.read().unwrap().get(&pos).cloned();
-
         match current_state {
-            Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => {
-                return; // Already handled or in progress
-            }
-            _ => {} // Unknown or None, proceed below
+            Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
+            _ => {}
         }
-
-        // Acquire write lock to modify state
+   
+        // Acquire write lock - unchanged
         let mut states = self.chunk_states.write().unwrap();
-        // Double-check state after acquiring write lock
+        // Double-check state - unchanged
         match states.get(&pos) {
-             Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => {
-                 return; // Another thread handled it
-             }
+            Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
             _ => {
-                // Set state to Loading and queue load operation
+                // Set state to Loading
+                godot_print!("ChunkManager::ensure_chunk_is_ready: Setting state Loading for {:?}", pos);
                 states.insert(pos, ChunkGenState::Loading);
-                // Drop write lock before calling queue_load_chunk if it might re-enter
+                // Drop write lock *before* calling storage
                 drop(states);
-
-                let storage_clone = Arc::clone(&self.storage);
-                let states_clone = Arc::clone(&self.chunk_states);
-                let compute_pool_clone = Arc::clone(&self.compute_pool);
-                let biome_data_clone = Arc::clone(&self.thread_safe_biome_data);
-                let chunk_size = self.chunk_size;
-
-                let storage_for_inner_closure = Arc::clone(&storage_clone);
-
-                godot_print!("ChunkManager::ensure_chunk_is_ready: Queuing load for {:?}", pos); // ADD
-                storage_clone.queue_load_chunk(pos, move |load_result| {
-                    godot_print!("ChunkManager: Load callback executed for {:?}. Found data: {}", pos, load_result.is_some());
-
-                match load_result {
-                        Some(_chunk_data) => {
-                            // Loaded from storage
-                            godot_print!("ChunkManager: Load callback: Found data for {:?}, setting Ready.", pos); // ADD
-                            let mut states_w = states_clone.write().unwrap();
-                            states_w.insert(pos, ChunkGenState::Ready(Instant::now()));
-                            // godot_print!("ChunkManager: Chunk {:?} loaded from storage.", pos);
-                        }
-                        None => {
-                            // Not in storage, trigger generation
-                            {
-                                godot_print!("ChunkManager: Load callback: No data for {:?}, proceeding to generate.", pos); // ADD
-                                let mut states_w = states_clone.write().unwrap();
-                                // Ensure state is still Loading before switching to Generating
-                                if states_w.get(&pos) == Some(&ChunkGenState::Loading) {
-                                    states_w.insert(pos, ChunkGenState::Generating);
-                                } else {
-                                    godot_warn!("ChunkManager: State changed unexpectedly for {:?} while queuing generation.", pos);
-                                    return; // Avoid queuing generation if state changed
-                                }
-                            } // Write lock released
-
-                            godot_print!("ChunkManager: Chunk {:?} not found in storage. Triggering generation.", pos);
-                            compute_pool_clone.read().unwrap().execute(move || {
-                                Self::generate_and_save_chunk(
-                                    pos,
-                                    storage_for_inner_closure, // Use the already cloned storage Arc
-                                    states_clone,
-                                    biome_data_clone,
-                                    chunk_size,
-                                );
-                            });
-                        }
-                    }
-                });
+   
+                // Queue load task - NO CALLBACK CLOSURE NEEDED
+                // `queue_load_chunk` now needs the sender, passed via storage Arc
+                godot_print!("ChunkManager::ensure_chunk_is_ready: Queuing load for {:?}", pos);
+                self.storage.queue_load_chunk(pos); // queue_load_chunk internally uses sender passed during its init
+   
+                // Generation is no longer triggered directly here.
+                // It's triggered by handle_chunk_result when LoadFailed is received.
             }
         }
+    }
+
+    fn queue_generation(&self, pos: ChunkPosition) {
+        godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
+        let storage_clone = Arc::clone(&self.storage);
+        let states_clone = Arc::clone(&self.chunk_states); // Still needed? Maybe not directly.
+        let biome_data_clone = Arc::clone(&self.thread_safe_biome_data);
+        let chunk_size = self.chunk_size;
+        let sender_clone = self.result_sender.clone(); // Clone sender for the task
+    
+        self.compute_pool.read().unwrap().execute(move || {
+            Self::generate_and_save_chunk(
+                pos,
+                storage_clone, // Pass storage Arc
+                // states_clone, // Don't pass states Arc directly
+                biome_data_clone,
+                chunk_size,
+                sender_clone, // Pass the sender
+            );
+        });
+    }
+
+    fn handle_chunk_result(&mut self, result: ChunkResult) {
+        let mut states = self.chunk_states.write().unwrap(); // Lock states here on main thread
+        match result {
+            ChunkResult::Loaded(pos, _data) => {
+                // If it was loaded, it should be ready.
+                // Check previous state? Optional.
+                godot_print!("ChunkManager: Received Loaded for {:?}, setting Ready.", pos);
+                states.insert(pos, ChunkGenState::Ready(Instant::now()));
+            }
+            ChunkResult::LoadFailed(pos) => {
+                // Check if we were actually waiting for a load
+                if let Some(ChunkGenState::Loading) = states.get(&pos) {
+                    godot_print!("ChunkManager: Received LoadFailed for {:?}, queuing generation.", pos);
+                    // Set state to Generating *before* queueing
+                    states.insert(pos, ChunkGenState::Generating);
+                    // Queue generation task (needs sender passed)
+                    self.queue_generation(pos); // Queue generation task
+                } else {
+                    // Received LoadFailed but wasn't in Loading state? Log warning.
+                    godot_warn!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}", pos, states.get(&pos));
+                    // Optionally reset to Unknown or ignore
+                     states.entry(pos).or_insert(ChunkGenState::Unknown);
+                }
+            }
+            ChunkResult::Generated(pos, _data) => {
+                // Generation finished successfully
+                 godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
+                states.insert(pos, ChunkGenState::Ready(Instant::now()));
+            }
+            ChunkResult::GenerationFailed(pos, err) => {
+                 godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
+                // Reset state to Unknown so it might be tried again later
+                states.insert(pos, ChunkGenState::Unknown);
+            }
+            // Handle Saved(pos) if added
+        }
+         // Drop the write lock implicitly when states goes out of scope
     }
 
     // Generation logic (runs on compute pool)
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>,
+        // states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>, // ChunkState is no longer used with new thread channels
         biome_data_arc_rwlock: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
         chunk_size: u32,
+        sender: Sender<ChunkResult>, // Add sender parameter
     ) {
         // Acquire read lock on Option<Arc<ThreadSafeBiomeData>>
         let biome_data_opt_arc = biome_data_arc_rwlock.read().unwrap();
@@ -229,11 +282,16 @@ impl ChunkManager {
 
         // Check if biome data is available
         if biome_data.is_none() {
-            godot_error!("ChunkManager: Cannot generate chunk {:?}, BiomeData is missing.", pos);
-            let mut states_w = states.write().unwrap();
-            states_w.insert(pos, ChunkGenState::Unknown); // Reset state
+            let err_msg = "BiomeData missing".to_string();
+            godot_error!("ChunkManager: Cannot generate chunk {:?}, {}", pos, err_msg);
+            // FIX: Send GenerationFailed result via the channel
+            let _ = sender.send(ChunkResult::GenerationFailed(pos, err_msg));
+            // Remove the lines accessing the old 'states' variable:
+            // let mut states_w = states.write().unwrap(); // REMOVE
+            // states_w.insert(pos, ChunkGenState::Unknown); // REMOVE
             return;
         }
+        
         let biome_data = biome_data.unwrap(); // Now we have Arc<ThreadSafeBiomeData>
 
         // --- Generation ---
@@ -275,17 +333,29 @@ impl ChunkManager {
             }
         }
 
+        
         // Blend heights at biome boundaries
         Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance());
+        
+        let heightmap_vec = heightmap; // Assuming heightmap is vec now
+        let biome_ids_vec = biome_ids; // Assuming biome_ids is vec now    
 
-        // --- Save and Update State ---
-        // Storage Arc was already cloned and passed in
-        storage.queue_save_chunk(pos, &heightmap, &biome_ids);
+        // --- Queue Save Task (using storage Arc) ---
+        // `queue_save_chunk` signature might need adjustment if it previously took self
+        // Assuming it now just takes data:
+        storage.queue_save_chunk(pos, &heightmap_vec, &biome_ids_vec); // This only queues the save
 
-        // Update the state map
-        let mut states_w = states.write().unwrap();
-        states_w.insert(pos, ChunkGenState::Ready(Instant::now()));
-        // godot_print!("ChunkManager: Generation finished for {:?}", pos);
+        // --- Send Result via Channel ---
+        // Send success *after* queuing the save. The actual save happens later.
+        // We consider generation "done" when data is ready and save is queued.
+        // Include generated data for immediate caching if needed by receiver?
+        let chunk_data = ChunkData { position: pos, heightmap: heightmap_vec, biome_ids: biome_ids_vec };
+        godot_print!("ChunkManager: Generation finished for {:?}, sending result.", pos);
+        match sender.send(ChunkResult::Generated(pos, chunk_data)) {
+            Ok(_) => {} // Message sent
+            Err(e) => godot_error!("Failed to send generation result for {:?}: {}", pos, e),
+        }
+        godot_print!("ChunkManager: Generation finished for {:?}", pos);
     }
 
     #[func]
@@ -388,12 +458,12 @@ impl ChunkManager {
                 self.ensure_chunk_is_ready(pos); // Request load/generation if needed
             }
         }
-        // After queueing all potential loads for this update cycle,
-        // explicitly trigger the IO queue processing.
-        // process_io_queue takes Arc<Self>, so we clone the storage Arc.
-        // godot_print!("ChunkManager::update: Finished queuing loads. Triggering IO processing.");
-        // Arc::clone(&self.storage).process_io_queue();
-        // adding this above coused a crash witout any error ar warnings
+        
+        // --- Trigger IO Processing ONCE at the end ---
+        godot_print!("ChunkManager::update: Triggering IO processing.");
+        // This still requires debugging if it causes a crash.
+        // Cloning the Arc is correct as process_io_queue takes Arc<Self>
+        Arc::clone(&self.storage).process_io_queue();
 
         // Perform unload check now that we know required chunks
         self.unload_distant_chunks(&required_chunks);
