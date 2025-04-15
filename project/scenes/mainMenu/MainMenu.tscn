@@ -1,6 +1,6 @@
 [gd_scene load_steps=3 format=3 uid="uid://xcocqp013tbm"]
 
-[ext_resource type="Script" uid="uid://61lu5w6co72r" path="res://project/scenes/main_menu.gd" id="1_w4ch6"]
+[ext_resource type="Script" uid="uid://61lu5w6co72r" path="res://project/scenes/mainMenu/main_menu.gd" id="1_ddth7"]
 
 [sub_resource type="SpriteFrames" id="SpriteFrames_w4ch6"]
 
@@ -11,7 +11,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1_w4ch6")
+script = ExtResource("1_ddth7")
 
 [node name="MainPanel" type="Panel" parent="."]
 layout_mode = 0

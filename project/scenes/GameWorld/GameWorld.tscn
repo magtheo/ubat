@@ -1,0 +1,27 @@
+[gd_scene load_steps=6 format=3 uid="uid://qjul30hhfbyk"]
+
+[ext_resource type="Script" uid="uid://cg3fntegd25hu" path="res://project/scenes/GameWorld/GameWorldManager.gd" id="1_3q27p"]
+[ext_resource type="PackedScene" uid="uid://dvo6agmpd78u7" path="res://project/camera/cameraController.tscn" id="2_s6tox"]
+[ext_resource type="Script" uid="uid://dcyfwnvvoew55" path="res://project/camera/player.gd" id="3_3g3qe"]
+[ext_resource type="Script" uid="uid://b0w1ylqnlikg6" path="res://project/misc/preformanceNode.gd" id="4_is3mf"]
+[ext_resource type="PackedScene" uid="uid://e0l4ubqjawsw" path="res://modles/man.glb" id="5_wmw65"]
+
+[node name="main" type="Node3D"]
+
+[node name="World" type="Node3D" parent="."]
+script = ExtResource("1_3q27p")
+
+[node name="CSGBox3D" type="CSGBox3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.228494, 6.578, -6.61919)
+size = Vector3(6.19775, 8.35993, 1)
+
+[node name="CameraController" parent="." groups=["CameraController"] instance=ExtResource("2_s6tox")]
+script = ExtResource("3_3g3qe")
+speed = 0.5
+
+[node name="Preformance node" type="Node2D" parent="."]
+position = Vector2(0, 304)
+script = ExtResource("4_is3mf")
+
+[node name="man" parent="." instance=ExtResource("5_wmw65")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.52927, 0, -0.590427)
