@@ -5,11 +5,28 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, Arc, RwLock};
 use rayon::prelude::*;
-use std::sync::mpsc::Sender; // Add import
+use std::sync::mpsc::{Sender, Receiver, channel}; // Add import
+use std::thread;
 
 use crate::threading::thread_pool::{ThreadPool, global_thread_pool};
 use crate::terrain::chunk_manager::{ChunkPosition, ChunkResult};
 use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
+
+
+// Enum to differentiate request types
+#[derive(Debug)]
+enum IORequestType {
+    Load,
+    Save(ChunkData), // Include the data to save
+    Shutdown, // For graceful exit
+}
+
+// The actual request message structure
+#[derive(Debug)]
+struct IORequest {
+    position: ChunkPosition,
+    request_type: IORequestType,
+}
 
 // Data structure for serializing chunk data
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -29,56 +46,170 @@ struct LoadRequest {
 // ChunkStorage handles saving and loading chunks from disk
 pub struct ChunkStorage {
     save_dir: String,
-    cache: RwLock<HashMap<ChunkPosition, ChunkData>>,
-    cache_size_limit: RwLock<usize>,
-    thread_pool: Option<ThreadPool>,
+    cache: Arc<RwLock<HashMap<ChunkPosition, ChunkData>>>,
+    cache_size_limit: Arc<RwLock<usize>>,
+   
     result_sender: Sender<ChunkResult>, // Store a clone of the sender from ChunkManager
-    load_queue: Mutex<Vec<LoadRequest>>, // Simplified load queue
-    save_queue: Mutex<Vec<(ChunkPosition, ChunkData)>>, // Keep save queue
-    is_processing_queue: Mutex<bool>,
+    io_request_sender: Option<Sender<IORequest>>, // To send requests TO IO thread
+    io_thread_handle: Option<thread::JoinHandle<()>>, // Handle to the IO thread
+
+
+}
+
+// Helper function for cache eviction (independent function)
+fn enforce_cache_limit(cache: &mut HashMap<ChunkPosition, ChunkData>, limit: usize) {
+    while cache.len() > limit {
+        if let Some(key_to_remove) = cache.keys().next().cloned() {
+            cache.remove(&key_to_remove);
+        } else {
+            break; // Should not happen if len > 0
+        }
+    }
 }
 
 impl ChunkStorage {
     pub fn new(save_dir: &str, result_sender: Sender<ChunkResult>) -> Self {
+        godot_print!("ChunkStorage: Initializing new storage with save_dir: {}", save_dir);
+        
         // Ensure directory exists
         fs::create_dir_all(save_dir).unwrap_or_else(|e| {
-            eprintln!("Failed to create save directory: {}", e);
+            godot_error!("Failed to create save directory: {}", e);
         });
+    
+        // Get cache limit from config
+        let cache_limit = TerrainConfigManager::get_config()
+            .and_then(|config| match config.read() {
+                Ok(guard) => Some(guard.chunk_cache_size()),
+                Err(_) => None,
+            })
+            .unwrap_or(100);
         
-        // Get thread pool configuration
-        let (num_threads, cache_limit) = if let Some(config_arc) = TerrainConfigManager::get_config() {
-            if let Ok(guard) = config_arc.read() {
-                (guard.max_threads(), guard.chunk_cache_size()) // Get both values
-            } else {
-                eprintln!("ChunkStorage: Failed to read TerrainConfig, using defaults.");
-                (2, 100) // Default if we can't read config
+        godot_print!("ChunkStorage: Cache limit set to: {}", cache_limit);
+    
+        // Create the channel for sending requests TO the IO thread
+        let (io_tx, io_rx): (Sender<IORequest>, Receiver<IORequest>) = channel();
+        
+        // Prepare shared data for the IO thread
+        let cache_arc = Arc::new(RwLock::new(HashMap::<ChunkPosition, ChunkData>::new()));
+        let limit_arc = Arc::new(RwLock::new(cache_limit));
+        let save_dir_clone = save_dir.to_string();
+        let result_sender_clone = result_sender.clone();
+        
+        // Clone the Arcs for the thread - this is the key fix!
+        let cache_arc_thread = Arc::clone(&cache_arc);
+        let limit_arc_thread = Arc::clone(&limit_arc);
+        
+        godot_print!("ChunkStorage: Starting IO thread...");
+        
+        // Spawn the dedicated IO thread
+        let handle = thread::spawn(move || {
+            godot_print!("IO Thread: Started.");
+            
+            // This loop runs until the sender (io_tx) is dropped
+            for request in io_rx {
+                match &request.request_type {
+                    IORequestType::Load => {
+                        let pos = request.position;
+                        godot_print!("IO Thread: Processing load request for {:?}", pos);
+                    },
+                    IORequestType::Save(_) => {
+                        let pos = request.position;
+                        godot_print!("IO Thread: Processing save request for {:?}", pos);
+                    },
+                    IORequestType::Shutdown => {
+                        godot_print!("IO Thread: Received Shutdown request. Exiting.");
+                        break;
+                    }
+                }
+                
+                // Process request
+                match request.request_type {
+                    IORequestType::Load => {
+                        let pos = request.position;
+                        // 1. Check cache FIRST
+                        if let Ok(cache_guard) = cache_arc_thread.read() {
+                            if let Some(data) = cache_guard.get(&pos) {
+                                godot_print!("IO Thread: Cache hit for {:?}, sending Loaded result", pos);
+                                let _ = result_sender_clone.send(ChunkResult::Loaded(pos, data.clone()));
+                                continue; // Skip disk access
+                            }
+                        } // Drop read lock here
+    
+                        // 2. Cache miss - try loading from disk
+                        let path = format!("{}/chunk_{}_{}.json", save_dir_clone, pos.x, pos.z);
+                        let load_outcome = match fs::read_to_string(&path) {
+                            Ok(json) => match serde_json::from_str::<ChunkData>(&json) {
+                                Ok(data) => Ok(data),
+                                Err(e) => Err(format!("Deserialize error: {}", e)),
+                            },
+                            Err(e) => Err(format!("File read error: {}", e)), // Includes NotFound
+                        };
+    
+                        // 3. Process outcome & send result
+                        match load_outcome {
+                            Ok(data) => {
+                                godot_print!("IO Thread: Successfully loaded chunk {:?} from disk", pos);
+                                // Update cache (write lock)
+                                if let Ok(mut cache_w) = cache_arc_thread.write() {
+                                    cache_w.insert(pos, data.clone());
+                                    // Check and enforce cache limit AFTER inserting
+                                    if let Ok(limit) = limit_arc_thread.read() {
+                                        enforce_cache_limit(&mut cache_w, *limit);
+                                    }
+                                } // Write lock dropped
+                                let _ = result_sender_clone.send(ChunkResult::Loaded(pos, data));
+                            }
+                            Err(e) => {
+                                godot_print!("IO Thread: Failed to load chunk {:?}: {}. Sending LoadFailed result.", pos, e);
+                                let _ = result_sender_clone.send(ChunkResult::LoadFailed(pos));
+                            }
+                        }
+                    }
+    
+                    IORequestType::Save(chunk_data) => {
+                        let pos = request.position;
+                        let path = format!("{}/chunk_{}_{}.json", save_dir_clone, pos.x, pos.z);
+                        match serde_json::to_string(&chunk_data) {
+                            Ok(json) => {
+                                if let Err(e) = fs::write(&path, json) {
+                                    godot_error!("IO Thread: Failed to write chunk {:?} to {}: {}", pos, path, e);
+                                } else {
+                                    // Update cache (write lock) - AFTER successful save
+                                    if let Ok(mut cache_w) = cache_arc_thread.write() {
+                                        cache_w.insert(pos, chunk_data.clone()); // Clone the moved chunk_data
+                                        if let Ok(limit) = limit_arc_thread.read() {
+                                            enforce_cache_limit(&mut cache_w, *limit);
+                                        }
+                                    } // Write lock dropped
+                                    // Optionally send Saved result if needed
+                                }
+                            }
+                            Err(e) => {
+                                godot_error!("IO Thread: Failed to serialize chunk {:?}: {}", pos, e);
+                            }
+                        }
+                    }
+    
+                    IORequestType::Shutdown => {
+                        // Already handled above
+                    }
+                }
             }
-        } else {
-            eprintln!("ChunkStorage: No TerrainConfig found, using defaults.");
-            (2, 100) // Default if no config available
-        };
-        
-        // Decide on thread pool (local vs global)
-        let thread_pool = if global_thread_pool().is_some() {
-            godot_print!("ChunkStorage: Using global thread pool for IO.");
-            None // Use global pool
-        } else {
-            godot_print!("ChunkStorage: Creating local thread pool with {} threads for IO.", num_threads);
-            Some(ThreadPool::new(num_threads))
-        };
+            godot_print!("IO Thread: Terminated.");
+        }); // End of thread::spawn
+    
+        godot_print!("ChunkStorage: Construction complete with live IO thread");
         
         ChunkStorage {
             save_dir: save_dir.to_string(),
-            cache: RwLock::new(HashMap::new()),
-            cache_size_limit: RwLock::new(cache_limit), // Store up to 100 chunks in memory
-            thread_pool,
-            result_sender, // Store the passed sender
-            load_queue: Mutex::new(Vec::new()), // Init new load queue
-            save_queue: Mutex::new(Vec::new()), // Init save queue
-            is_processing_queue: Mutex::new(false),
+            cache: cache_arc,
+            cache_size_limit: limit_arc,
+            result_sender,
+            io_request_sender: Some(io_tx),
+            io_thread_handle: Some(handle),
         }
     }
-    
+        
     // Make this method public
     pub fn get_chunk_path(&self, position: ChunkPosition) -> String {
         format!("{}/chunk_{}_{}.json", self.save_dir, position.x, position.z)
@@ -105,43 +236,15 @@ impl ChunkStorage {
             heightmap: heightmap.to_vec(),
             biome_ids: biome_ids.to_vec(),
         };
-   
-        // Add to the save queue
-        {
-            let mut queue = self.save_queue.lock().unwrap();
-            godot_print!("ChunkStorage: Queuing save for {:?}.", position);
-            queue.push((position, chunk_data.clone()));
+        // Cache update is done by IO thread AFTER successful save. Send request.
+        let request = IORequest { position, request_type: IORequestType::Save(chunk_data) };
+        if let Some(sender) = &self.io_request_sender {
+            if let Err(e) = sender.send(request) {
+                godot_error!("Failed to send Save request for {:?}: {}", position, e);
+            }
         }
+    }
    
-        // Update the cache immediately
-        self.update_cache(position, chunk_data);
-    }
-    
-    // Save a chunk to storage (synchronous version)
-    pub fn save_chunk(&self, position: ChunkPosition, heightmap: &[f32], biome_ids: &[u8]) {
-        let chunk_data = ChunkData {
-            position,
-            heightmap: heightmap.to_vec(),
-            biome_ids: biome_ids.to_vec(),
-        };
-        
-        // Save to file
-        let path = self.get_chunk_path(position);
-        let json = serde_json::to_string(&chunk_data).unwrap_or_else(|e| {
-            eprintln!("Failed to serialize chunk data: {}", e);
-            String::new()
-        });
-        
-        if !json.is_empty() {
-            fs::write(&path, json).unwrap_or_else(|e| {
-                eprintln!("Failed to write chunk data to {}: {}", path, e);
-            });
-        }
-        
-        // Update cache
-        self.update_cache(position, chunk_data);
-    }
-
     pub fn update_cache_limit(&self) {
         if let Some(config_arc) = TerrainConfigManager::get_config() {
            if let Ok(guard) = config_arc.read() {
@@ -154,206 +257,47 @@ impl ChunkStorage {
     
     // Queue a chunk to be loaded asynchronously
     pub fn queue_load_chunk(&self, position: ChunkPosition) {
-        // Check cache first (read lock)
-        if let Ok(cache) = self.cache.read() {
-            if let Some(data) = cache.get(&position) {
-                // Cache hit: Send result immediately using the stored sender
-                godot_print!("ChunkStorage: Cache hit for {:?}. Sending Loaded result.", position);
-                let _ = self.result_sender.send(ChunkResult::Loaded(position, data.clone()));
-                return; // Don't queue if cache hit
+        // Cache check is now done by the IO thread. Just send the request.
+        let request = IORequest { position, request_type: IORequestType::Load };
+        if let Some(sender) = &self.io_request_sender {
+            if let Err(e) = sender.send(request) {
+                godot_error!("Failed to send Load request for {:?}: {}", position, e);
             }
-        }
-        // Drop read lock here
-    
-        // Add to the load queue
-        {
-            let mut queue = self.load_queue.lock().unwrap();
-             // Avoid queueing duplicates if already loading? Optional check.
-             if !queue.iter().any(|req| req.position == position) {
-                 godot_print!("ChunkStorage: Cache miss for {:?}. Queuing load request.", position);
-                 queue.push(LoadRequest {
-                     position,
-                     sender: self.result_sender.clone(), // Clone sender for this request
-                 });
-             } else {
-                godot_print!("ChunkStorage: Load request for {:?} already in queue.", position);
-             }
-    
-        } // Drop lock on load_queue 
-        
-        println!("Chunk {:?} queued for load. Manual trigger of process_io_queue needed if not saving.", position);
-    }
-    
-    // Load a chunk from storage (synchronous version)
-    pub fn load_chunk(&self, position: ChunkPosition) -> Option<ChunkData> {
-        // Check cache first
-        if let Ok(cache) = self.cache.read() {
-            if let Some(data) = cache.get(&position) {
-                return Some(data.clone());
-            }
-        }
-        
-        // Load from file
-        let path = self.get_chunk_path(position);
-        match fs::read_to_string(&path) {
-            Ok(json) => {
-                match serde_json::from_str::<ChunkData>(&json) {
-                    Ok(data) => {
-                        // Update cache
-                        self.update_cache(position, data.clone());
-                        Some(data)
-                    },
-                    Err(e) => {
-                        eprintln!("Failed to deserialize chunk data from {}: {}", path, e);
-                        None
-                    }
-                }
-            },
-            Err(_) => None,
         }
     }
     
-    // Process IO queue using thread pool
-    pub fn process_io_queue(self: Arc<Self>) { // <-- Takes ownership of the Arc
-        // Ensure we only process the queue once at a time
-        // Use the is_processing_queue from the Arc<Self>
-        godot_print!("ChunkStorage: process_io_queue called.");
-        let mut is_processing = self.is_processing_queue.lock().unwrap();
-        // Check if poisoned (optional but good practice)
-        if *is_processing {
-            godot_print!("ChunkStorage: process_io_queue: Already processing, returning.");
-            // If already processing, another thread will handle it.
-            // We drop the Arc here, decrementing the count.
-            return;
+    pub fn get_data_from_cache(&self, position: ChunkPosition) -> Option<ChunkData> {
+        match self.cache.read() {
+            Ok(guard) => guard.get(&position).cloned(),
+            Err(_) => {
+                godot_error!("Cache lock poisoned while reading for {:?}", position);
+                None
+            }
         }
+    }
 
-        // Set the flag to true
-        *is_processing = true;
-        // Drop the lock quickly
-        drop(is_processing);
-
-        // Clone necessary data for the closure
-        // Clone the Arc itself to move into the closure
-        let self_clone = Arc::clone(&self);
-
-        // Function to process the queue in a thread
-        let process_queue = move || {
-            // --- Process save queue (Largely unchanged, just reads self_clone.save_queue) ---
-            // let save_tasks = {
-            //     let mut queue = self_clone.save_queue.lock().unwrap(); // Use self_clone
-            //     std::mem::take(&mut *queue)
-            // };
-            // if !save_tasks.is_empty() {
-            //     godot_print!("ChunkStorage: Processing {} save tasks.", save_tasks.len());
-            //     save_tasks.par_iter().for_each(|(position, chunk_data)| {
-            //         // ... file writing logic ...
-            //         // Optionally send ChunkResult::Saved(position) via self_clone.result_sender here
-            //     });
-            // }
-    
-            // --- Process load queue (Refactored) ---
-            let load_tasks = {
-                let mut queue = self_clone.load_queue.lock().unwrap(); // Use self_clone
-                std::mem::take(&mut *queue)
+    pub fn shutdown(&mut self) {
+        godot_print!("ChunkStorage: Sending shutdown request to IO thread...");
+        if let Some(sender) = self.io_request_sender.take() {
+            let shutdown_request = IORequest {
+                position: ChunkPosition { x: 0, z: 0 },
+                request_type: IORequestType::Shutdown
             };
-    
-            if !load_tasks.is_empty() {
-                 godot_print!("ChunkStorage: Processing {} load tasks.", load_tasks.len());
-                // Process sequentially or in parallel? Sequential is simpler for cache updates.
-                for load_request in load_tasks {
-                    let position = load_request.position;
-                    let sender = load_request.sender; // Use the sender captured with the request
-                    let path = self_clone.get_chunk_path(position); // Use self_clone
-    
-                    // --- File Reading and Deserialization ---
-                    let load_outcome = match fs::read_to_string(&path) {
-                        Ok(json) => match serde_json::from_str::<ChunkData>(&json) {
-                            Ok(data) => Ok(data),
-                            Err(e) => Err(format!("Deserialize error: {}", e)),
-                        },
-                        Err(e) => Err(format!("File read error: {}", e)), // File not found is an error here now
-                    };
-    
-                    // --- Update Cache & Send Result ---
-                    match load_outcome {
-                        Ok(data) => {
-                            self_clone.update_cache(position, data.clone()); // Update cache
-                            godot_print!("ChunkStorage: Load successful for {:?}. Sending Loaded.", position);
-                            let _ = sender.send(ChunkResult::Loaded(position, data));
-                        }
-                        Err(err_msg) => {
-                            // Log the actual error if needed
-                            // eprintln!("Failed to load chunk data from {}: {}", path, err_msg);
-                            godot_print!("ChunkStorage: Load failed for {:?}. Sending LoadFailed.", position);
-                            let _ = sender.send(ChunkResult::LoadFailed(position));
-                        }
-                    }
-                }
+            if sender.send(shutdown_request).is_err() {
+                godot_warn!("IO thread receiver already dropped before shutdown message.");
             }
-
-            // Reset processing flag using self_clone
-            // Need to acquire the lock again
-            let mut is_processing_guard = self_clone.is_processing_queue.lock().unwrap();
-            *is_processing_guard = false;
-            // Lock is released when is_processing_guard goes out of scope
-            godot_print!("process_queue: Finished."); // ADD LOG
-        }; // End of closure definition
-
-        // Use thread pool if available
-        // We need to handle the case where self.thread_pool is Some or None inside the Arc
-        // Use thread pool if available
-        let maybe_local_pool = self.thread_pool.as_ref(); // Borrow Option<ThreadPool>
-
-        if let Some(ref local_pool) = maybe_local_pool { // Use the local pool if it exists
-            local_pool.execute(process_queue);
-        } else if let Some(global_pool_arc) = crate::threading::thread_pool::global_thread_pool() { // Check for the global pool
-             // Attempt to read the global pool
-             match global_pool_arc.read() { // Use match for better error handling on lock failure
-                 Ok(guard) => {
-                     // Successfully locked the global pool for reading.
-                     // guard is a RwLockReadGuard<ThreadPool>.
-                     // It Derefs to &ThreadPool, so we can call execute directly.
-                     guard.execute(process_queue);
-                 },
-                 Err(e) => {
-                     // Failed to lock global pool (poisoned). Run synchronously.
-                     eprintln!("Failed to lock global thread pool ({}), running IO synchronously.", e);
-                     process_queue();
-                 }
-             }
-        } else {
-            // No local or global thread pool configured/initialized. Run synchronously.
-            eprintln!("No thread pool configured, running IO synchronously.");
-            process_queue();
         }
-
-        // The original Arc<Self> passed to process_io_queue is dropped here if it wasn't cloned elsewhere.
-    }
     
-    // Update the cache with new chunk data
-    fn update_cache(&self, position: ChunkPosition, data: ChunkData) {
-        // Lock the RwLock directly
-        let mut cache = self.cache.write().unwrap();
-        let cache_size_limit = *self.cache_size_limit.read().unwrap();
-
-        // Add new data first (simpler than complex LRU without tracking)
-        cache.insert(position, data);
-
-        // If cache exceeds limit, remove entries (simple HashMap iteration order, not LRU)
-        if cache.len() > cache_size_limit {
-            let keys_to_remove: Vec<ChunkPosition> = cache.keys()
-                .take(cache.len() - cache_size_limit) // Calculate how many to remove
-                .cloned()
-                .collect();
-
-            println!("Cache limit {} reached (size {}). Evicting {} chunks.", cache_size_limit, cache.len(), keys_to_remove.len());
-            for key in keys_to_remove {
-                cache.remove(&key);
+        if let Some(handle) = self.io_thread_handle.take() {
+            godot_print!("ChunkStorage: Waiting for IO thread to join...");
+            if handle.join().is_err() {
+                godot_error!("IO thread panicked during shutdown!");
+            } else {
+                godot_print!("ChunkStorage: IO thread joined successfully.");
             }
         }
     }
-
-    
+        
     // Clear the cache
     pub fn clear_cache(&self) {
         let mut cache = self.cache.write().unwrap();

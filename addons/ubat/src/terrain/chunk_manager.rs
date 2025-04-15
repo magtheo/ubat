@@ -135,32 +135,37 @@ impl INode3D for ChunkManager {
 
     fn process(&mut self, _delta: f64) {
         // Process results received from background tasks
+        let mut result_count = 0;
         loop {
             match self.result_receiver.try_recv() {
                 Ok(result) => {
-                    // godot_print!("ChunkManager: Processing result: {:?}", result); // Debug log
-                    self.handle_chunk_result(result); // Separate function for clarity
+                    result_count += 1;
+                    match &result {
+                        ChunkResult::LoadFailed(pos) => {
+                            godot_print!("ChunkManager: Received LoadFailed for {:?}, will queue generation", pos);
+                        },
+                        ChunkResult::Loaded(pos, _) => {
+                            godot_print!("ChunkManager: Received Loaded result for {:?}", pos);
+                        },
+                        ChunkResult::Generated(pos, _) => {
+                            godot_print!("ChunkManager: Received Generated result for {:?}", pos);
+                        },
+                        _ => {}
+                    }
+                    self.handle_chunk_result(result);
                 }
                 Err(TryRecvError::Empty) => {
-                    // No more messages in the channel for now
+                    if result_count > 0 {
+                        godot_print!("ChunkManager process: Processed {} results this frame", result_count);
+                    }
                     break;
                 }
                 Err(TryRecvError::Disconnected) => {
-                    godot_error!("ChunkManager: Result channel disconnected!");
-                    // Handle error appropriately, maybe break or panic
+                    godot_error!("ChunkManager: Result channel disconnected! This is a critical error.");
                     break;
                 }
             }
         }
-        // Periodic checks can happen here if needed,
-        // but main update driven by ChunkController `update` call.
-        // Example: check for timed unload independent of player movement
-        if self.last_unload_check.elapsed() > UNLOAD_CHECK_INTERVAL {
-             // Note: This unload check requires knowing the required chunks.
-             // It's better handled within the `update` method called by ChunkController.
-             // self.unload_distant_chunks(&HashSet::new()); // Example, needs refinement
-             self.last_unload_check = Instant::now();
-         }
     }
 }
 
@@ -229,38 +234,45 @@ impl ChunkManager {
         match result {
             ChunkResult::Loaded(pos, _data) => {
                 // If it was loaded, it should be ready.
-                // Check previous state? Optional.
-                godot_print!("ChunkManager: Received Loaded for {:?}, setting Ready.", pos);
+                godot_print!("ChunkManager: Setting state Ready for loaded chunk {:?}", pos);
                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
             }
             ChunkResult::LoadFailed(pos) => {
                 // Check if we were actually waiting for a load
-                if let Some(ChunkGenState::Loading) = states.get(&pos) {
-                    godot_print!("ChunkManager: Received LoadFailed for {:?}, queuing generation.", pos);
-                    // Set state to Generating *before* queueing
-                    states.insert(pos, ChunkGenState::Generating);
-                    // Queue generation task (needs sender passed)
-                    self.queue_generation(pos); // Queue generation task
-                } else {
-                    // Received LoadFailed but wasn't in Loading state? Log warning.
-                    godot_warn!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}", pos, states.get(&pos));
-                    // Optionally reset to Unknown or ignore
-                     states.entry(pos).or_insert(ChunkGenState::Unknown);
+                match states.get(&pos) {
+                    Some(ChunkGenState::Loading) => {
+                        godot_print!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
+                        // Set state to Generating *before* queueing
+                        states.insert(pos, ChunkGenState::Generating);
+                        
+                        // Drop lock BEFORE queuing generation to avoid deadlocks
+                        drop(states);
+                        
+                        // Queue generation task (needs sender passed)
+                        self.queue_generation(pos); // Queue generation task
+                        
+                        return; // Exit early since we've already dropped the lock
+                    },
+                    other_state => {
+                        godot_warn!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}", 
+                                   pos, other_state);
+                        // Reset state to Unknown if not in correct state
+                        states.insert(pos, ChunkGenState::Unknown);
+                    }
                 }
             }
             ChunkResult::Generated(pos, _data) => {
                 // Generation finished successfully
-                 godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
+                godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
             }
             ChunkResult::GenerationFailed(pos, err) => {
-                 godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
+                godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
                 // Reset state to Unknown so it might be tried again later
                 states.insert(pos, ChunkGenState::Unknown);
             }
-            // Handle Saved(pos) if added
         }
-         // Drop the write lock implicitly when states goes out of scope
+        // Drop the write lock implicitly when states goes out of scope
     }
 
     // Generation logic (runs on compute pool)
@@ -459,12 +471,6 @@ impl ChunkManager {
             }
         }
         
-        // --- Trigger IO Processing ONCE at the end ---
-        godot_print!("ChunkManager::update: Triggering IO processing.");
-        // This still requires debugging if it causes a crash.
-        // Cloning the Arc is correct as process_io_queue takes Arc<Self>
-        Arc::clone(&self.storage).process_io_queue();
-
         // Perform unload check now that we know required chunks
         self.unload_distant_chunks(&required_chunks);
     }
@@ -517,20 +523,15 @@ impl ChunkManager {
     pub fn get_chunk_heightmap(&self, position_x: i32, position_z: i32) -> PackedFloat32Array {
         let pos = ChunkPosition { x: position_x, z: position_z };
 
-        // Check state first for efficiency
         if !self.is_chunk_ready(position_x, position_z) {
-            // godot_warn!("Requested heightmap for non-ready chunk {:?}", pos);
             return PackedFloat32Array::new();
         }
 
-        // Attempt to load (checks cache first)
-        match self.storage.load_chunk(pos) {
+        // Use the new direct cache access method in ChunkStorage
+        match self.storage.get_data_from_cache(pos) {
             Some(chunk_data) => PackedFloat32Array::from(&chunk_data.heightmap[..]),
             None => {
-                // Should not happen if state is Ready
-                godot_error!("CRITICAL: Chunk state for {:?} is Ready, but load_chunk failed!", pos);
-                // Reset state?
-                 self.chunk_states.write().unwrap().insert(pos, ChunkGenState::Unknown);
+                godot_error!("CRITICAL: Chunk {:?} state is Ready, but data not found in storage cache!", pos);
                 PackedFloat32Array::new()
             }
         }
@@ -541,18 +542,17 @@ impl ChunkManager {
         let pos = ChunkPosition { x: position_x, z: position_z };
 
         if !self.is_chunk_ready(position_x, position_z) {
-            // godot_warn!("Requested biomes for non-ready chunk {:?}", pos);
             return PackedInt32Array::new();
         }
 
-        match self.storage.load_chunk(pos) {
+        // Use the new direct cache access method in ChunkStorage
+        match self.storage.get_data_from_cache(pos) {
             Some(chunk_data) => {
                 let biomes_i32: Vec<i32> = chunk_data.biome_ids.iter().map(|&id| id as i32).collect();
                 PackedInt32Array::from(&biomes_i32[..])
             },
             None => {
-                godot_error!("CRITICAL: Chunk state for {:?} is Ready, but load_chunk failed for biomes!", pos);
-                 self.chunk_states.write().unwrap().insert(pos, ChunkGenState::Unknown);
+                godot_error!("CRITICAL: Chunk {:?} state is Ready, but biome data not found in storage cache!", pos);
                 PackedInt32Array::new()
             }
         }
@@ -561,6 +561,17 @@ impl ChunkManager {
     #[func]
     pub fn get_chunk_count(&self) -> i32 {
         self.chunk_states.read().unwrap().len() as i32
+    }
+
+    #[func]
+    pub fn shutdown(&mut self) {
+        godot_print!("ChunkManager: Initiating explicit shutdown sequence...");
+        // If we have unique ownership of the storage Arc, we can call shutdown
+        if let Some(storage_mut) = Arc::get_mut(&mut self.storage) {
+            storage_mut.shutdown();
+        } else {
+            godot_warn!("ChunkManager: Cannot get exclusive access to ChunkStorage for explicit shutdown");
+        }
     }
 
     #[func]
@@ -624,4 +635,16 @@ impl ChunkManager {
              }
          }
      }
+}
+
+impl Drop for ChunkManager {
+    fn drop(&mut self) {
+        godot_print!("ChunkManager: Dropping. Shutting down ChunkStorage IO thread...");
+        // Since storage is an Arc, we can only call shutdown if we have unique ownership
+        if let Some(storage_mut) = Arc::get_mut(&mut self.storage) {
+            storage_mut.shutdown();
+        } else {
+            godot_warn!("ChunkManager::drop: Cannot get mutable access to ChunkStorage for shutdown (still shared). IO thread may not stop cleanly.");
+        }
+    }
 }

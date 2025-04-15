@@ -187,7 +187,7 @@ impl ConfigurationService {
                     .map_err(|e| format!("World initialization failed: {}", e))?;
                 
                 // Generate the initial world - this triggers actual world generation
-                world_manager.generate_initial_world();
+                // world_manager.generate_initial_world();
             },
             NetworkMode::Client => {
                 // For client, just initialize (wait for world sync from host)
