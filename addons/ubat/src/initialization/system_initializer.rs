@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::thread_local;
 
-use crate::bridge::config::ConfigBridge;
+// use crate::bridge::config::ConfigBridge;
 use crate::bridge::game::GameManagerBridge;
 use crate::bridge::network::NetworkManagerBridge;
 use crate::bridge::event::EventBridge;
@@ -58,7 +58,7 @@ thread_local! {
 pub struct SystemInitializer {
     // Godot objects (not thread-safe)
     game_bridge: Option<Gd<GameManagerBridge>>,
-    config_bridge: Option<Gd<ConfigBridge>>,
+    // config_bridge: Option<Gd<ConfigBridge>>,
     network_bridge: Option<Gd<NetworkManagerBridge>>,
     event_bridge: Option<Gd<EventBridge>>,
 
@@ -81,7 +81,7 @@ impl SystemInitializer {
     pub fn new() -> Self {
         Self {
             game_bridge: None,
-            config_bridge: None,
+            // config_bridge: None,
             network_bridge: None,
             event_bridge: None,
 
@@ -217,7 +217,7 @@ impl SystemInitializer {
         
         // Create bridges by direct allocation since they're Node-based (not RefCounted)
         let mut game_bridge = GameManagerBridge::new_alloc();
-        let mut config_bridge = ConfigBridge::new_alloc();
+        // let mut config_bridge = ConfigBridge::new_alloc();
         let mut network_bridge = NetworkManagerBridge::new_alloc();
         let mut event_bridge = EventBridge::new_alloc();
         
@@ -227,10 +227,10 @@ impl SystemInitializer {
             game_bridge.bind_mut().set_config_manager(game_manager.clone());
         }
         
-        if let Some(config_manager) = &self.config_manager {
-            // Set config manager reference on the bridge
-            config_bridge.bind_mut().set_config_manager(config_manager.clone());
-        }
+        // if let Some(config_manager) = &self.config_manager {
+        //     // Set config manager reference on the bridge
+        //     config_bridge.bind_mut().set_config_manager(config_manager.clone());
+        // }
         
         if let Some(network_manager) = &self.network_manager {
             // Initialize network bridge
@@ -245,7 +245,7 @@ impl SystemInitializer {
         
         // Store the bridges
         self.game_bridge = Some(game_bridge);
-        self.config_bridge = Some(config_bridge);
+        // self.config_bridge = Some(config_bridge);
         self.network_bridge = Some(network_bridge);
         self.event_bridge = Some(event_bridge);
         
@@ -340,9 +340,9 @@ impl SystemInitializer {
     }
 
     /// Get the config bridge
-    pub fn get_config_bridge(&self) -> Option<Gd<ConfigBridge>> {
-        self.config_bridge.clone()
-    }
+    // pub fn get_config_bridge(&self) -> Option<Gd<ConfigBridge>> {
+    //     self.config_bridge.clone()
+    // }
 
     /// Get the network bridge
     pub fn get_network_bridge(&self) -> Option<Gd<NetworkManagerBridge>> {
@@ -403,10 +403,10 @@ impl SystemInitializer {
             bridge.clone().free();
             self.game_bridge = None;
         }
-        if let Some(bridge) = &self.config_bridge {
-            bridge.clone().free();
-            self.config_bridge = None;
-        }
+        // if let Some(bridge) = &self.config_bridge {
+        //     bridge.clone().free();
+        //     self.config_bridge = None;
+        // }
         if let Some(bridge) = &self.network_bridge {
             bridge.clone().free();
             self.network_bridge = None;
