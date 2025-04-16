@@ -7,6 +7,11 @@ use serde::{Serialize, Deserialize}; // Needed for ChunkPosition if defined here
 use godot::classes::fast_noise_lite::{NoiseType, FractalType};
 use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
 
+use crate::terrain::noise::noise_manager::NoiseManager;
+use crate::terrain::noise::noise_parameters::{NoiseParameters, RustNoiseType, RustFractalType}; // Import enums too
+use noise::NoiseFn; // Keep NoiseFn trait import
+
+
 // Use ChunkData from ChunkStorage
 use crate::threading::chunk_storage::{ChunkData, ChunkStorage};
 // Use ThreadPool (specifically for compute tasks, using the global pool)
@@ -37,6 +42,9 @@ pub enum ChunkResult {
     LoadFailed(ChunkPosition),
     Generated(ChunkPosition, ChunkData),
     GenerationFailed(ChunkPosition, String),
+    LogMessage(String), // Added LogMessage variant
+
+
     // Saved(ChunkPosition), // Optional for now
 }
 
@@ -61,6 +69,9 @@ pub struct ChunkManager {
     chunk_states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>,
     biome_manager: Option<Gd<BiomeManager>>,
     thread_safe_biome_data: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
+
+    // handle to the noise parameter cache
+    noise_params_cache: Option<Arc<RwLock<HashMap<String, NoiseParameters>>>>,
 
     // Configurable values
     render_distance: i32,
@@ -94,6 +105,7 @@ impl INode3D for ChunkManager {
             chunk_states: Arc::new(RwLock::new(HashMap::new())),
             biome_manager: None,
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
+            noise_params_cache: None, // Initialize as None
             render_distance: 8, // Default
             chunk_size,
             last_unload_check: Instant::now(),
@@ -122,6 +134,18 @@ impl INode3D for ChunkManager {
                 godot_error!("ChunkManager: Could not find node 'BiomeManager' under parent.");
                 // biome_manager remains None
             }
+
+            // --- Link NoiseManager ---
+            let noise_manager_node = parent.get_node_as::<NoiseManager>("NoiseManager"); // Adjust path if needed
+            if noise_manager_node.is_instance_valid() {
+                godot_print!("ChunkManager: Linking NoiseManager cache...");
+                // Get the Arc handle from NoiseManager
+                self.noise_params_cache = Some(noise_manager_node.bind().get_noise_cache_handle());
+            } else {
+                 godot_error!("ChunkManager: Could not find node 'NoiseManager'. Noise parameters will be unavailable.");
+                 self.noise_params_cache = None;
+            }
+
         } else {
             godot_error!("ChunkManager: Could not find parent node!");
             // biome_manager remains None
@@ -193,14 +217,14 @@ impl ChunkManager {
             Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
             _ => {
                 // Set state to Loading
-                godot_print!("ChunkManager::ensure_chunk_is_ready: Setting state Loading for {:?}", pos);
+                // godot_print!("ChunkManager::ensure_chunk_is_ready: Setting state Loading for {:?}", pos);
                 states.insert(pos, ChunkGenState::Loading);
                 // Drop write lock *before* calling storage
                 drop(states);
    
                 // Queue load task - NO CALLBACK CLOSURE NEEDED
                 // `queue_load_chunk` now needs the sender, passed via storage Arc
-                godot_print!("ChunkManager::ensure_chunk_is_ready: Queuing load for {:?}", pos);
+                // godot_print!("ChunkManager::ensure_chunk_is_ready: Queuing load for {:?}", pos);
                 self.storage.queue_load_chunk(pos); // queue_load_chunk internally uses sender passed during its init
    
                 // Generation is no longer triggered directly here.
@@ -212,17 +236,27 @@ impl ChunkManager {
     fn queue_generation(&self, pos: ChunkPosition) {
         godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
         let storage_clone = Arc::clone(&self.storage);
-        let states_clone = Arc::clone(&self.chunk_states); // Still needed? Maybe not directly.
         let biome_data_clone = Arc::clone(&self.thread_safe_biome_data);
         let chunk_size = self.chunk_size;
         let sender_clone = self.result_sender.clone(); // Clone sender for the task
-    
+        
+        let noise_cache_clone = self.noise_params_cache.as_ref().map(Arc::clone);
+
+        if noise_cache_clone.is_none() {
+            godot_error!("ChunkManager: Cannot queue generation for {:?}, NoiseManager cache is not available.", pos);
+            // Send a GenerationFailed result immediately
+            let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "Noise cache unavailable".to_string()));
+            return;
+       }
+       let noise_cache_clone = noise_cache_clone.unwrap(); // We know it's Some now
+
+
         self.compute_pool.read().unwrap().execute(move || {
             Self::generate_and_save_chunk(
                 pos,
                 storage_clone, // Pass storage Arc
-                // states_clone, // Don't pass states Arc directly
                 biome_data_clone,
+                noise_cache_clone,
                 chunk_size,
                 sender_clone, // Pass the sender
             );
@@ -230,97 +264,79 @@ impl ChunkManager {
     }
 
     fn handle_chunk_result(&mut self, result: ChunkResult) {
-        let mut states = self.chunk_states.write().unwrap(); // Lock states here on main thread
+        // Lock states only when modification is needed
         match result {
             ChunkResult::Loaded(pos, _data) => {
-                // If it was loaded, it should be ready.
+                let mut states = self.chunk_states.write().unwrap();
                 godot_print!("ChunkManager: Setting state Ready for loaded chunk {:?}", pos);
                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
             }
             ChunkResult::LoadFailed(pos) => {
-                // Check if we were actually waiting for a load
+                let mut states = self.chunk_states.write().unwrap();
                 match states.get(&pos) {
                     Some(ChunkGenState::Loading) => {
                         godot_print!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
-                        // Set state to Generating *before* queueing
                         states.insert(pos, ChunkGenState::Generating);
-                        
-                        // Drop lock BEFORE queuing generation to avoid deadlocks
-                        drop(states);
-                        
-                        // Queue generation task (needs sender passed)
-                        self.queue_generation(pos); // Queue generation task
-                        
-                        return; // Exit early since we've already dropped the lock
+                        drop(states); // Drop lock BEFORE queueing
+                        self.queue_generation(pos);
                     },
                     other_state => {
-                        godot_warn!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}", 
+                        godot_warn!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}",
                                    pos, other_state);
-                        // Reset state to Unknown if not in correct state
-                        states.insert(pos, ChunkGenState::Unknown);
+                        states.insert(pos, ChunkGenState::Unknown); // Reset state
                     }
                 }
             }
             ChunkResult::Generated(pos, _data) => {
-                // Generation finished successfully
-                godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
-                states.insert(pos, ChunkGenState::Ready(Instant::now()));
+                 let mut states = self.chunk_states.write().unwrap();
+                 godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
+                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
             }
             ChunkResult::GenerationFailed(pos, err) => {
-                godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
-                // Reset state to Unknown so it might be tried again later
-                states.insert(pos, ChunkGenState::Unknown);
+                 godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
+                 let mut states = self.chunk_states.write().unwrap();
+                 states.insert(pos, ChunkGenState::Unknown); // Reset state
+            }
+            // **FIXED:** Handle LogMessage here
+            ChunkResult::LogMessage(msg) => {
+                // Log messages received from worker threads
+                godot_warn!("Log from Worker: {}", msg); // Or godot_print!
+                // No state change needed for log messages
             }
         }
-        // Drop the write lock implicitly when states goes out of scope
     }
 
     // Generation logic (runs on compute pool)
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        // states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>, // ChunkState is no longer used with new thread channels
+        // Corrected Argument Order
         biome_data_arc_rwlock: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
+        noise_params_cache: Arc<RwLock<HashMap<String, NoiseParameters>>>,
         chunk_size: u32,
-        sender: Sender<ChunkResult>, // Add sender parameter
+        sender: Sender<ChunkResult>,
     ) {
-        // Acquire read lock on Option<Arc<ThreadSafeBiomeData>>
+        // --- Get BiomeData ---
         let biome_data_opt_arc = biome_data_arc_rwlock.read().unwrap();
         let biome_data = match &*biome_data_opt_arc {
-            Some(arc) => Some(Arc::clone(arc)), // Clone the inner Arc<ThreadSafeBiomeData>
+            Some(arc) => Some(Arc::clone(arc)),
             None => None,
         };
-        drop(biome_data_opt_arc); // Release read lock on the Option
+        drop(biome_data_opt_arc);
 
-        // Check if biome data is available
         if biome_data.is_none() {
-            let err_msg = "BiomeData missing".to_string();
-            godot_error!("ChunkManager: Cannot generate chunk {:?}, {}", pos, err_msg);
-            // FIX: Send GenerationFailed result via the channel
+            let err_msg = "BiomeData missing for generation".to_string();
             let _ = sender.send(ChunkResult::GenerationFailed(pos, err_msg));
-            // Remove the lines accessing the old 'states' variable:
-            // let mut states_w = states.write().unwrap(); // REMOVE
-            // states_w.insert(pos, ChunkGenState::Unknown); // REMOVE
             return;
         }
-        
-        let biome_data = biome_data.unwrap(); // Now we have Arc<ThreadSafeBiomeData>
+        let biome_data = biome_data.unwrap();
 
         // --- Generation ---
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
         let mut biome_ids = vec![0u8; chunk_area];
 
-        // TODO: modify chunkManager to take premade noises
-        // Example noise setup (consider passing noise config via TerrainConfig/BiomeData)
-        let mut noise = FastNoiseLite::new_gd();
-        noise.set_seed(biome_data.seed() as i32);
-        noise.set_frequency(0.05); // Example frequency
-        noise.set_noise_type(NoiseType::SIMPLEX_SMOOTH);
-        noise.set_fractal_type(FractalType::FBM);
-        noise.set_fractal_octaves(4);
-        noise.set_fractal_lacunarity(2.0);
-        noise.set_fractal_gain(0.5);
+        let noise_cache_reader = noise_params_cache.read().unwrap();
 
         for z in 0..chunk_size {
             for x in 0..chunk_size {
@@ -331,45 +347,89 @@ impl ChunkManager {
                 let biome_id = biome_data.get_biome_id(world_x, world_z);
                 biome_ids[idx] = biome_id;
 
-                // Example height calculation
-                let base_height = noise.get_noise_2d(world_x * 0.1, world_z * 0.1) * 15.0;
-                 let biome_height_mod = match biome_id {
-                    1 => -2.0 + noise.get_noise_2d(world_x * 0.5, world_z * 0.5) * 1.0, // Coral lower with ripples
-                    2 => -3.0 + noise.get_noise_2d(world_x * 0.8, world_z * 0.8) * 0.5, // Sand lower and flatter
-                    3 => 5.0 + noise.get_noise_2d(world_x * 0.2, world_z * 0.2) * 5.0, // Rock higher and rougher
-                    4 => 0.0 + noise.get_noise_2d(world_x * 0.3, world_z * 0.3) * 2.0, // Kelp baseline with medium noise
-                    5 => 8.0 + noise.get_noise_2d(world_x * 0.15, world_z * 0.15) * 8.0, // Lavarock very high and rough
-                    _ => 0.0, // Unknown
-                };
-                heightmap[idx] = base_height + biome_height_mod;
+                let biome_key = format!("{}", biome_id);
+
+                if let Some(params) = noise_cache_reader.get(&biome_key) {
+                    let noise_fn = Self::create_noise_function(params);
+                    let height_val = noise_fn.get([world_x as f64, world_z as f64]);
+                    heightmap[idx] = (height_val * 15.0) as f32; // TODO: Use biome-specific scaling
+                } else {
+                    if biome_id != 0 {
+                        let _ = sender.send(ChunkResult::LogMessage(
+                            format!("Warning: Missing noise parameters for biome key '{}' at {:?}" , biome_key, pos)
+                        ));
+                    }
+                    heightmap[idx] = 0.0;
+                }
             }
         }
+        drop(noise_cache_reader);
 
-        
-        // Blend heights at biome boundaries
-        Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance());
-        
-        let heightmap_vec = heightmap; // Assuming heightmap is vec now
-        let biome_ids_vec = biome_ids; // Assuming biome_ids is vec now    
+        // --- Blend heights ---
+        let blend_params = noise_params_cache.read().unwrap().get("blend").cloned();
+        Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance(), blend_params, pos); // Pass pos for world coords
 
-        // --- Queue Save Task (using storage Arc) ---
-        // `queue_save_chunk` signature might need adjustment if it previously took self
-        // Assuming it now just takes data:
-        storage.queue_save_chunk(pos, &heightmap_vec, &biome_ids_vec); // This only queues the save
-
-        // --- Send Result via Channel ---
-        // Send success *after* queuing the save. The actual save happens later.
-        // We consider generation "done" when data is ready and save is queued.
-        // Include generated data for immediate caching if needed by receiver?
+        // --- Save and Send Result ---
+        let heightmap_vec = heightmap;
+        let biome_ids_vec = biome_ids;
+        storage.queue_save_chunk(pos, &heightmap_vec, &biome_ids_vec);
         let chunk_data = ChunkData { position: pos, heightmap: heightmap_vec, biome_ids: biome_ids_vec };
-        godot_print!("ChunkManager: Generation finished for {:?}, sending result.", pos);
-        match sender.send(ChunkResult::Generated(pos, chunk_data)) {
-            Ok(_) => {} // Message sent
-            Err(e) => godot_error!("Failed to send generation result for {:?}: {}", pos, e),
+        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
+             eprintln!("Error sending Generated result for {:?}: {}", pos, e);
         }
-        godot_print!("ChunkManager: Generation finished for {:?}", pos);
     }
 
+
+    // --- Helper function to create noise-rs NoiseFn ---
+    // (Needs careful implementation based on NoiseParameters struct and noise-rs library)
+    fn create_noise_function(params: &NoiseParameters) -> Box<dyn noise::NoiseFn<f64, 2> + Send + Sync> {
+        // Import necessary items INSIDE the function
+        use noise::{NoiseFn, Fbm, Perlin, Billow, RidgedMulti, ScalePoint, MultiFractal}; // Added Perlin here
+        use crate::terrain::noise::noise_parameters::{RustNoiseType, RustFractalType};
+
+        // Determine the base noise type explicitly
+        // We default to Perlin here based on previous logic, adjust if needed
+        // Note: noise-rs doesn't have built-in Simplex, consider external crates or fallback
+        let base_noise_generator = Perlin::new(params.seed as u32);
+
+        // Create the final noise function, potentially wrapping the base with fractals
+        let final_noise: Box<dyn NoiseFn<f64, 2> + Send + Sync> = match params.fractal_type {
+            RustFractalType::Fbm => {
+                // **FIXED:** Specify <Perlin> for Fbm
+                Box::new(Fbm::<Perlin>::new(params.seed as u32)
+                    .set_frequency(params.frequency as f64)
+                    .set_octaves(params.fractal_octaves as usize)
+                    .set_lacunarity(params.fractal_lacunarity as f64)
+                    .set_persistence(params.fractal_gain as f64))
+            }
+            RustFractalType::Ridged => {
+                 // **FIXED:** Specify <Perlin> for RidgedMulti
+                Box::new(RidgedMulti::<Perlin>::new(params.seed as u32)
+                    .set_frequency(params.frequency as f64)
+                    .set_octaves(params.fractal_octaves as usize)
+                    .set_lacunarity(params.fractal_lacunarity as f64))
+                    // Add .set_attenuation() if needed based on Godot's Ridged settings
+            }
+            RustFractalType::PingPong => {
+                 // **FIXED:** Specify <Perlin> for Billow
+                Box::new(Billow::<Perlin>::new(params.seed as u32)
+                    .set_frequency(params.frequency as f64)
+                    .set_octaves(params.fractal_octaves as usize)
+                    .set_lacunarity(params.fractal_lacunarity as f64)
+                    .set_persistence(params.fractal_gain as f64))
+            }
+            RustFractalType::None => {
+                 // No fractal, just use the base noise scaled by frequency
+                 Box::new(ScalePoint::new(base_noise_generator).set_scale(params.frequency as f64))
+            }
+        };
+
+        // TODO: Apply Offset - Example: Add offset AFTER getting noise value in generate_and_save_chunk
+        // TODO: Apply Domain Warp - Wrap `final_noise` with noise-rs domain warp modules if needed
+
+        final_noise
+    }
+       
     #[func]
     pub fn get_chunk(&mut self, x: i32, z: i32) -> bool {
         let pos = ChunkPosition { x, z };
@@ -388,22 +448,28 @@ impl ChunkManager {
     }
 
     // Height Blending Logic (Static)
-    fn blend_heights(heightmap: &mut [f32], biome_ids: &[u8], chunk_size: u32, blend_distance: i32) {
-        if blend_distance <= 0 { return; } // Skip if no blend distance
+    fn blend_heights(
+        heightmap: &mut [f32],
+        biome_ids: &[u8],
+        chunk_size: u32,
+        blend_distance: i32,
+        blend_noise_params: Option<NoiseParameters>,
+        chunk_pos: ChunkPosition, // **ADDED chunk_pos** to calculate world coords
+    ) {
+        if blend_distance <= 0 { return; }
 
         let original_heights = heightmap.to_vec();
-        let blend_radius = blend_distance.max(1); // Ensure radius is at least 1
+        let blend_radius = blend_distance.max(1);
+
+        let blend_noise_fn = blend_noise_params.as_ref().map(Self::create_noise_function);
 
         for z in 0..chunk_size {
             for x in 0..chunk_size {
                 let idx = (z * chunk_size + x) as usize;
                 let current_biome = biome_ids[idx];
                 let mut is_boundary = false;
-                let mut blend_needed = false;
-                let mut total_weight = 0.0;
-                let mut weighted_height_sum = 0.0;
 
-                // Check immediate neighbors first to determine if it's a boundary
+                // Check neighbors
                 for dz in -1..=1 {
                     for dx in -1..=1 {
                         if dx == 0 && dz == 0 { continue; }
@@ -420,22 +486,32 @@ impl ChunkManager {
                     if is_boundary { break; }
                 }
 
-                // If it's a boundary, perform blending using the blend radius
                 if is_boundary {
+                    let mut total_weight = 0.0;
+                    let mut weighted_height_sum = 0.0;
+                    let mut blend_needed = false;
+
                     for dz in -blend_radius..=blend_radius {
                         for dx in -blend_radius..=blend_radius {
                             let nx = x as i32 + dx;
                             let nz = z as i32 + dz;
 
-                            // Check if neighbor is within chunk bounds
                             if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
                                 let nidx = (nz as u32 * chunk_size + nx as u32) as usize;
                                 let distance = ((dx * dx + dz * dz) as f32).sqrt();
+                                let mut weight = (blend_radius as f32 - distance).max(0.0) / blend_radius as f32;
 
-                                // Simple linear falloff weight
-                                let weight = (blend_radius as f32 - distance).max(0.0) / blend_radius as f32;
+                                if let Some(ref noise_fn) = blend_noise_fn {
+                                    // **FIXED:** Calculate world coords for consistent blend noise
+                                    let world_x = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
+                                    let world_z = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
+                                    // Use a different scale for blend noise if desired
+                                    let noise_val = noise_fn.get([world_x as f64 * 0.01, world_z as f64 * 0.01]);
+                                    let noise_influence = (noise_val * 0.4) as f32; // Example influence range
+                                    weight = (weight + noise_influence).clamp(0.0, 1.0);
+                                }
 
-                                if weight > 0.0 {
+                                if weight > 0.001 {
                                     total_weight += weight;
                                     weighted_height_sum += original_heights[nidx] * weight;
                                     blend_needed = true;
@@ -444,12 +520,10 @@ impl ChunkManager {
                         }
                     }
 
-                    // Apply weighted average if blending occurred
-                    if blend_needed && total_weight > 0.0 {
+                    if blend_needed && total_weight > 0.001 {
                         heightmap[idx] = weighted_height_sum / total_weight;
                     }
                 }
-                // If not a boundary, heightmap[idx] remains unchanged (equal to original_heights[idx])
             }
         }
     }
