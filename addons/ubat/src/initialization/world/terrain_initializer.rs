@@ -1,16 +1,17 @@
+use bincode::Options;
 // File: terrain_initializer.rs
 use godot::prelude::*;
 use godot::classes::{Node, Engine, SceneTree};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 use std::time::Instant;
 
-use crate::terrain::biome_manager::ThreadSafeBiomeData;
+use crate::terrain::biome_manager::{BiomeManager, ThreadSafeBiomeData};
 use crate::initialization::world::terrainInitState::{TerrainInitializationTiming, TerrainInitializationState};
-use crate::terrain::BiomeManager;
 use crate::terrain::ChunkManager;
 use crate::terrain::ChunkController;
 use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
 use crate::core::event_bus::EventBus;
+use crate::terrain::noise::noise_manager::NoiseManager; 
 
 
 // TerrainSystemContext stores references to initialized terrain components
@@ -25,9 +26,10 @@ pub struct TerrainInitializer {
     biome_manager: Option<Gd<BiomeManager>>,
     chunk_manager: Option<Gd<ChunkManager>>,
     chunk_controller: Option<Gd<ChunkController>>,
+    noise_manager: Option<Gd<NoiseManager>>,
 
     timing: TerrainInitializationTiming,
-    error_logger: Option<Arc<ErrorLogger>>,
+    error_logger: Arc<ErrorLogger>,
     event_bus: Option<Arc<EventBus>>,
 
     world_width: f32,
@@ -49,87 +51,126 @@ impl TerrainInitializer {
             biome_manager: None,
             chunk_manager: None,
             chunk_controller: None,
+            noise_manager: None,
             event_bus: None,
             timing: TerrainInitializationTiming::new(),
-            error_logger: Some(Arc::new(ErrorLogger::new(100))),
+            error_logger: Arc::new(ErrorLogger::new(100)),
             world_width: 10000.0,
             world_height: 10000.0,
             seed: 12345,
-            render_distance: 8,
-            initialized: true,
+            render_distance: 2,
+            initialized: false,
         }
     }
 
     // This is the main method to initialize the terrain system
     pub fn initialize_terrain_system(&mut self) -> Result<(), String> {
+        if self.initialized {
+             godot_warn!("TerrainInitializer: Attempted to initialize terrain system again.");
+             return Ok(()); // Already done
+        }
         godot_print!("TerrainInitializer: Starting initialization...");
-        
+        let start_time = Instant::now();
+
         // 1. Create parent node for our terrain system
         let mut parent_node = Node::new_alloc();
-        parent_node.set_name("TerrainSystem");
-        
-        // 2. Create BiomeManager with CRITICAL configuration steps
+        parent_node.set_name("TerrainSystem"); // Use GString
+
+        // --- Create and Configure NoiseManager FIRST ---
+        let mut noise_manager = NoiseManager::new_alloc();
+        noise_manager.set_name("NoiseManager"); // Use GString
+
+        // **IMPORTANT:** Populate the noise paths programmatically
+        { // Scope for mutable borrow
+            let mut nm_bind = noise_manager.bind_mut();
+            let mut noise_paths = Dictionary::new();
+            // Define your paths here (replace with actual paths)
+            // TODO: make sure paths are correct
+            noise_paths.insert("1", GString::from("res://project/terrain/noise/corralNoise.tres"));
+            noise_paths.insert("2", GString::from("res://project/terrain/noise/sandNoise.tres"));
+            noise_paths.insert("3", GString::from("res://project/terrain/noise/rockNoise.tres"));
+            noise_paths.insert("4", GString::from("res://project/terrain/noise/kelpNoise.tres"));
+            noise_paths.insert("5", GString::from("res://project/terrain/noise/lavaRockNoise.tres"));
+            noise_paths.insert("blend", GString::from("res://project/terrain/noise/blendNoise.tres"));
+            noise_paths.insert("section", GString::from("res://project/terrain/noise/sectionNoise.tres"));
+            // Add other noises as needed
+
+            // Set the dictionary on the NoiseManager instance
+            // Assuming you add a setter or make the field accessible for init
+            // Let's assume a setter `set_noise_resource_paths` exists in NoiseManager
+            nm_bind.set_noise_resource_paths(noise_paths);
+            // If no setter, you might need to modify NoiseManager or use a different approach
+        }
+        // Note: NoiseManager's _ready() will run *after* it's added to the scene,
+        // where it will then use the paths set above to load parameters.
+
+        // --- Create BiomeManager ---
         let mut biome_manager = BiomeManager::new_alloc();
         biome_manager.set_name("BiomeManager");
-        
-        // IMPORTANT: Initialize BiomeManager with world parameters
         {
             let mut biome_mgr_mut = biome_manager.bind_mut();
             let init_result = biome_mgr_mut.initialize(
-                self.world_width, 
-                self.world_height, 
+                self.world_width,
+                self.world_height,
                 self.seed
             );
-            
             if !init_result {
-                return Err("Failed to initialize BiomeManager".to_string());
+                let err_msg = "Failed to initialize BiomeManager".to_string();
+                self.error_logger.log_error(
+                    "TerrainInitializer", // Module name
+                    &err_msg,             // Message
+                    ErrorSeverity::Critical, // Severity
+                    None                  // Optional context
+                );
+                return Err(err_msg);
             }
         }
-    
-        // 3. ChunkManager setup
+
+        // --- Create ChunkManager ---
         let mut chunk_manager = ChunkManager::new_alloc();
         chunk_manager.set_name("ChunkManager");
-    
-        // 4. ChunkController setup
+
+        // --- Create ChunkController ---
         let mut chunk_controller = ChunkController::new_alloc();
         chunk_controller.set_name("ChunkController");
-        
-        // 5. Add all nodes to the parent
-        let mut biome_node = biome_manager.clone().upcast::<Node>();
-        let mut chunk_mgr_node = chunk_manager.clone().upcast::<Node>();
-        let mut controller_node = chunk_controller.clone().upcast::<Node>();
-        
-        parent_node.add_child(&biome_node);
-        parent_node.add_child(&chunk_mgr_node);
-        parent_node.add_child(&controller_node);
-        
-        // 6. Add parent to scene
-        if let Some(mut root) = TerrainInitializer::get_scene_root() {
-            let terrain_node = parent_node.clone().upcast::<Node>(); // No 'mut' needed if just adding
-        
-            // Add synchronously
-            root.add_child(&terrain_node.clone()); // Clone if you need terrain_node later
-        
-            // Now set_owner should work immediately after
-            biome_node.set_owner(&root);
-            chunk_mgr_node.set_owner(&root);
-            controller_node.set_owner(&root);
-            parent_node.set_owner(&root); // Set owner on the parent_node itself too!
-        
+
+        // --- Add all nodes to the parent ---
+        // It's generally better to add children *before* adding the parent to the main scene tree
+        parent_node.add_child(&noise_manager);
+        parent_node.add_child(&biome_manager);
+        parent_node.add_child(&chunk_manager);
+        parent_node.add_child(&chunk_controller);
+
+        // --- Add parent to scene root ---
+        if let Some(mut root) = Self::get_scene_root() {
+             godot_print!("TerrainInitializer: Adding TerrainSystem node to scene root.");
+             root.add_child(&parent_node); // Add parent_node itself
+             // Set owner *after* adding to the loaded scene tree
+             parent_node.set_owner(&root); // Owner for TerrainSystem
+             // Children likely inherit owner or don't strictly need it set manually here
+             // unless you have specific save/instancing requirements.
         } else {
-            godot_error!("Failed to retrieve the scene root.");
-            return Err("Failed to retrieve the scene root.".to_string());
+            let err_msg = "Failed to retrieve the scene root node.".to_string();
+            self.error_logger.log_error(
+                "TerrainInitializer",
+                &err_msg,
+                ErrorSeverity::Critical,
+                None
+            );
+            return Err(err_msg);
         }
-        
+
         // Store references
+        self.noise_manager = Some(noise_manager); // <-- Store reference
         self.biome_manager = Some(biome_manager);
         self.chunk_manager = Some(chunk_manager);
         self.chunk_controller = Some(chunk_controller);
-        
-        // Update initialization state - KEEP this for tracking
-        self.timing.update_state(TerrainInitializationState::Ready);
-        
-        godot_print!("TerrainInitializer: Terrain system fully initialized in Rust");
+
+        // Update initialization state
+        self.timing.update_state(TerrainInitializationState::Ready); // Assuming this tracks internal state
+        self.initialized = true; // Mark this initializer as having run
+
+        godot_print!("TerrainInitializer: Terrain system nodes created and added to scene in {}ms.", start_time.elapsed().as_millis());
         Ok(())
     }
 

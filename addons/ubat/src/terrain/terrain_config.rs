@@ -32,7 +32,7 @@ impl Default for TerrainConfig {
             chunk_size: 32,
             blend_distance: 200.0,
             use_parallel_processing: true,
-            chunk_cache_size: 100,
+            chunk_cache_size: 400,
             chunks_per_frame: 4,
         }
     }

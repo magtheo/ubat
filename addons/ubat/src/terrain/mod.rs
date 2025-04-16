@@ -7,6 +7,8 @@ pub mod biome_manager;
 pub mod generation_rules;
 pub mod terrain_config;
 
+pub mod noise;
+
 
 // Re-export main types for easier access
 pub use chunk_manager::ChunkManager;

@@ -175,7 +175,7 @@ impl GameManager {
                 
             if matches!(config.game_mode, GameModeConfig::Standalone | GameModeConfig::Host(_)) {
                 println!("GameManager: Ensuring world generation in ensure_world_initialized");
-                manager.generate_initial_world();
+                // manager.generate_initial_world();
             }
         }
         
