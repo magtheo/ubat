@@ -58,7 +58,7 @@ impl TerrainInitializer {
             world_width: 10000.0,
             world_height: 10000.0,
             seed: 12345,
-            render_distance: 8,
+            render_distance: 2,
             initialized: false,
         }
     }

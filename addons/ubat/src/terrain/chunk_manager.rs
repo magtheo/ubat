@@ -106,7 +106,7 @@ impl INode3D for ChunkManager {
             biome_manager: None,
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
             noise_params_cache: None, // Initialize as None
-            render_distance: 8, // Default
+            render_distance: 4, // TODO This overides terrain initalizer, and it shuold not
             chunk_size,
             last_unload_check: Instant::now(),
         }
