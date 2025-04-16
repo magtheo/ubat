@@ -2,7 +2,7 @@ use godot::prelude::*;
 use godot::global::Error;
 use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, ResourceLoader};
 use std::collections::{HashMap, HashSet};
-use godot::classes::mesh::PrimitiveType;
+use godot::classes::mesh::{PrimitiveType, ArrayType};
 
 // Use ChunkManager and its types
 use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
@@ -40,7 +40,7 @@ impl INode3D for ChunkController {
             base,
             chunk_manager: None,
             // biome_manager: None,
-            render_distance: 8,
+            render_distance: 4, // TODO This overides terrain initalizer, and it shuold not
             player_position: Vector3::ZERO,
             needs_update: true,
             chunk_size: 32, // Default, will be updated in ready
@@ -393,21 +393,23 @@ impl ChunkController {
         let mut array_mesh = ArrayMesh::new_gd();
         let mut arrays = VariantArray::new();
     
-        // Fix: Use usize for resize (first parameter)
-        arrays.resize(15_usize, &Variant::nil());
-    
-        // Fix: Convert packed arrays to Variant before setting in array
-        arrays.set(0, &vertices.to_variant());
-        arrays.set(1, &normals.to_variant());
-        arrays.set(2, &uvs.to_variant());
-        arrays.set(4, &indices.to_variant());
-    
-        // Add the surface to the ArrayMesh
+        // You are using indices 0 (vertices), 1 (normals), 2 (uvs), and 4 (indices)
+        // let highest_used_index = 4;
+        arrays.resize(13_usize, &Variant::nil());
+
+        // Set arrays at the CORRECT indices using the CORRECT enum variants
+        // Cast .ord() (which is i32) to usize as required by the compiler error
+        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant()); // Index 0
+        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());  // Index 1
+        arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());         // Index 4 (Corrected Enum Variant)
+        arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant()); // Index 12 (Corrected Enum Variant & Typo)
+
+        // Add the surface using the 2-argument version that your compiler accepts.
         array_mesh.add_surface_from_arrays(
             PrimitiveType::TRIANGLES,
             &arrays,
         );
-    
+
         // --- Create/Update MeshInstance3D ---
         let chunk_world_pos = Vector3::new(
             pos.x as f32 * chunk_size as f32,
