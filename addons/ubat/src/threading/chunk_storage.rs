@@ -96,7 +96,7 @@ impl ChunkStorage {
         }
     
         // Get cache limit from config
-        let default_cache_limit = 128; // Sensible default if config fails
+        let default_cache_limit = 128*3; // Sensible default if config fails
         let cache_limit = TerrainConfigManager::get_config()
             .and_then(|config_arc| {
                 match config_arc.read() {
