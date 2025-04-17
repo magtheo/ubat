@@ -365,22 +365,22 @@ impl ChunkController {
         // Index generation loop
         for z in 0..chunk_size - 1 {
             for x in 0..chunk_size - 1 {
-                let idx00 = (z * chunk_size + x) as i32;        // Top-left
-                let idx10 = idx00 + 1;                          // Top-right
-                let idx01 = idx00 + chunk_size as i32;          // Bottom-left
-                let idx11 = idx01 + 1;                          // Bottom-right
-    
-                // Triangle 1 (Top-left -> Bottom-left -> Top-right)
-                indices_vec.push(idx00);
-                indices_vec.push(idx01);
-                indices_vec.push(idx10);
-    
-                // Triangle 2 (Top-right -> Bottom-left -> Bottom-right)
-                indices_vec.push(idx10);
-                indices_vec.push(idx01);
-                indices_vec.push(idx11);
+                let idx00 = (z * chunk_size + x) as i32;        // Top-left (TL)
+                let idx10 = idx00 + 1;                          // Top-right (TR)
+                let idx01 = idx00 + chunk_size as i32;          // Bottom-left (BL)
+                let idx11 = idx01 + 1;                          // Bottom-right (BR)
+        
+                // Triangle 1 (Corrected: TL -> TR -> BL for CCW)
+                indices_vec.push(idx00); // TL
+                indices_vec.push(idx10); // TR  <- Swapped
+                indices_vec.push(idx01); // BL  <- Swapped
+        
+                // Triangle 2 (Corrected: TR -> BR -> BL for CCW)
+                indices_vec.push(idx10); // TR
+                indices_vec.push(idx11); // BR  <- Swapped
+                indices_vec.push(idx01); // BL  <- Swapped
             }
-        }
+        }        
         
         // Convert vectors to packed arrays
         let vertices = PackedVector3Array::from(&vertices_vec[..]);
