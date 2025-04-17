@@ -4,6 +4,7 @@ use godot::prelude::*;
 use godot::classes::{Node, Engine, SceneTree};
 use std::sync::{Arc};
 use std::time::Instant;
+use std::collections::HashMap;
 
 use crate::terrain::biome_manager::{BiomeManager, ThreadSafeBiomeData};
 use crate::initialization::world::terrainInitState::{TerrainInitializationTiming, TerrainInitializationState};
@@ -32,12 +33,11 @@ pub struct TerrainInitializer {
     error_logger: Arc<ErrorLogger>,
     event_bus: Option<Arc<EventBus>>,
 
+    // COnfigurable values
     world_width: f32,
-
     world_height: f32,
-
     seed: u32,
-
+    noise_paths: HashMap<String, String>,
     render_distance: i32,
     
     initialized: bool,
@@ -55,10 +55,14 @@ impl TerrainInitializer {
             event_bus: None,
             timing: TerrainInitializationTiming::new(),
             error_logger: Arc::new(ErrorLogger::new(100)),
+
+            // Config values
+            noise_paths: HashMap::new(),
             world_width: 10000.0,
             world_height: 10000.0,
             seed: 12345,
             render_distance: 2,
+
             initialized: false,
         }
     }
@@ -80,26 +84,26 @@ impl TerrainInitializer {
         let mut noise_manager = NoiseManager::new_alloc();
         noise_manager.set_name("NoiseManager"); // Use GString
 
-        // **IMPORTANT:** Populate the noise paths programmatically
-        { // Scope for mutable borrow
+        // **IMPORTANT:** Populate noise paths from the stored map
+        {
             let mut nm_bind = noise_manager.bind_mut();
-            let mut noise_paths = Dictionary::new();
-            // Define your paths here (replace with actual paths)
-            // TODO: make sure paths are correct
-            noise_paths.insert("1", GString::from("res://project/terrain/noise/corralNoise.tres"));
-            noise_paths.insert("2", GString::from("res://project/terrain/noise/sandNoise.tres"));
-            noise_paths.insert("3", GString::from("res://project/terrain/noise/rockNoise.tres"));
-            noise_paths.insert("4", GString::from("res://project/terrain/noise/kelpNoise.tres"));
-            noise_paths.insert("5", GString::from("res://project/terrain/noise/lavaRockNoise.tres"));
-            noise_paths.insert("blend", GString::from("res://project/terrain/noise/blendNoise.tres"));
-            noise_paths.insert("section", GString::from("res://project/terrain/noise/sectionNoise.tres"));
-            // Add other noises as needed
+            // Convert HashMap<String, String> to Godot Dictionary
+            let mut noise_paths_dict = Dictionary::new();
+            for (key, path) in &self.noise_paths {
+                 noise_paths_dict.insert(key.to_variant(), path.to_variant()); // Use GString::from(path) if needed
+            }
 
-            // Set the dictionary on the NoiseManager instance
-            // Assuming you add a setter or make the field accessible for init
-            // Let's assume a setter `set_noise_resource_paths` exists in NoiseManager
-            nm_bind.set_noise_resource_paths(noise_paths);
-            // If no setter, you might need to modify NoiseManager or use a different approach
+             // Check if paths were provided
+             if noise_paths_dict.is_empty() {
+                  godot_warn!("TerrainInitializer: No noise paths provided from configuration!");
+                  // Handle error or proceed without noise? Return Err?
+                  // return Err("Noise paths configuration is missing or empty.".to_string());
+             } else {
+                  godot_print!("TerrainInitializer: Setting noise paths on NoiseManager: {:?}", &self.noise_paths);
+             }
+
+            // Assuming NoiseManager has a setter like `set_noise_resource_paths`
+            nm_bind.set_noise_resource_paths(noise_paths_dict);
         }
         // Note: NoiseManager's _ready() will run *after* it's added to the scene,
         // where it will then use the paths set above to load parameters.
@@ -230,6 +234,11 @@ impl TerrainInitializer {
     
     pub fn set_seed(&mut self, seed: u32) {
         self.seed = seed;
+    }
+
+    // Setter for noise paths
+    pub fn set_noise_paths(&mut self, paths: HashMap<String, String>) {
+        self.noise_paths = paths;
     }
     
     pub fn set_render_distance(&mut self, distance: i32) {
