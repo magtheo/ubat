@@ -11,25 +11,26 @@ use crate::bridge::{ GameManagerBridge, NetworkManagerBridge, EventBridge};
 #[class(base=Node)]
 pub struct GameInitHelper {
     base: Base<Node>,
-    
-    #[export]
-    debug_mode: bool,
+    debug_mode_internal: bool,
 }
 
 #[godot_api]
 impl INode for GameInitHelper {
     fn init(base: Base<Node>) -> Self {
+        let debug_enabled = crate::config::global_config::get_config_manager()
+                                .read().unwrap().get_config().debug_mode;
         Self {
             base,
-            debug_mode: false,
+            debug_mode_internal: debug_enabled, // Use internal flag
         }
     }
     
     fn ready(&mut self) {
-        if self.debug_mode {
+
+        if self.debug_mode_internal {
             godot_print!("GameInitHelper: Ready, will use SystemInitializer singleton");
         }
-        
+
         // Ensure the SystemInitializer is properly initialized once at startup
         SystemInitializer::ensure_initialized();
     }
