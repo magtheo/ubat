@@ -11,6 +11,17 @@ use crate::terrain::biome_manager::BiomeManager;
 // Use TerrainConfig to get chunk size if needed
 use crate::terrain::terrain_config::TerrainConfigManager;
 
+// --- Helper function to safely get height, clamping at edges ---
+// Returns the height at (x, z) within the heightmap, clamping coordinates to chunk bounds.
+fn get_clamped_height(x: i32, z: i32, heightmap: &[f32], chunk_size: u32) -> f32 {
+    // Clamp coordinates to be within the valid range [0, chunk_size - 1]
+    let clamped_x = x.clamp(0, chunk_size as i32 - 1) as u32;
+    let clamped_z = z.clamp(0, chunk_size as i32 - 1) as u32;
+    let idx = (clamped_z * chunk_size + clamped_x) as usize;
+    // Safety check for index bounds (shouldn't be necessary with clamp, but good practice)
+    heightmap.get(idx).copied().unwrap_or(0.0)
+}
+
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 pub struct ChunkController {
@@ -330,7 +341,6 @@ impl ChunkController {
 
     // Create or update a MeshInstance3D for a chunk
     fn create_or_update_chunk_mesh(&mut self, pos: ChunkPosition, heightmap: &[f32]) {
-        // Ensure chunk size is valid and heightmap matches
         let chunk_size = self.chunk_size;
         if chunk_size == 0 { godot_error!("Chunk size is 0!"); return; }
         let expected_len = (chunk_size * chunk_size) as usize;
@@ -339,118 +349,131 @@ impl ChunkController {
             return;
         }
     
-        // --- Generate Mesh Data (Vertices, Normals, UVs, Indices) ---
+        // --- Generate Vertices and UVs ---
         let mut vertices_vec = Vec::with_capacity(expected_len);
-        let mut normals_vec = Vec::with_capacity(expected_len);
         let mut uvs_vec = Vec::with_capacity(expected_len);
-        // Calculate index count: (width-1) * (height-1) squares * 2 triangles/square * 3 indices/triangle
-        let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
-        let mut indices_vec = Vec::with_capacity(index_count);
-    
-        // Vertex generation loop
         for z in 0..chunk_size {
             for x in 0..chunk_size {
                 let idx = (z * chunk_size + x) as usize;
                 let h = heightmap[idx];
-                vertices_vec.push(Vector3::new(x as f32, h, z as f32));
-                // Placeholder normal - needs proper calculation
-                normals_vec.push(Vector3::UP);
+                vertices_vec.push(Vector3::new(x as f32, h, z as f32)); // Local chunk coords
                 uvs_vec.push(Vector2::new(
-                    x as f32 / (chunk_size - 1).max(1) as f32, // Avoid div by zero if chunksize=1
+                    x as f32 / (chunk_size - 1).max(1) as f32,
                     z as f32 / (chunk_size - 1).max(1) as f32
                 ));
             }
         }
     
-        // Index generation loop
+        // --- Generate Normals (using finite difference & edge clamping) ---
+        let mut normals_vec = Vec::with_capacity(expected_len);
+        for z in 0..chunk_size {
+            for x in 0..chunk_size {
+                // Get heights of neighbours using the helper function for safety/clamping
+                let h_l = get_clamped_height(x as i32 - 1, z as i32, heightmap, chunk_size); // Left
+                let h_r = get_clamped_height(x as i32 + 1, z as i32, heightmap, chunk_size); // Right
+                let h_d = get_clamped_height(x as i32, z as i32 - 1, heightmap, chunk_size); // Down (Top in UV)
+                let h_u = get_clamped_height(x as i32, z as i32 + 1, heightmap, chunk_size); // Up (Bottom in UV)
+    
+                // Calculate differences (gradients)
+                let dx = h_l - h_r; // Change in height over 2 units in x
+                let dz = h_d - h_u; // Change in height over 2 units in z
+    
+                // Calculate the normal vector (perpendicular to the surface slope)
+                // The Y component '2.0' scales relative to the distance between samples (which is 2 units here: x-1 to x+1)
+                let normal = Vector3::new(dx, 2.0, dz).normalized();
+    
+                normals_vec.push(normal);
+            }
+        }
+    
+        // --- Generate Indices (with corrected winding order) ---
+        let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
+        let mut indices_vec = Vec::with_capacity(index_count);
         for z in 0..chunk_size - 1 {
             for x in 0..chunk_size - 1 {
-                let idx00 = (z * chunk_size + x) as i32;        // Top-left (TL)
-                let idx10 = idx00 + 1;                          // Top-right (TR)
-                let idx01 = idx00 + chunk_size as i32;          // Bottom-left (BL)
-                let idx11 = idx01 + 1;                          // Bottom-right (BR)
-        
-                // Triangle 1 (Corrected: TL -> TR -> BL for CCW)
-                indices_vec.push(idx00); // TL
-                indices_vec.push(idx10); // TR  <- Swapped
-                indices_vec.push(idx01); // BL  <- Swapped
-        
-                // Triangle 2 (Corrected: TR -> BR -> BL for CCW)
-                indices_vec.push(idx10); // TR
-                indices_vec.push(idx11); // BR  <- Swapped
-                indices_vec.push(idx01); // BL  <- Swapped
+                let idx00 = (z * chunk_size + x) as i32;        // Top-left
+                let idx10 = idx00 + 1;                          // Top-right
+                let idx01 = idx00 + chunk_size as i32;          // Bottom-left
+                let idx11 = idx01 + 1;                          // Bottom-right
+    
+                // Triangle 1 (TL -> TR -> BL : CCW)
+                indices_vec.push(idx00);
+                indices_vec.push(idx10);
+                indices_vec.push(idx01);
+    
+                // Triangle 2 (TR -> BR -> BL : CCW)
+                indices_vec.push(idx10);
+                indices_vec.push(idx11);
+                indices_vec.push(idx01);
             }
-        }        
-        
-        // Convert vectors to packed arrays
+        }
+    
+        // --- Convert to Godot Packed Arrays ---
         let vertices = PackedVector3Array::from(&vertices_vec[..]);
         let normals = PackedVector3Array::from(&normals_vec[..]);
         let uvs = PackedVector2Array::from(&uvs_vec[..]);
         let indices = PackedInt32Array::from(&indices_vec[..]);
-        // --- End Mesh Data Generation ---
     
         // --- Create/Update Godot Mesh ---
         let mut array_mesh = ArrayMesh::new_gd();
         let mut arrays = VariantArray::new();
+        arrays.resize(13_usize, &Variant::nil()); // Resize for index 12
     
-        // You are using indices 0 (vertices), 1 (normals), 2 (uvs), and 4 (indices)
-        // let highest_used_index = 4;
-        arrays.resize(13_usize, &Variant::nil());
-
-        // Set arrays at the CORRECT indices using the CORRECT enum variants
-        // Cast .ord() (which is i32) to usize as required by the compiler error
-        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant()); // Index 0
-        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());  // Index 1
-        arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());         // Index 4 (Corrected Enum Variant)
-        arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant()); // Index 12 (Corrected Enum Variant & Typo)
-
-        // Add the surface using the 2-argument version that your compiler accepts.
+        // Set arrays at correct indices, casting enum .ord() to usize
+        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+        arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());
+        arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+    
+        // Add surface using the 2-argument method
         array_mesh.add_surface_from_arrays(
             PrimitiveType::TRIANGLES,
             &arrays,
         );
 
+        // --- **UPCAST ONCE HERE** ---
+        // array_mesh (Gd<ArrayMesh>) is moved by upcast,
+        // but we get mesh_resource (Gd<Mesh>) which holds a reference to the underlying mesh data.
+        // This Gd<Mesh> can be shared and used multiple times via references.
+        let mesh_resource: Gd<Mesh> = array_mesh.upcast();
+
         // --- Create/Update MeshInstance3D ---
         let chunk_world_pos = Vector3::new(
             pos.x as f32 * chunk_size as f32,
-            0.0, // Base Y position
+            0.0,
             pos.z as f32 * chunk_size as f32
         );
-    
+
+        // Flag to track if we need to create a new instance
+        let mut create_new_instance = true;
+
         if let Some(mesh_instance) = self.chunk_meshes.get_mut(&pos) {
-            // Update existing instance if valid
-             if mesh_instance.is_instance_valid() {
-                 // Fix: Specify the type for upcast to avoid ambiguity
-                 mesh_instance.set_mesh(&array_mesh.upcast::<Mesh>());
-                 mesh_instance.set_position(chunk_world_pos); // Ensure position is correct
-                 // Optional: Update material if needed
-             } else {
-                  // Instance became invalid somehow, remove it
-                  godot_error!("MeshInstance for chunk {:?} became invalid. Removing.", pos);
-                  self.chunk_meshes.remove(&pos);
-                  // Consider recreating it in the 'else' block below if needed
-             }
-        } else {
-            // Create new MeshInstance3D
+            // Check if the existing instance is valid
+            if mesh_instance.is_instance_valid() {
+                // Update existing instance using a reference to the Gd<Mesh>
+                mesh_instance.set_mesh(&mesh_resource); // Pass reference to Gd<Mesh>
+                mesh_instance.set_position(chunk_world_pos);
+                create_new_instance = false; // Found and updated, no need to create
+            } else {
+                // Instance was in the map but invalid (e.g., freed elsewhere)
+                godot_error!("MeshInstance for chunk {:?} was invalid. Removing.", pos);
+                self.chunk_meshes.remove(&pos);
+                // Keep create_new_instance = true to make a new one
+            }
+        }
+
+        // Create a new instance ONLY if it wasn't found or the existing one was invalid
+        if create_new_instance {
             let mut mesh_instance = MeshInstance3D::new_alloc();
-            // Fix: Specify the type for upcast to avoid ambiguity
-            mesh_instance.set_mesh(&array_mesh.upcast::<Mesh>());
+            // Set mesh using a reference to the same Gd<Mesh>
+            mesh_instance.set_mesh(&mesh_resource); // Pass reference to Gd<Mesh>
             mesh_instance.set_position(chunk_world_pos);
-            // Fix: Convert String to GString with a reference
             let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
             mesh_instance.set_name(&mesh_name);
-    
-            // Apply default material if loaded
-            // if let Some(ref mat) = self.default_material {
-            //      mesh_instance.set_surface_override_material(0, mat.clone());
-            // }
-    
-            // Add to scene tree as child of ChunkController
-            // Fix: Specify the type for upcast to avoid ambiguity
             self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
-            // Store the new mesh instance
             self.chunk_meshes.insert(pos, mesh_instance);
-            // godot_print!("ChunkController: Created new mesh for chunk {:?}", pos);
         }
+
     }
+    
 }
