@@ -13,13 +13,16 @@ use crate::bridge::game::GameManagerBridge;
 use crate::bridge::network::NetworkManagerBridge;
 use crate::bridge::event::EventBridge;
 
+
 // Import your managers as Rust modules
-use crate::core::config_manager;
+use crate::config::config_manager;
 use crate::core::event_bus;
 use crate::core::game_manager;
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode};
+
 use crate::terrain::terrain_config::TerrainConfigManager;
+use crate::config::global_config;
 
 use crate::initialization::world::world_initializer::WorldInitializer;
 
@@ -64,7 +67,6 @@ pub struct SystemInitializer {
 
     // Core managers with Arc<Mutex> for thread safety
     game_manager: Option<Arc<Mutex<game_manager::GameManager>>>,
-    config_manager: Option<Arc<Mutex<config_manager::ConfigurationManager>>>,
     network_manager: Option<Arc<Mutex<NetworkHandler>>>,
     world_manager: Option<Arc<Mutex<WorldStateManager>>>,
     event_bus: Option<Arc<event_bus::EventBus>>,
@@ -86,7 +88,6 @@ impl SystemInitializer {
             event_bridge: None,
 
             game_manager: None,
-            config_manager: None,
             network_manager: None,
             world_manager: None,
             event_bus: None,
@@ -135,18 +136,18 @@ impl SystemInitializer {
     /// Initialize core managers and bridges
     fn initialize_core_systems(&mut self) -> Result<(), SystemInitError> {
         godot_print!("SystemInitializer: Initializing core systems");
+
+        // --- Get Global Configuration Manager ---
+        // It initializes lazily on first use via get_config_manager()
+        let config_manager_lock = global_config::get_config_manager(); // Panics if not initialized
         
         // Initialize event bus
         let event_bus = Arc::new(event_bus::EventBus::new());
         self.event_bus = Some(event_bus.clone());
         
         // Initialize configuration manager
-        let config_manager = Arc::new(Mutex::new(config_manager::ConfigurationManager::default()));
-        self.config_manager = Some(config_manager.clone());
-        
-        let _terrain_config_arc = TerrainConfigManager::init();
-        godot_print!("SystemInitializer: Explicitly initialized TerrainConfigManager.");
-
+        // let config_manager = Arc::new(Mutex::new(config_manager::ConfigurationManager::default()));
+        // self.config_manager = Some(config_manager.clone());
         
         // Prepare default network configuration
         let default_network_config = NetworkConfig {
@@ -165,7 +166,7 @@ impl SystemInitializer {
         
         // Create and use WorldInitializer
         let mut world_initializer = WorldInitializer::new(
-            config_manager.clone(),
+            config_manager_lock.clone(),
             event_bus.clone()
         );
         
@@ -183,7 +184,7 @@ impl SystemInitializer {
         
         // Initialize game manager with dependencies
         let game_manager = Arc::new(Mutex::new(game_manager::GameManager::new_with_dependencies(
-            config_manager.clone(),
+            config_manager_lock.clone(),
             event_bus.clone(),
             self.world_manager.clone(),
             Some(network_manager.clone()),
@@ -196,7 +197,7 @@ impl SystemInitializer {
         // Create configuration service (optional, remove if not needed)
         let configuration_service = ConfigurationService::new(
             game_manager.clone(),
-            config_manager.clone(),
+            config_manager_lock.clone(),
             network_manager.clone(),
             self.world_manager.clone().unwrap(),
             event_bus.clone(),
@@ -217,14 +218,17 @@ impl SystemInitializer {
         
         // Create bridges by direct allocation since they're Node-based (not RefCounted)
         let mut game_bridge = GameManagerBridge::new_alloc();
-        // let mut config_bridge = ConfigBridge::new_alloc();
         let mut network_bridge = NetworkManagerBridge::new_alloc();
         let mut event_bridge = EventBridge::new_alloc();
+        // let mut config_bridge = ConfigBridge::new_alloc();
+        let config_manager_lock = global_config::get_config_manager(); // Get global config
         
         // Initialize bridges with their respective managers
         if let Some(game_manager) = &self.game_manager {
             // Set game manager reference on the bridge
             game_bridge.bind_mut().set_config_manager(game_manager.clone());
+            // Add a method if GameManagerBridge needs access to config
+            // bridge_bind.set_config_manager(config_manager_lock.clone());
         }
         
         // if let Some(config_manager) = &self.config_manager {
@@ -390,12 +394,17 @@ impl SystemInitializer {
             }
         }
         
-        if let Some(config_manager) = &self.config_manager {
-            if let Ok(mut manager) = config_manager.lock() {
-                if let Err(e) = manager.save_to_file() {
-                    godot_print!("Failed to save configuration: {:?}", e);
-                }
-            }
+        // --- Save Global Configuration ---
+        godot_print!("Attempting to save global configuration...");
+        let config_manager_lock = global_config::get_config_manager();
+        if let Ok(manager) = config_manager_lock.read() { // Use read lock for saving path check
+             if let Err(e) = manager.save_to_file() {
+                 godot_error!("Failed to save global configuration: {:?}", e);
+             } else {
+                 godot_print!("Global configuration saved successfully.");
+             }
+        } else {
+             godot_error!("Could not acquire lock to save global configuration.");
         }
         
         // Explicitly free Godot bridges
