@@ -1,9 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use std::thread_local;
 use std::cell::RefCell;
 
-use crate::core::config_manager::{ConfigurationManager, GameConfiguration, GameModeConfig};
+use crate::config::config_manager::{ConfigurationManager, GameConfiguration, GameModeConfig};
 use crate::core::event_bus::{EventBus, PlayerConnectedEvent, WorldGeneratedEvent};
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode, NetworkEvent};
@@ -52,7 +52,7 @@ pub struct GameManager {
     running: bool,
     
     // Game configuration
-    config_manager: Arc<Mutex<ConfigurationManager>>,
+    config_manager: Arc<RwLock<ConfigurationManager>>,
     
     // Event communication
     event_bus: Arc<EventBus>,
@@ -98,7 +98,7 @@ impl GameManager {
         Self {
             state: GameState::Initializing,
             running: false,
-            config_manager: Arc::new(Mutex::new(ConfigurationManager::default())),
+            config_manager: Arc::new(RwLock::new(ConfigurationManager::default())),
             event_bus: Arc::new(EventBus::new()),
             world_manager: None,
             network_handler: None,
@@ -110,7 +110,7 @@ impl GameManager {
 
     // Create a new game manager with dependencies
     pub fn new_with_dependencies(
-        config_manager: Arc<Mutex<ConfigurationManager>>,
+        config_manager: Arc<RwLock<ConfigurationManager>>,
         event_bus: Arc<EventBus>,
         world_manager: Option<Arc<Mutex<WorldStateManager>>>,
         network_handler: Option<Arc<Mutex<NetworkHandler>>>,
@@ -137,7 +137,7 @@ impl GameManager {
         self.network_handler = Some(network_handler);
     }
     
-    pub fn set_config_manager(&mut self, config_manager: Arc<Mutex<ConfigurationManager>>) {
+    pub fn set_config_manager(&mut self, config_manager: Arc<RwLock<ConfigurationManager>>) {
         self.config_manager = config_manager;
     }
     
@@ -159,7 +159,7 @@ impl GameManager {
     
         // Get the world configuration
         let config = {
-            let config_manager = self.config_manager.lock()
+            let config_manager = self.config_manager.read()
                 .map_err(|_| GameError::SystemError("Failed to lock config manager".into()))?;
             config_manager.get_config().clone()
         };
@@ -303,7 +303,7 @@ impl GameManager {
         println!("Shutting down game systems...");
         
         // Save configuration
-        if let Ok(config_manager) = self.config_manager.lock() {
+        if let Ok(config_manager) = self.config_manager.read() {
             if let Err(e) = config_manager.save_to_file() {
                 eprintln!("Failed to save configuration: {}", e);
             }

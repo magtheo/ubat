@@ -1,20 +1,19 @@
 // File: configuration_service.rs
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use godot::prelude::*;
 
-use crate::core::config_manager::{self, ConfigurationManager, GameConfiguration, GameModeConfig};
+use crate::config::config_manager::{self, ConfigurationManager, GameConfiguration, GameModeConfig, ClientConfig};
 use crate::core::game_manager::GameManager;
 use crate::networking::network_manager::{NetworkHandler, NetworkConfig, NetworkMode};
 use crate::core::world_manager::WorldStateManager;
 use crate::core::event_bus::EventBus;
-use crate::terrain::{BiomeManager, ChunkManager};
 use godot::classes::RandomNumberGenerator;
 
 /// Configuration service to centralize game initialization logic
 pub struct ConfigurationService {
     game_manager: Arc<Mutex<GameManager>>,
-    config_manager: Arc<Mutex<ConfigurationManager>>,
+    config_manager: Arc<RwLock<ConfigurationManager>>,
     network_handler: Arc<Mutex<NetworkHandler>>,
     world_manager: Arc<Mutex<WorldStateManager>>,
     event_bus: Arc<EventBus>,
@@ -25,7 +24,7 @@ impl ConfigurationService {
     /// Create a new configuration service with all dependencies
     pub fn new(
         game_manager: Arc<Mutex<GameManager>>,
-        config_manager: Arc<Mutex<ConfigurationManager>>,
+        config_manager: Arc<RwLock<ConfigurationManager>>,
         network_handler: Arc<Mutex<NetworkHandler>>,
         world_manager: Arc<Mutex<WorldStateManager>>,
         event_bus: Arc<EventBus>,
@@ -74,127 +73,148 @@ impl ConfigurationService {
 
     /// Update configuration based on mode and options
     fn update_configuration(&mut self, mode: &NetworkMode, options: &Dictionary) -> Result<(), String> {
-        let mut config_manager = self.config_manager.lock()
-            .map_err(|_| "Failed to lock config manager".to_string())?;
+        // Lock the global config manager for writing
+        let mut config_manager_guard = self.config_manager.write()
+            .map_err(|_| "Failed to lock global config manager for writing".to_string())?;
 
         // Get current configuration
-        let mut config = config_manager.get_config().clone();
+        let config: &mut GameConfiguration = config_manager_guard.get_config_mut();
 
         // Update configuration based on options
         config.game_mode = match mode {
             NetworkMode::Standalone => GameModeConfig::Standalone,
             NetworkMode::Host => GameModeConfig::Host(config_manager::HostConfig {
                 world_generation_seed: options.get("world_seed")
-                    .and_then(|v| v.try_to::<i64>().ok())
-                    .unwrap_or_else(|| self.rng.randi_range(1000, 9999999) as i64) as u64,
+                    .and_then(|v| v.try_to::<i64>().ok().map(|s| s as u64))
+                    .unwrap_or(config.world_seed), // Fallback to existing seed
                 admin_password: options.get("admin_password")
                     .and_then(|v| v.try_to::<GString>().ok())
                     .map(|s| s.to_string()),
             }),
-            NetworkMode::Client => GameModeConfig::Client(config_manager::ClientConfig {
+            NetworkMode::Client => GameModeConfig::Client(ClientConfig {
+                // Use address from options if present, otherwise keep loaded/default
                 server_address: options.get("server_address")
-                    .and_then(|v| v.try_to::<GString>().ok())
-                    .unwrap_or_else(|| "127.0.0.1:7878".into())
-                    .to_string(),
-                username: options.get("player_name")
-                    .and_then(|v| v.try_to::<GString>().ok())
-                    .unwrap_or_else(|| "Player".into())
-                    .to_string(),
+                     .and_then(|v| v.try_to::<GString>().ok().map(|s| s.to_string()))
+                     .unwrap_or_else(|| crate::config::config_manager::default_server_address()), // Use pub function
+                // CORRECT THE FIELD NAME AND ASSIGNMENT HERE
+                username: options.get("player_name") // Ensure this key is correct
+                     .and_then(|v| v.try_to::<GString>().ok().map(|s| s.to_string()))
+                     .unwrap_or_else(|| crate::config::config_manager::default_username()), // Use pub function
             }),
         };
 
-        // Save updated configuration
-        config_manager.update_config(config);
+        // Update other config fields directly if needed based on options
+        // Example: Override world seed for this session if provided in options
+        if let Some(seed_variant) = options.get("world_seed") {
+            if let Ok(seed) = seed_variant.try_to::<i64>() {
+                config.world_seed = seed as u64;
+                godot_print!("ConfigurationService: Overriding world seed for session: {}", config.world_seed);
+            }
+        }
+         // Example: Override world size for this session if provided
+         if let Some(width_v) = options.get("world_width") {
+              if let Ok(width) = width_v.try_to::<i64>() { config.world_size.width = width as u32; }
+         }
+         if let Some(height_v) = options.get("world_height") {
+              if let Ok(height) = height_v.try_to::<i64>() { config.world_size.height = height as u32; }
+         }
 
         Ok(())
     }
 
     /// Configure network handler based on mode
     fn configure_network(&mut self, mode: &NetworkMode, options: &Dictionary) -> Result<(), String> {
-        let mut network_handler = self.network_handler.lock()
+        let mut network_handler_guard = self.network_handler.lock()
             .map_err(|_| "Failed to lock network handler".to_string())?;
 
-        // Configure network based on mode
-        let network_config = match mode {
-            NetworkMode::Standalone => NetworkConfig {
-                mode: NetworkMode::Standalone,
-                port: 0,
-                max_connections: 0,
-                server_address: None,
-            },
+        // Get defaults from the loaded config (read lock)
+        let (default_port, default_max_players, default_server_address) = {
+            let config_manager_guard = self.config_manager.read()
+                .map_err(|_| "Failed to lock global config manager for reading network defaults".to_string())?;
+            let net_config = &config_manager_guard.get_config().network;
+            (
+                net_config.default_port,
+                net_config.max_players as usize, // Cast u8 to usize
+                // Determine default address - maybe ClientConfig default is better?
+                 match &config_manager_guard.get_config().game_mode {
+                      GameModeConfig::Client(c) => Some(c.server_address.clone()),
+                      _ => None,
+                 }
+            )
+        };
+
+        // Configure network based on mode, using options OR loaded defaults
+        let network_runtime_config = match mode {
+            NetworkMode::Standalone => NetworkConfig { mode: NetworkMode::Standalone, port: 0, max_connections: 0, server_address: None },
             NetworkMode::Host => NetworkConfig {
                 mode: NetworkMode::Host,
                 port: options.get("server_port")
-                    .and_then(|v| v.try_to::<i64>().ok())
-                    .unwrap_or(7878) as u16,
+                    .and_then(|v| v.try_to::<i64>().ok().map(|p| p as u16))
+                    .unwrap_or(default_port), // Use loaded default port
                 max_connections: options.get("max_players")
-                    .and_then(|v| v.try_to::<i64>().ok())
-                    .unwrap_or(64) as usize,
+                    .and_then(|v| v.try_to::<i64>().ok().map(|p| p as usize))
+                    .unwrap_or(default_max_players), // Use loaded default players
                 server_address: None,
             },
             NetworkMode::Client => NetworkConfig {
                 mode: NetworkMode::Client,
                 port: 0,
-                max_connections: 1,
+                max_connections: 1, // Client only connects to one server
                 server_address: Some(
                     options.get("server_address")
-                        .and_then(|v| v.try_to::<GString>().ok())
-                        .unwrap_or_else(|| "127.0.0.1:7878".into())
-                        .to_string()
+                        .and_then(|v| v.try_to::<GString>().ok().map(|s| s.to_string()))
+                        .or(default_server_address) // Use loaded default if option missing
+                        .unwrap_or_else(|| { // Final fallback
+                            godot_warn!("ConfigurationService: Client server address not found in options or config, using fallback.");
+                            "127.0.0.1:7878".to_string()
+                        })
                 ),
             },
         };
 
-        // Use new() which is public instead of initialize_mode() which is private
-        let new_handler = NetworkHandler::new(network_config)
+        // Re-initialize the NetworkHandler with the determined runtime config
+        // Note: This creates a *new* handler. Ensure this is the desired behavior.
+        // If NetworkHandler has a reconfigure method, use that instead.
+        godot_print!("ConfigurationService: Configuring NetworkHandler with: {:?}", network_runtime_config);
+        *network_handler_guard = NetworkHandler::new(network_runtime_config)
             .map_err(|e| format!("Network configuration failed: {:?}", e))?;
-        
-        // Replace the current handler with the new one
-        *network_handler = new_handler;
 
         Ok(())
     }
 
     /// Initialize world based on mode and options
-    fn initialize_world(&mut self, mode: &NetworkMode, options: &Dictionary) -> Result<(), String> {
-        let mut world_manager = self.world_manager.lock()
+    fn initialize_world(&mut self, mode: &NetworkMode, _options: &Dictionary) -> Result<(), String> {
+        // Options are already applied to the global config in update_configuration
+        let mut world_manager_guard = self.world_manager.lock()
             .map_err(|_| "Failed to lock world manager".to_string())?;
 
-        // World initialization parameters
-        let seed = options.get("world_seed")
-            .and_then(|v| v.try_to::<i64>().ok())
-            .unwrap_or_else(|| self.rng.randi_range(1000, 9999999) as i64);
+        // Get final world parameters from the possibly-updated global config
+        let (final_seed, final_width, final_height) = {
+            let config_manager_guard = self.config_manager.read()
+                 .map_err(|_| "Failed to lock global config manager for world init".to_string())?;
+             let config = config_manager_guard.get_config();
+             (config.world_seed, config.world_size.width, config.world_size.height)
+        };
 
-        let width = options.get("world_width")
-            .and_then(|v| v.try_to::<i64>().ok())
-            .unwrap_or(10000);
+        // Update world manager's internal configuration before initialization
+        // Assuming WorldStateManager has a method like update_config or similar
+        let mut world_state_config = world_manager_guard.get_config().clone(); // Clone existing config
+        world_state_config.seed = final_seed;
+        world_state_config.world_size = (final_width, final_height);
+        // Update generation parameters if they could be changed by options? Seems unlikely for now.
+        world_manager_guard.update_config(world_state_config); // Assuming this method exists
 
-        let height = options.get("world_height")
-            .and_then(|v| v.try_to::<i64>().ok())
-            .unwrap_or(10000);
+        godot_print!("ConfigurationService: Initializing WorldStateManager with Seed: {}, Size: ({}, {})", final_seed, final_width, final_height);
 
-        // Update world manager's configuration before initialization
-        let mut config = world_manager.get_config().clone();
-        config.seed = seed as u64;
-        config.world_size = (width as u32, height as u32);
-        world_manager.update_config(config);
-
-        // Initialize world based on mode
+        // Initialize world based on mode (no changes here)
         match mode {
-            NetworkMode::Standalone | NetworkMode::Host => {
-                // Initialize the world - this should handle terrain setup internally
-                world_manager.initialize()
-                    .map_err(|e| format!("World initialization failed: {}", e))?;
-                
-                // Generate the initial world - this triggers actual world generation
-                // world_manager.generate_initial_world();
-            },
-            NetworkMode::Client => {
-                // For client, just initialize (wait for world sync from host)
-                world_manager.initialize()
-                    .map_err(|e| format!("World initialization failed: {}", e))?;
-            }
+            NetworkMode::Standalone | NetworkMode::Host => { /* ... */ },
+            NetworkMode::Client => { /* ... */ }
         }
+        // Call the actual initialization method on WorldStateManager
+        world_manager_guard.initialize()
+             .map_err(|e| format!("World initialization failed: {}", e))?;
+
 
         Ok(())
     }
