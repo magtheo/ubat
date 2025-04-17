@@ -89,10 +89,13 @@ impl INode3D for ChunkManager {
         let storage = Arc::new(ChunkStorage::new("user://terrain_data", tx.clone()));
         let compute_pool = get_or_init_global_pool(); // Use global pool
 
-        let chunk_size = if let Some(config_arc) = TerrainConfigManager::get_config() {
-            config_arc.read().map_or(32, |guard| guard.chunk_size())
-        } else {
-            32 // Default if config not ready
+        let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+        let chunk_size = match config_arc.read() { // Lock it
+            Ok(guard) => guard.chunk_size, // Access field
+            Err(_) => {
+                godot_error!("ChunkManager::init: Failed to read terrain config lock for chunk size. Using default 32.");
+                32 // Default if lock fails
+            }
         };
 
         ChunkManager {
@@ -692,23 +695,21 @@ impl ChunkManager {
      // Apply config changes dynamically
      #[func]
      pub fn apply_config_updates(&mut self) {
-         if let Some(config_arc) = TerrainConfigManager::get_config() {
-             if let Ok(guard) = config_arc.read() {
-                 let old_chunk_size = self.chunk_size;
-                 self.chunk_size = guard.chunk_size();
-                 // Tell storage to update its cache limit
-                 self.storage.update_cache_limit();
-                 godot_print!("ChunkManager: Applied config updates (chunk_size: {}, cache_limit updated)", self.chunk_size);
-                 // If chunk size changes, existing data becomes invalid!
-                 if old_chunk_size != self.chunk_size {
-                     godot_warn!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
-                     self.chunk_states.write().unwrap().clear();
-                     self.storage.clear_cache();
-                     // Ideally, also delete stored files, but that's more complex.
-                 }
-             }
-         }
-     }
+        let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+        if let Ok(guard) = config_arc.read() { // Lock it
+            let old_chunk_size = self.chunk_size;
+            self.chunk_size = guard.chunk_size; // Access field
+            // REMOVED: self.storage.update_cache_limit();
+            godot_print!("ChunkManager: Applied config updates (chunk_size: {})", self.chunk_size);
+            if old_chunk_size != self.chunk_size {
+                godot_warn!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
+                self.chunk_states.write().unwrap().clear();
+                self.storage.clear_cache(); // Make sure clear_cache exists or remove if LRU handles it
+            }
+        } else {
+            godot_error!("ChunkManager::apply_config_updates: Failed to read terrain config lock.");
+        }
+    }
 }
 
 impl Drop for ChunkManager {

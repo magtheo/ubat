@@ -4,12 +4,14 @@ use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, Resource
 use std::collections::{HashMap, HashSet};
 use godot::classes::mesh::{PrimitiveType, ArrayType};
 
+use std::sync::{Arc, RwLock};
+
 // Use ChunkManager and its types
 use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
 // Use BiomeManager if needed for materials etc.
 use crate::terrain::biome_manager::BiomeManager;
 // Use TerrainConfig to get chunk size if needed
-use crate::terrain::terrain_config::TerrainConfigManager;
+use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
 
 // --- Helper function to safely get height, clamping at edges ---
 // Returns the height at (x, z) within the heightmap, clamping coordinates to chunk bounds.
@@ -82,15 +84,13 @@ impl INode3D for ChunkController {
             self.render_distance = cm_bind.get_render_distance();
 
             // Get chunk size directly from config manager for consistency
-            if let Some(config_arc) = TerrainConfigManager::get_config() {
-                if let Ok(guard) = config_arc.read() {
-                    self.chunk_size = guard.chunk_size();
-                } else {
-                     godot_error!("ChunkController: Failed to read config for chunk size.");
-                 }
+            let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+            if let Ok(guard) = config_arc.read() { // Lock it
+                self.chunk_size = guard.chunk_size; // Access field
             } else {
-                 godot_warn!("ChunkController: Config manager not available for chunk size.");
-             }
+                godot_error!("ChunkController: Failed to read terrain config lock for chunk size.");
+                // Keep default self.chunk_size
+            }
 
             godot_print!("ChunkController: Initial render distance: {}, chunk size: {}", self.render_distance, self.chunk_size);
         } else {
