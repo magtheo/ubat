@@ -14,9 +14,9 @@ connection_timeout_ms = 5000
 [terrain]
 max_threads = 7 # Example: Default based on detection or a sensible value
 chunk_size = 32
-blend_distance = 200.0
+blend_distance = 400.0
 use_parallel_processing = true
-chunk_cache_size = 400
+chunk_cache_size = 600
 chunks_per_frame = 4
 render_distance = 2 # Moved from terrain_initializer
 
