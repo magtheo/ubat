@@ -92,6 +92,17 @@ impl NoiseManager {
         }
     }
 
+    pub fn get_parameters(&self, key: &str) -> Option<NoiseParameters> {
+        // Read lock the cache
+        match self.noise_parameters_cache.read() {
+            Ok(cache) => cache.get(key).cloned(), // Access cache and clone result
+            Err(e) => {
+                godot_error!("NoiseManager::get_parameters - Failed to lock cache: {}", e);
+                None
+            }
+        }
+    }
+
     fn try_extract_parameters_from_resource(&self, resource: Gd<Resource>, path: &GString) -> Option<NoiseParameters> {
         let noise_gd: Option<Gd<FastNoiseLite>> = if resource.is_class("NoiseTexture2D") {
             resource.cast::<NoiseTexture2D>()
@@ -117,7 +128,7 @@ impl NoiseManager {
     fn extract_parameters(&self, noise_gd: Gd<FastNoiseLite>) -> NoiseParameters {
         let offset_gd = noise_gd.get_offset();
         NoiseParameters {
-            seed: noise_gd.get_seed(),
+            seed: noise_gd.get_seed() as u32,
             frequency: noise_gd.get_frequency(),
             noise_type: map_godot_noise_type(noise_gd.get_noise_type()),
             offset: (offset_gd.x, offset_gd.y, offset_gd.z),

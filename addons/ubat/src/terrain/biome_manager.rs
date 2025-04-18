@@ -6,11 +6,20 @@ use std::collections::HashMap;
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
 
+use crate::terrain::noise::noise_parameters::NoiseParameters; // Assuming you have this struct
+use noise::{NoiseFn, Seedable, Perlin}; // Import necessary noise-rs items
+use rand::{SeedableRng, Rng}; // For deterministic PRNG
+use rand_chacha::ChaCha8Rng; // A good deterministic PRNG
+use std::hash::{Hash, Hasher}; // For hashing option
+use std::collections::hash_map::DefaultHasher; // For hashing option
+
 use crate::resource::resource_manager::resource_manager;
 use crate::terrain::chunk_manager::ChunkManager;
 use crate::terrain::generation_rules::GenerationRules;
 
 use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
+
+use super::noise::NoiseManager;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BiomeManagerState {
@@ -123,12 +132,14 @@ struct BiomeSection {
 }
 
 // Thread-safe versions of biome structures
+#[derive(Clone)]
 pub struct ThreadSafeBiomeData {
     world_width: f32,
     world_height: f32,
     seed: u32,
     sections: Vec<ThreadSafeBiomeSection>,
     pub blend_distance: i32,
+    blend_noise_params: Option<NoiseParameters>, // Store blend noise config
 
     // Add reference to image data
     image_data: Vec<u8>,
@@ -136,13 +147,14 @@ pub struct ThreadSafeBiomeData {
     image_height: i32,
 }
 
-
+#[derive(Clone)]
 struct ThreadSafeBiomeSection {
     section_id: u8,
     possible_biomes: Vec<u8>,
     voronoi_points: Vec<ThreadSafeVoronoiPoint>,
 }
 
+#[derive(Clone)]
 struct ThreadSafeVoronoiPoint {
     position: (f32, f32),
     biome_id: u8,
@@ -876,7 +888,7 @@ impl BiomeManager {
 
 impl ThreadSafeBiomeData {
     // Update only changed properties
-    pub fn update_from_biome_manager(&mut self, biome_mgr: &BiomeManager) {
+    pub fn update_from_biome_manager(&mut self, biome_mgr: &BiomeManager, noise_manager: &NoiseManager) {
         // Update image data if needed
         if let Some(ref img) = biome_mgr.biome_image {
             let image_width = img.get_width();
@@ -929,9 +941,21 @@ impl ThreadSafeBiomeData {
         
         // Always update blend distance as it doesn't require rebuilding sections
         self.blend_distance = biome_mgr.blend_distance;
+        
+        // Update blend noise params if they differ or are missing
+        let current_blend_params = noise_manager.get_parameters("biome_blend");
+        if self.blend_noise_params != current_blend_params {
+            godot_print!("ThreadSafeBiomeData: Updating blend noise parameters.");
+            self.blend_noise_params = current_blend_params;
+            if self.blend_noise_params.is_none() {
+                godot_warn!("ThreadSafeBiomeData: 'biome_blend' noise parameters not found during update. Biome blending noise disabled.");
+            }
+        }
     }
 
-    pub fn from_biome_manager(biome_mgr: &BiomeManager) -> Self {
+    
+
+    pub fn from_biome_manager(biome_mgr: &BiomeManager, noise_manager: &NoiseManager) -> Self {
         let mut sections = Vec::new();
         
         // Clone all sections and their Voronoi points
@@ -963,6 +987,13 @@ impl ThreadSafeBiomeData {
           image_data = img.get_data().to_vec();
         }
 
+        // --- Fetch Blend Noise Parameters ---
+        // Assume NoiseManager has a method like get_parameters(&str) -> Option<NoiseParameters>
+        let blend_noise_params = noise_manager.get_parameters("biome_blend");
+        if blend_noise_params.is_none() {
+            godot_warn!("ThreadSafeBiomeData: Could not find 'biome_blend' noise parameters in NoiseManager. Biome blending noise disabled.");
+        }
+
         
         ThreadSafeBiomeData {
             world_width: biome_mgr.world_width,
@@ -970,10 +1001,59 @@ impl ThreadSafeBiomeData {
             seed: biome_mgr.seed,
             sections,
             blend_distance: biome_mgr.blend_distance,
+            blend_noise_params, // Store the fetched parameters
             image_data,
             image_width,
             image_height,
         }
+    }
+
+    fn create_blend_noise_fn(params: &NoiseParameters) -> Option<Box<dyn noise::NoiseFn<f64, 2> + Send + Sync>> {
+        // Use noise-rs based on params. Adjust noise type as needed for blending.
+        // Example using simple Perlin:
+        let noise_fn = Perlin::new(params.seed)
+            .set_seed(params.seed); // Use the seed from params
+   
+        // Wrap with ScalePoint for frequency ONLY IF params represent simple noise.
+        // If params include fractal settings, use Fbm, RidgedMulti etc. like in ChunkManager.
+        // Let's assume simple Perlin scaled by frequency for blend noise for now.
+        // You might need to adjust this based on your actual blend noise settings.
+        let scaled_noise = noise::ScalePoint::new(noise_fn)
+            .set_scale(params.frequency as f64); // Apply frequency
+   
+        Some(Box::new(scaled_noise))
+   
+        // If using fractals for blending noise:
+        /*
+        match params.fractal_type {
+            // ... cases for Fbm<Perlin>, RidgedMulti<Perlin>, etc. ...
+            // Use params.frequency, params.fractal_octaves, etc.
+            RustFractalType::None => {
+                // Just Perlin scaled by frequency
+                let noise_fn = Perlin::new(params.seed);
+                let scaled_noise = noise::ScalePoint::new(noise_fn)
+                    .set_scale(params.frequency as f64);
+                Some(Box::new(scaled_noise))
+            }
+            _ => { // Handle FBM, Ridged etc.
+               // ... create Fbm<Perlin>::new(params.seed).set_frequency(...) etc. ...
+            }
+        }
+        */
+    }
+
+    // Helper for deterministic random value [0.0, 1.0) using ChaCha8Rng
+    fn get_deterministic_random(&self, world_x: f32, world_y: f32) -> f32 {
+        // Combine seed and coordinates for a unique seed per position
+        // Using XOR and to_bits for a simple combination
+        let pos_hash_low = world_x.to_bits() ^ world_y.to_bits();
+        let seed64 = (self.seed as u64) << 32 | (pos_hash_low as u64);
+
+        // Create a ChaCha8Rng seeded with this value
+        let mut rng = ChaCha8Rng::seed_from_u64(seed64);
+
+        // Generate a random f32 in [0.0, 1.0)
+        rng.r#gen::<f32>()
     }
     
     // Get section ID based on world coordinates
@@ -1034,37 +1114,91 @@ impl ThreadSafeBiomeData {
   
     // Get biome ID at world coordinates
     pub fn get_biome_id(&self, world_x: f32, world_y: f32) -> u8 {
-        // Get the section for this position
         let section_id = self.get_section_id(world_x, world_y);
-        
-        // Find the section
+    
         if let Some(section) = self.sections.iter().find(|s| s.section_id == section_id) {
-            // If no Voronoi points, return first possible biome
             if section.voronoi_points.is_empty() {
                 return *section.possible_biomes.first().unwrap_or(&0);
             }
-            
-            // Calculate distances to all Voronoi points in this section
+    
+            // --- Find two closest points (linear scan, no spatial grid) ---
+            let mut closest1: Option<(&ThreadSafeVoronoiPoint, f32)> = None;
+            let mut closest2: Option<(&ThreadSafeVoronoiPoint, f32)> = None;
             let pos = (world_x, world_y);
-            let mut distances: Vec<(f32, &ThreadSafeVoronoiPoint)> = section.voronoi_points.iter()
-                .map(|point| {
-                    let dx = pos.0 - point.position.0;
-                    let dy = pos.1 - point.position.1;
-                    let distance = (dx * dx + dy * dy).sqrt();
-                    (distance, point)
-                })
-                .collect();
-            
-            // Sort by distance
-            distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            
-            // Return the biome ID of the closest point
-            if !distances.is_empty() {
-                return distances[0].1.biome_id;
+    
+            for point in &section.voronoi_points {
+                let dx = pos.0 - point.position.0;
+                let dy = pos.1 - point.position.1;
+                // Use squared distance for comparison, sqrt only when needed
+                let dist_sq = dx * dx + dy * dy;
+    
+                // Update closest points
+                if closest1.is_none() || dist_sq < closest1.unwrap().1 {
+                    closest2 = closest1; // Shift current closest1 to closest2
+                    closest1 = Some((point, dist_sq));
+                } else if closest2.is_none() || dist_sq < closest2.unwrap().1 {
+                    closest2 = Some((point, dist_sq));
+                }
+            }
+    
+            // --- Check for blending ---
+            if let (Some((p1, dist1_sq)), Some((p2, dist2_sq))) = (closest1, closest2) {
+                 // Calculate real distances now
+                let dist1 = dist1_sq.sqrt();
+                let dist2 = dist2_sq.sqrt();
+                let blend_dist_f32 = self.blend_distance as f32;
+    
+                if dist1 < blend_dist_f32 && (dist2 - dist1) < blend_dist_f32 { // Check if p1 is within blend distance AND p2 is close enough to p1
+    
+                    // --- Calculate Noise Influence ---
+                    let mut noise_influence = 0.0; // Default to no noise influence
+                    if let Some(ref params) = self.blend_noise_params {
+                         if let Some(noise_fn) = Self::create_blend_noise_fn(params) {
+                             // Use a different frequency/scale for blend noise if desired
+                             let noise_val = noise_fn.get([world_x as f64, world_y as f64]);
+                             // Normalize noise_val (e.g., Perlin is approx [-1, 1])
+                             let normalized_noise = (noise_val as f32 * 0.5) + 0.5; // Map to [0, 1]
+                             // Adjust influence range, e.g., 0.3 means noise shifts blend by +/- 15%
+                             let noise_factor = 0.3;
+                             noise_influence = (normalized_noise - 0.5) * noise_factor; // Map to [-0.15, 0.15] if factor is 0.3
+                         }
+                    }
+    
+                    // --- Calculate Blend Factor ---
+                    // Original blend factor based on relative distance difference
+                    // let blend_factor = ((dist2 - dist1) / blend_dist_f32).clamp(0.0, 1.0);
+    
+                    // Alternative: Blend factor based on distance to p1 relative to blend distance
+                    // This often gives smoother results near the center of a biome cell
+                     let blend_factor = (dist1 / blend_dist_f32).clamp(0.0, 1.0); // 0 near center, 1 at edge
+    
+                    // Adjust blend factor by noise influence
+                    let adjusted_blend = (blend_factor + noise_influence).clamp(0.0, 1.0);
+    
+                    // --- Deterministic Random Choice ---
+                    let rand_val = self.get_deterministic_random(world_x, world_y);
+                    // let rand_val = self.get_deterministic_random_hash(world_x, world_y); // Alternative
+    
+                    // Choose biome based on adjusted blend and random value
+                    // If rand_val < adjusted_blend, lean towards the further point (p2)
+                    let selected_biome = if rand_val < adjusted_blend {
+                        p2.biome_id
+                    } else {
+                        p1.biome_id
+                    };
+                    return selected_biome;
+    
+                } else {
+                    // No blending needed (too far apart or p1 outside blend zone)
+                    return p1.biome_id;
+                }
+            } else if let Some((p1, _)) = closest1 {
+                // Only one point found (or only one point in section)
+                return p1.biome_id;
             }
         }
-        
-        // Default biome
+    
+        // Default biome if no section found or other error
         0
     }
     

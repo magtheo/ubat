@@ -19,6 +19,7 @@ use crate::terrain::noise::noise_manager::NoiseManager;
 pub struct TerrainSystemContext {
     pub biome_manager: Option<Gd<BiomeManager>>,
     pub chunk_manager: Option<Gd<ChunkManager>>,
+    pub noise_manager: Option<Gd<NoiseManager>>,
     pub thread_safe_biome_data: Option<Arc<ThreadSafeBiomeData>>,
 }
 
@@ -90,17 +91,14 @@ impl TerrainInitializer {
             // Convert HashMap<String, String> to Godot Dictionary
             let mut noise_paths_dict = Dictionary::new();
             for (key, path) in &self.noise_paths {
-                 noise_paths_dict.insert(key.to_variant(), path.to_variant()); // Use GString::from(path) if needed
+                noise_paths_dict.insert(key.to_variant(), path.to_variant()); // Use GString::from(path) if needed
             }
 
-             // Check if paths were provided
-             if noise_paths_dict.is_empty() {
-                  godot_warn!("TerrainInitializer: No noise paths provided from configuration!");
-                  // Handle error or proceed without noise? Return Err?
-                  // return Err("Noise paths configuration is missing or empty.".to_string());
-             } else {
-                  godot_print!("TerrainInitializer: Setting noise paths on NoiseManager: {:?}", &self.noise_paths);
-             }
+            // Print regardless, to confirm what's being set
+            godot_print!("TerrainInitializer: Setting noise paths on NoiseManager (Count: {}): {:?}",
+                noise_paths_dict.len(),
+                &self.noise_paths // Log the original HashMap for clarity
+            );
 
             // Assuming NoiseManager has a setter like `set_noise_resource_paths`
             nm_bind.set_noise_resource_paths(noise_paths_dict);
@@ -183,10 +181,22 @@ impl TerrainInitializer {
         TerrainSystemContext {
             biome_manager: self.biome_manager.clone(),
             chunk_manager: self.chunk_manager.clone(),
-            thread_safe_biome_data: if let Some(biome_mgr) = &self.biome_manager {
-                Some(Arc::new(ThreadSafeBiomeData::from_biome_manager(&biome_mgr.bind())))
-            } else {
-                None
+            noise_manager: self.noise_manager.clone(), // Pass the Option<Gd<NoiseManager>>
+    
+            // Check both options before creating ThreadSafeBiomeData
+            thread_safe_biome_data: match (&self.biome_manager, &self.noise_manager) {
+                (Some(biome_mgr), Some(noise_mgr)) => {
+                    // Both managers are Some, proceed to create the data
+                    Some(Arc::new(ThreadSafeBiomeData::from_biome_manager(
+                        &biome_mgr.bind(),
+                        &noise_mgr.bind() // Correctly use the matched 'noise_mgr'
+                    )))
+                }
+                _ => {
+                    // Either biome_manager or noise_manager (or both) are None
+                    godot_warn!("get_terrain_context: BiomeManager or NoiseManager is None, cannot create ThreadSafeBiomeData.");
+                    None // Cannot create data if dependencies are missing
+                }
             },
         }
     }

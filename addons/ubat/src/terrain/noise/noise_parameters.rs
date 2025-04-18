@@ -4,14 +4,15 @@ use godot::prelude::*;
 // --- Rust equivalents for Godot Enums ---
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustNoiseType { Value, ValueCubic, Perlin, Cellular, Simplex, SimplexSmooth }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustFractalType { None, Fbm, Ridged, PingPong }
 // Add other enums (CellularDistanceFunction, etc.) if needed
 
 // --- Main Parameter Struct ---
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NoiseParameters {
-    pub seed: i32,
+    pub seed: u32,
     pub frequency: f32,
     pub noise_type: RustNoiseType,
     pub offset: (f32, f32, f32),
