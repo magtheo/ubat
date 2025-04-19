@@ -27,6 +27,7 @@ render_distance = 2 # Moved from terrain_initializer
 "4" = "res://project/terrain/noise/kelpNoise.tres"
 "5" = "res://project/terrain/noise/lavaRockNoise.tres"
 "blend" = "res://project/terrain/noise/blendNoise.tres"
+"biome_blend" = "res://project/terrain/noise/blendNoise.tres"
 "section" = "res://project/terrain/noise/sectionNoise.tres"
 
 # [custom_settings] # If needed
