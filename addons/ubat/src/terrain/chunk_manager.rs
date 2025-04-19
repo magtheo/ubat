@@ -11,7 +11,6 @@ use crate::terrain::noise::noise_manager::NoiseManager;
 use crate::terrain::noise::noise_parameters::{NoiseParameters, RustNoiseType, RustFractalType}; // Import enums too
 use noise::NoiseFn; // Keep NoiseFn trait import
 
-
 // Use ChunkData from ChunkStorage
 use crate::threading::chunk_storage::{ChunkData, MeshGeometry, ChunkStorage};
 
@@ -597,78 +596,118 @@ impl ChunkManager {
         biome_ids: &[u8],
         chunk_size: u32,
         blend_distance: i32,
-        blend_noise_params: Option<NoiseParameters>,
-        chunk_pos: ChunkPosition, // **ADDED chunk_pos** to calculate world coords
+        blend_noise_params: Option<NoiseParameters>, // Keep param for now (Step 4 will refine)
+        chunk_pos: ChunkPosition,
     ) {
-        if blend_distance <= 0 { return; }
+        if blend_distance <= 0 || chunk_size == 0 { return; }
 
-        let original_heights = heightmap.to_vec();
-        let blend_radius = blend_distance.max(1);
+        let cs = chunk_size as i32;
+        let cs_usize = chunk_size as usize;
+        let blend_radius = blend_distance.max(1); // Kernel radius for blending calc
+        let max_idx = (chunk_size * chunk_size - 1) as usize;
 
+        // --- Pass 1: Identify indices near biome boundaries ---
+        let mut boundary_indices = HashSet::<usize>::new();
+
+        for z in 0..cs {
+            for x in 0..cs {
+                let current_idx = (z * cs + x) as usize;
+                let current_biome = biome_ids[current_idx];
+
+                // Check right neighbor
+                if x + 1 < cs {
+                    let right_idx = current_idx + 1;
+                    if biome_ids[right_idx] != current_biome {
+                        boundary_indices.insert(current_idx);
+                        boundary_indices.insert(right_idx);
+                    }
+                }
+                // Check bottom neighbor
+                if z + 1 < cs {
+                    let bottom_idx = current_idx + cs_usize;
+                    if bottom_idx <= max_idx && biome_ids[bottom_idx] != current_biome {
+                         boundary_indices.insert(current_idx);
+                         boundary_indices.insert(bottom_idx);
+                    }
+                }
+                 // Optional: Check diagonals if needed for smoother diagonal borders
+                 // if x + 1 < cs && z + 1 < cs {
+                 //     let diag_idx = current_idx + cs_usize + 1;
+                 //     if diag_idx <= max_idx && biome_ids[diag_idx] != current_biome {
+                 //          boundary_indices.insert(current_idx);
+                 //          boundary_indices.insert(diag_idx);
+                 //          boundary_indices.insert(current_idx + 1); // Also mark adjacent
+                 //          boundary_indices.insert(current_idx + cs_usize); // Also mark adjacent
+                 //     }
+                 // }
+            }
+        }
+
+        // If no boundaries detected, skip blending
+        if boundary_indices.is_empty() {
+             // println!("Chunk {:?}: No biome boundaries found, skipping blend.", chunk_pos); // Optional log
+            return;
+        }
+        // println!("Chunk {:?}: Found {} boundary indices to blend.", chunk_pos, boundary_indices.len()); // Optional log
+
+        // --- Pass 2: Blend only the boundary indices ---
+        let original_heights = heightmap.to_vec(); // Still need original values
+        // TODO (Step 4): Get pre-built noise function Arc instead of creating per call
         let blend_noise_fn = blend_noise_params.as_ref().map(Self::create_noise_function);
 
-        for z in 0..chunk_size {
-            for x in 0..chunk_size {
-                let idx = (z * chunk_size + x) as usize;
-                let current_biome = biome_ids[idx];
-                let mut is_boundary = false;
+        for idx in boundary_indices {
+             // Get 2D coordinates from linear index
+             let x = (idx % cs_usize) as i32;
+             let z = (idx / cs_usize) as i32;
 
-                // Check neighbors
-                for dz in -1..=1 {
-                    for dx in -1..=1 {
-                        if dx == 0 && dz == 0 { continue; }
-                        let nx = x as i32 + dx;
-                        let nz = z as i32 + dz;
-                        if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
-                            let nidx = (nz as u32 * chunk_size + nx as u32) as usize;
-                            if biome_ids[nidx] != current_biome {
-                                is_boundary = true;
-                                break;
-                            }
-                        }
-                    }
-                    if is_boundary { break; }
-                }
+             // --- Perform the blending calculation (similar to original inner loop) ---
+             let mut total_weight = 0.0;
+             let mut weighted_height_sum = 0.0;
+             let mut blend_needed_for_this_cell = false; // Check if any neighbors contribute
 
-                if is_boundary {
-                    let mut total_weight = 0.0;
-                    let mut weighted_height_sum = 0.0;
-                    let mut blend_needed = false;
+             // Iterate in a square kernel around the boundary cell (x, z)
+             for dz in -blend_radius..=blend_radius {
+                 for dx in -blend_radius..=blend_radius {
+                     let nx = x + dx;
+                     let nz = z + dz;
 
-                    for dz in -blend_radius..=blend_radius {
-                        for dx in -blend_radius..=blend_radius {
-                            let nx = x as i32 + dx;
-                            let nz = z as i32 + dz;
+                     // Check if neighbor coords (nx, nz) are within chunk bounds
+                     if nx >= 0 && nx < cs && nz >= 0 && nz < cs {
+                         let nidx = (nz * cs + nx) as usize; // Neighbor's linear index
+                         let distance_sq = (dx * dx + dz * dz) as f32;
 
-                            if nx >= 0 && nx < chunk_size as i32 && nz >= 0 && nz < chunk_size as i32 {
-                                let nidx = (nz as u32 * chunk_size + nx as u32) as usize;
-                                let distance = ((dx * dx + dz * dz) as f32).sqrt();
-                                let mut weight = (blend_radius as f32 - distance).max(0.0) / blend_radius as f32;
+                         // Use squared distance for falloff calculation if possible, sqrt only if needed
+                         // Example simple linear falloff (can be replaced with smoother falloff)
+                         let weight_factor = (blend_radius as f32 * blend_radius as f32 - distance_sq).max(0.0);
+                         if weight_factor <= 0.0 { continue; } // Skip if outside radius
 
-                                if let Some(ref noise_fn) = blend_noise_fn {
-                                    // **FIXED:** Calculate world coords for consistent blend noise
-                                    let world_x = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
-                                    let world_z = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
-                                    // Use a different scale for blend noise if desired
-                                    let noise_val = noise_fn.get([world_x as f64 * 0.01, world_z as f64 * 0.01]);
-                                    let noise_influence = (noise_val * 0.4) as f32; // Example influence range
-                                    weight = (weight + noise_influence).clamp(0.0, 1.0);
-                                }
+                         let mut weight = weight_factor / (blend_radius as f32 * blend_radius as f32); // Normalize base weight
 
-                                if weight > 0.001 {
-                                    total_weight += weight;
-                                    weighted_height_sum += original_heights[nidx] * weight;
-                                    blend_needed = true;
-                                }
-                            }
-                        }
-                    }
+                         // Apply noise modulation if available
+                         if let Some(ref noise_fn) = blend_noise_fn {
+                             // Use neighbor coords for noise calculation relative to chunk origin
+                             let world_nx = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
+                             let world_nz = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
+                             let noise_val = noise_fn.get([world_nx as f64 * 0.01, world_nz as f64 * 0.01]); // Adjust noise scale as needed
+                             let noise_influence = (noise_val * 0.4) as f32; // Example: Noise adjusts weight by +/- 40%
+                             weight = (weight + noise_influence).clamp(0.0, 1.0);
+                         }
 
-                    if blend_needed && total_weight > 0.001 {
-                        heightmap[idx] = weighted_height_sum / total_weight;
-                    }
-                }
-            }
+                         // Add neighbor's contribution
+                         if weight > 0.001 { // Use a small epsilon
+                             total_weight += weight;
+                             weighted_height_sum += original_heights[nidx] * weight;
+                             blend_needed_for_this_cell = true;
+                         }
+                     }
+                 }
+             }
+
+             // Update the heightmap if blending occurred
+             if blend_needed_for_this_cell && total_weight > 0.001 {
+                 heightmap[idx] = weighted_height_sum / total_weight;
+             }
+             // If no neighbors contributed weight, heightmap[idx] remains unchanged (original value)
         }
     }
 
