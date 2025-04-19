@@ -1,16 +1,15 @@
 use std::fs;
 use std::path::Path;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::sync::mpsc::{Sender, Receiver, channel}; // Add import
+use std::sync::mpsc::{Sender, Receiver, channel}; 
 use std::thread;
-use std::panic::{catch_unwind, AssertUnwindSafe}; // Added for panic catching
+use std::panic::{catch_unwind, AssertUnwindSafe}; // For panic catching
 use std::io::{Read, Write};
 
 
 use crate::terrain::chunk_manager::{ChunkPosition, ChunkResult};
-use crate::terrain::terrain_config::{TerrainConfigManager};
+use crate::terrain::terrain_config::TerrainConfigManager;
 use lru::LruCache;
 use std::num::NonZeroUsize; 
 use bincode;
@@ -37,9 +36,19 @@ pub struct ChunkData {
     pub position: ChunkPosition,
     pub heightmap: Vec<f32>,
     pub biome_ids: Vec<u8>,
+    pub mesh_geometry: Option<MeshGeometry>,
     // Add other data as needed
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MeshGeometry {
+    // Store as plain arrays for easy serialization
+    pub vertices: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub uvs: Vec<[f32; 2]>,
+    pub indices: Vec<i32>,
+
+}
 
 // ChunkStorage handles saving and loading chunks from disk
 pub struct ChunkStorage {
@@ -275,28 +284,31 @@ impl ChunkStorage {
     }
     
     // Queue a chunk to be saved asynchronously
-    pub fn queue_save_chunk(&self, position: ChunkPosition, heightmap: &[f32], biome_ids: &[u8]) {
-        let chunk_data = ChunkData {
-            position,
-            heightmap: heightmap.to_vec(),
-            biome_ids: biome_ids.to_vec(),
+    pub fn queue_save_chunk(&self, chunk_data: ChunkData) { // Accept full ChunkData
+        let position = chunk_data.position; // Get position needed for error msg
+        let request = IORequest {
+            position, // Use extracted position
+            request_type: IORequestType::Save(chunk_data), // chunk_data is moved here
         };
-        // Cache update is done by IO thread AFTER successful save. Send request.
-        let request = IORequest { position, request_type: IORequestType::Save(chunk_data) };
         if let Some(sender) = &self.io_request_sender {
+            // Send moves request. If it fails, use the position we already extracted.
             if let Err(e) = sender.send(request) {
-                eprintln!("Failed to send Save request for {:?}: {}", position, e);
+                eprintln!("Failed to send Save request for {:?}: {}", position, e); // Use extracted position
             }
         }
+
     }
-    
+
+
     // Queue a chunk to be loaded asynchronously
     pub fn queue_load_chunk(&self, position: ChunkPosition) {
         // Cache check is now done by the IO thread. Just send the request.
         let request = IORequest { position, request_type: IORequestType::Load };
         if let Some(sender) = &self.io_request_sender {
-            if let Err(e) = sender.send(request) {
-                eprintln!("Failed to send Load request for {:?}: {}", position, e);
+            // --- FIX: Extract position *before* moving request ---
+            let pos_for_error = request.position; // Copy position needed for error msg (ChunkPosition is Copy)
+            if let Err(e) = sender.send(request) { // request is moved here
+                eprintln!("Failed to send Load request for {:?}: {}", pos_for_error, e); // Use copied position
             }
         }
     }

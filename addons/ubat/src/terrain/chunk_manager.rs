@@ -13,7 +13,9 @@ use noise::NoiseFn; // Keep NoiseFn trait import
 
 
 // Use ChunkData from ChunkStorage
-use crate::threading::chunk_storage::{ChunkData, ChunkStorage};
+use crate::threading::chunk_storage::{ChunkData, MeshGeometry, ChunkStorage};
+
+use crate::terrain::chunk_controller::get_clamped_height; // Import helper if needed, or redefine here
 // Use ThreadPool (specifically for compute tasks, using the global pool)
 use crate::threading::thread_pool::{ThreadPool, global_thread_pool, get_or_init_global_pool};
 // Use BiomeManager and its thread-safe data
@@ -46,6 +48,89 @@ pub enum ChunkResult {
 
 
     // Saved(ChunkPosition), // Optional for now
+}
+
+// Helper function:
+// This function mirrors the calculation logic previously in ChunkController
+fn generate_mesh_geometry(heightmap: &[f32], chunk_size: u32) -> MeshGeometry {
+    if chunk_size == 0 || heightmap.is_empty() {
+        godot_warn!("generate_mesh_geometry called with invalid parameters. Returning empty geometry.");
+        return MeshGeometry {
+            vertices: vec![],
+            normals: vec![],
+            uvs: vec![],
+            indices: vec![],
+        };
+    }
+    let expected_len = (chunk_size * chunk_size) as usize;
+    if heightmap.len() != expected_len {
+        // Log error or handle appropriately
+        godot_error!("Heightmap size mismatch in generate_mesh_geometry! Expected {}, got {}", expected_len, heightmap.len());
+        // Return empty geometry or panic, depending on desired robustness
+        return MeshGeometry { vertices: vec![], normals: vec![], uvs: vec![], indices: vec![] };
+    }
+
+
+    let mut vertices_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
+    let mut uvs_vec: Vec<[f32; 2]> = Vec::with_capacity(expected_len);
+    let mut normals_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
+
+    // Vertices and UVs
+    for z in 0..chunk_size {
+        for x in 0..chunk_size {
+            let idx = (z * chunk_size + x) as usize;
+            let h = heightmap[idx];
+            vertices_vec.push([x as f32, h, z as f32]); // Store as array
+            uvs_vec.push([                               // Store as array
+                x as f32 / (chunk_size - 1).max(1) as f32,
+                z as f32 / (chunk_size - 1).max(1) as f32,
+            ]);
+        }
+    }
+
+
+    // Normals (using helper from ChunkController or redefined)
+    // Make sure get_clamped_height is accessible here
+    for z in 0..chunk_size {
+        for x in 0..chunk_size {
+            let h_l = get_clamped_height(x as i32 - 1, z as i32, heightmap, chunk_size);
+            let h_r = get_clamped_height(x as i32 + 1, z as i32, heightmap, chunk_size);
+            let h_d = get_clamped_height(x as i32, z as i32 - 1, heightmap, chunk_size);
+            let h_u = get_clamped_height(x as i32, z as i32 + 1, heightmap, chunk_size);
+            let dx = h_l - h_r;
+            let dz = h_d - h_u;
+
+            // Calculate Vector3 first for normalization
+            let normal_v = Vector3::new(dx, 2.0, dz).normalized();
+            normals_vec.push([normal_v.x, normal_v.y, normal_v.z]); // Store as array
+
+        }
+    }
+
+    // Indices
+    let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
+    let mut indices_vec = Vec::with_capacity(index_count);
+    for z in 0..chunk_size - 1 {
+        for x in 0..chunk_size - 1 {
+            let idx00 = (z * chunk_size + x) as i32;
+            let idx10 = idx00 + 1;
+            let idx01 = idx00 + chunk_size as i32;
+            let idx11 = idx01 + 1;
+            indices_vec.push(idx00);
+            indices_vec.push(idx10);
+            indices_vec.push(idx01);
+            indices_vec.push(idx10);
+            indices_vec.push(idx11);
+            indices_vec.push(idx01);
+        }
+    }
+
+    MeshGeometry {
+        vertices: vertices_vec,
+        normals: normals_vec,
+        uvs: uvs_vec,
+        indices: indices_vec,
+    }
 }
 
 
@@ -368,54 +453,52 @@ impl ChunkManager {
         noise_params_cache_handle: Arc<RwLock<HashMap<String, NoiseParameters>>>, // Renamed for clarity
         chunk_size: u32,
         sender: Sender<ChunkResult>,
-    ) {
-        // No need to get biome_data again, it's passed directly
-    
+    ) { 
         // --- Generation ---
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
         let mut biome_ids = vec![0u8; chunk_area];
     
-        // Lock noise cache for height params
-        let noise_cache_reader = noise_params_cache_handle.read().unwrap();
-    
-        for z in 0..chunk_size {
-            for x in 0..chunk_size {
+        { // Scope for noise cache lock
+            let noise_cache_reader = noise_params_cache_handle.read().unwrap();
+            for z in 0..chunk_size { for x in 0..chunk_size { /* ... */
                 let idx = (z * chunk_size + x) as usize;
                 let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
-    
-                // *** Use the enhanced get_biome_id from the passed biome_data Arc ***
                 let biome_id = biome_data.get_biome_id(world_x, world_z);
                 biome_ids[idx] = biome_id;
-    
-                // --- Height generation using noise cache (remains the same) ---
                 let biome_key = format!("{}", biome_id);
                 if let Some(params) = noise_cache_reader.get(&biome_key) {
-                    // Use Self::create_noise_function (the one for heights)
                     let noise_fn = Self::create_noise_function(params);
                     let height_val = noise_fn.get([world_x as f64, world_z as f64]);
-                    // TODO: Use biome-specific scaling from biome_data or parameters
-                    let height_scale = 15.0; // Example scale
+                    let height_scale = 4.0;
                     heightmap[idx] = (height_val * height_scale) as f32;
-                } else {
-                    // ... handle missing height noise params ...
-                    heightmap[idx] = 0.0;
-                }
-            }
-        }
-        drop(noise_cache_reader); // Drop lock
+                } else { heightmap[idx] = 0.0; }
+            }}
+        } // Lock dropped
     
-        // --- Blend heights (remains the same, uses generated biome_ids) ---
+        // --- Blend heights ---
         let blend_noise_params_for_heights = noise_params_cache_handle.read().unwrap().get("blend").cloned(); // Use blend params for height smoothing too?
         Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance(), blend_noise_params_for_heights, pos);
     
+        // --- MESH GENERATION ---
+        println!("ChunkManager Worker: Generating mesh geometry for {:?}", pos);
+        let geometry = generate_mesh_geometry(&heightmap, chunk_size); // Call the new helper
+
+        // --- CHUNK DATA CREATION ---
+        // Create ChunkData including the generated geometry
+        let chunk_data = ChunkData {
+            position: pos,
+            heightmap: heightmap, // heightmap is moved here
+            biome_ids: biome_ids, // biome_ids is moved here
+            mesh_geometry: Some(geometry), // Store the geometry
+        };
+
+
         // --- Save and Send Result ---
-        let heightmap_vec = heightmap;
-        let biome_ids_vec = biome_ids;
-        storage.queue_save_chunk(pos, &heightmap_vec, &biome_ids_vec);
-        let chunk_data = ChunkData { position: pos, heightmap: heightmap_vec, biome_ids: biome_ids_vec };
-        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
+        storage.queue_save_chunk(chunk_data.clone()); // Save still uses heightmap/biomes separately
+        // Send the *complete* ChunkData back
+        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) { // Send the data structure containing the mesh
              eprintln!("Error sending Generated result for {:?}: {}", pos, e);
         }
     }
@@ -486,6 +569,26 @@ impl ChunkManager {
         // Return true to indicate the request was initiated
         // Note: This doesn't mean the chunk is immediately available
         true
+    }
+
+    /// Attempts to retrieve ChunkData (including height, biomes, and potentially mesh)
+    /// directly from the underlying storage cache.
+    /// Returns None if the chunk is not ready or not found in the cache.
+    pub fn get_cached_chunk_data(&self, position_x: i32, position_z: i32) -> Option<ChunkData> {
+        let pos = ChunkPosition { x: position_x, z: position_z };
+        // Check readiness state first (optional, but good practice)
+        // Note: This read lock is brief
+        let is_ready = matches!(
+            self.chunk_states.read().unwrap().get(&pos),
+            Some(ChunkGenState::Ready(_))
+        );
+
+        if is_ready {
+            // Access storage cache directly
+             self.storage.get_data_from_cache(pos)
+        } else {
+            None // Not ready, so definitely not in cache in a usable state
+        }
     }
 
     // Height Blending Logic (Static)
