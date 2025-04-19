@@ -138,7 +138,6 @@ pub struct ThreadSafeBiomeData {
     world_height: f32,
     seed: u32,
     pub blend_distance: i32,
-    blend_noise_params: Option<NoiseParameters>, // Store blend noise config
 
     // Add reference to image data
     image_data: Vec<u8>,
@@ -156,6 +155,8 @@ pub struct ThreadSafeBiomeData {
     grid_width: usize,
     /// Height of the spatial grid in cells.
     grid_height: usize,
+
+    blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
 }
 
 #[derive(Clone)]
@@ -946,12 +947,12 @@ impl ThreadSafeBiomeData {
                 }
                 new_spatial_grid_indices_arc = Arc::new(grid_indices);
             } else {
-                 godot_error!("ThreadSafeBiomeData: BiomeManager spatial_grid is None during update!");
-                 new_points_arc = Arc::new(Vec::new());
-                 new_spatial_grid_indices_arc = Arc::new(Vec::new());
-                 new_grid_cell_size = 1.0; // Default
-                 new_grid_width = 0;
-                 new_grid_height = 0;
+                godot_error!("ThreadSafeBiomeData: BiomeManager spatial_grid is None during update!");
+                new_points_arc = Arc::new(Vec::new());
+                new_spatial_grid_indices_arc = Arc::new(Vec::new());
+                new_grid_cell_size = 1.0; // Default
+                new_grid_width = 0;
+                new_grid_height = 0;
             }
 
             // Assign the newly built data to self fields
@@ -972,14 +973,13 @@ impl ThreadSafeBiomeData {
                 self.image_data = img.get_data().to_vec();
             }
         }
-        self.blend_distance = biome_mgr.blend_distance;
-        let current_blend_params = noise_manager.get_parameters("biome_blend");
-        if self.blend_noise_params != current_blend_params {
-            godot_print!("ThreadSafeBiomeData: Updating blend noise parameters."); // Use println! if preferred
-            self.blend_noise_params = current_blend_params;
-            if self.blend_noise_params.is_none() {
-                godot_warn!("ThreadSafeBiomeData: 'biome_blend' noise parameters not found during update. Biome blending noise disabled."); // Use eprintln! if preferred
-            }
+        self.blend_distance = biome_mgr.blend_distance;        
+        let current_blend_fn = noise_manager.get_noise_function("biome_blend");
+        // Direct assignment is usually fine for Option<Arc<...>>
+        self.blend_noise_fn = current_blend_fn;
+        if self.blend_noise_fn.is_none() {
+            // Optional: reduce warning frequency if it's noisy
+            godot_warn!("ThreadSafeBiomeData: 'biome_blend' function not found during update.");
         }
     }
     
@@ -1034,7 +1034,7 @@ impl ThreadSafeBiomeData {
             grid_height = 0;
         }
 
-        // Copy image data (remains the same)
+        // Copy image data
         let mut image_data = Vec::new();
         let mut image_width = 0;
         let mut image_height = 0;
@@ -1044,10 +1044,10 @@ impl ThreadSafeBiomeData {
             image_data = img.get_data().to_vec();
         }
 
-        // Fetch Blend Noise Parameters (remains the same)
-        let blend_noise_params = noise_manager.get_parameters("biome_blend");
-        if blend_noise_params.is_none() {
-            godot_warn!("ThreadSafeBiomeData: Could not find 'biome_blend' noise parameters in NoiseManager. Biome blending noise disabled.");
+        // Use the getter from NoiseManager (assuming it exists as get_noise_function)
+        let blend_noise_fn = noise_manager.get_noise_function("biome_blend");
+        if blend_noise_fn.is_none() {
+            godot_warn!("ThreadSafeBiomeData: Could not find 'biome_blend' function in NoiseManager cache during creation. Biome blending noise disabled.");
         }
 
 
@@ -1057,7 +1057,6 @@ impl ThreadSafeBiomeData {
             world_height: biome_mgr.world_height,
             seed: biome_mgr.seed,
             blend_distance: biome_mgr.blend_distance,
-            blend_noise_params,
             image_data,
             image_width,
             image_height,
@@ -1066,41 +1065,8 @@ impl ThreadSafeBiomeData {
             grid_cell_size, // Use outer variable
             grid_width, // Use outer variable
             grid_height, // Use outer variable
+            blend_noise_fn,
         }
-    }
-
-    fn create_blend_noise_fn(params: &NoiseParameters) -> Option<Box<dyn noise::NoiseFn<f64, 2> + Send + Sync>> {
-        // Use noise-rs based on params. Adjust noise type as needed for blending.
-        // Example using simple Perlin:
-        let noise_fn = Perlin::new(params.seed)
-            .set_seed(params.seed); // Use the seed from params
-   
-        // Wrap with ScalePoint for frequency ONLY IF params represent simple noise.
-        // If params include fractal settings, use Fbm, RidgedMulti etc. like in ChunkManager.
-        // Let's assume simple Perlin scaled by frequency for blend noise for now.
-        // You might need to adjust this based on your actual blend noise settings.
-        let scaled_noise = noise::ScalePoint::new(noise_fn)
-            .set_scale(params.frequency as f64); // Apply frequency
-   
-        Some(Box::new(scaled_noise))
-   
-        // If using fractals for blending noise:
-        /*
-        match params.fractal_type {
-            // ... cases for Fbm<Perlin>, RidgedMulti<Perlin>, etc. ...
-            // Use params.frequency, params.fractal_octaves, etc.
-            RustFractalType::None => {
-                // Just Perlin scaled by frequency
-                let noise_fn = Perlin::new(params.seed);
-                let scaled_noise = noise::ScalePoint::new(noise_fn)
-                    .set_scale(params.frequency as f64);
-                Some(Box::new(scaled_noise))
-            }
-            _ => { // Handle FBM, Ridged etc.
-               // ... create Fbm<Perlin>::new(params.seed).set_frequency(...) etc. ...
-            }
-        }
-        */
     }
 
     // Helper for deterministic random value [0.0, 1.0) using ChaCha8Rng
@@ -1175,16 +1141,9 @@ impl ThreadSafeBiomeData {
   
     // Get biome ID at world coordinates
     pub fn get_biome_id(&self, world_x: f32, world_y: f32) -> u8 {
-        // Determine the target section for the query location
         let target_section_id = self.get_section_id(world_x, world_y);
-        if target_section_id == 0 { return 0; } // Undefined section
-
-        if self.points.is_empty() || self.grid_width == 0 || self.grid_height == 0 {
-            // Handle cases with no points or invalid grid
-            // Maybe return a default biome for the section? Needs design decision.
-            godot_warn!("get_biome_id called with no points or invalid grid for section {}.", target_section_id);
-            return 0; // Or find the section definition and return its first possible biome
-        }
+        if target_section_id == 0 { return 0; }
+        if self.points.is_empty() { return 0; } // Simplified check
 
         // --- Use Spatial Grid ---
         let mut closest1: Option<(usize, f32)> = None; // (point_index, dist_sq)
@@ -1241,47 +1200,35 @@ impl ThreadSafeBiomeData {
 
         // --- Process the closest points found ---
         if let (Some((p1_idx, dist1_sq)), Some((p2_idx, dist2_sq))) = (closest1, closest2) {
-            // Calculate real distances now for blending check
             let dist1 = dist1_sq.sqrt();
             let dist2 = dist2_sq.sqrt();
             let blend_dist_f32 = self.blend_distance as f32;
 
-            // Use the same blending logic as before
             if dist1 < blend_dist_f32 && (dist2 - dist1) < blend_dist_f32 {
-                // Blend noise calculation (using create_blend_noise_fn for now)
+                // --- USE cached blend_noise_fn ---
                 let mut noise_influence = 0.0;
-                if let Some(ref params) = self.blend_noise_params {
-                    if let Some(noise_fn) = Self::create_blend_noise_fn(params) { // Will be replaced in Step 4
-                         let noise_val = noise_fn.get([world_x as f64, world_y as f64]);
-                         let normalized_noise = (noise_val as f32 * 0.5) + 0.5;
-                         let noise_factor = 0.3;
-                         noise_influence = (normalized_noise - 0.5) * noise_factor;
-                    }
+                // Check the stored Option<Arc<...>>
+                if let Some(ref noise_fn_arc) = self.blend_noise_fn {
+                     let noise_val = noise_fn_arc.get([world_x as f64, world_y as f64]); // Use the Arc
+                     let normalized_noise = (noise_val as f32 * 0.5) + 0.5;
+                     let noise_factor = 0.3;
+                     noise_influence = (normalized_noise - 0.5) * noise_factor;
                 }
-                // Blend factor calculation
+                // --- END CHANGE ---
+
                 let blend_factor = (dist1 / blend_dist_f32).clamp(0.0, 1.0);
                 let adjusted_blend = (blend_factor + noise_influence).clamp(0.0, 1.0);
-
-                // Deterministic random choice
                 let rand_val = self.get_deterministic_random(world_x, world_y);
                 let p1_biome_id = self.points[p1_idx].biome_id;
                 let p2_biome_id = self.points[p2_idx].biome_id;
-
                 return if rand_val < adjusted_blend { p2_biome_id } else { p1_biome_id };
-
             } else {
-                // No blending needed, return closest point's biome
-                return self.points[p1_idx].biome_id;
+                return self.points[p1_idx].biome_id; // No blending
             }
-
         } else if let Some((p1_idx, _)) = closest1 {
-            // Only one relevant point found in the search area
-            return self.points[p1_idx].biome_id;
+            return self.points[p1_idx].biome_id; // Only one point found
         }
-
-        // Fallback if no relevant points found in search radius (should be rare if radius is sufficient)
-        // Find the absolute closest point in the section using a linear scan as a last resort?
-        // Or return a default for the section. Let's return 0 for now.
+        // Fallback
         godot_warn!("get_biome_id: No Voronoi points found in spatial grid search radius for section {}.", target_section_id);
         0
     }

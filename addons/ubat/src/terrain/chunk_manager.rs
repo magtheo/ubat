@@ -157,7 +157,7 @@ pub struct ChunkManager {
     is_thread_safe_data_ready: bool,
 
     // handle to the noise parameter cache
-    noise_params_cache: Option<Arc<RwLock<HashMap<String, NoiseParameters>>>>,
+    noise_functions_cache: Option<Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>>,
 
     // Configurable values
     render_distance: i32,
@@ -196,7 +196,7 @@ impl INode3D for ChunkManager {
             noise_manager: None,
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
             is_thread_safe_data_ready: false,
-            noise_params_cache: None, // Initialize as None
+            noise_functions_cache: None, // Initialize as None
             render_distance: 2, // TODO This overides terrain initalizer, and it shuold not
             chunk_size,
             last_unload_check: Instant::now(),
@@ -226,15 +226,17 @@ impl INode3D for ChunkManager {
             }
 
             // --- Link NoiseManager ---
-            let noise_manager_node = parent.get_node_as::<NoiseManager>("NoiseManager"); // Adjust path if needed
+            let noise_manager_node = parent.get_node_as::<NoiseManager>("NoiseManager");
             if noise_manager_node.is_instance_valid() {
-                godot_print!("ChunkManager: Linking NoiseManager");
-                self.noise_manager = Some(noise_manager_node);
-                // Get the Arc handle from NoiseManager
-                // self.noise_params_cache = Some(noise_manager_node.bind().get_noise_cache_handle());
+                println!("ChunkManager: Linking NoiseManager"); // Use println!
+                let nm_gd = noise_manager_node;
+                // Get the FUNCTION cache handle using the new NoiseManager getter
+                self.noise_functions_cache = Some(nm_gd.bind().get_function_cache_handle()); // <- Use new getter
+                self.noise_manager = Some(nm_gd); // Keep Gd if needed
             } else {
-                 godot_error!("ChunkManager: Could not find node 'NoiseManager'. Noise parameters will be unavailable.");
-                 self.noise_params_cache = None;
+                 eprintln!("ChunkManager: Could not find node 'NoiseManager'. Noise functions will be unavailable."); // Use eprintln!
+                 self.noise_functions_cache = None;
+                 self.noise_manager = None; // Ensure this is None too
             }
 
         } else {
@@ -354,18 +356,15 @@ impl ChunkManager {
         let sender_clone = self.result_sender.clone();
     
         // Fetch the noise parameter cache for height generation (still needed)
-        let noise_cache_handle = match &self.noise_manager {
-            Some(nm_gd) => Some(nm_gd.bind().get_noise_cache_handle()),
+        let noise_funcs_cache_handle = match &self.noise_functions_cache { // Use the correct field
+            Some(cache_arc) => Arc::clone(cache_arc), // Clone the Arc handle
             None => {
-                eprintln!("ChunkManager: Cannot queue generation for {:?}, NoiseManager is not available.", pos);
-                let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "NoiseManager unavailable".to_string()));
+                eprintln!("ChunkManager: Cannot queue generation for {:?}, Noise function cache is not available.", pos);
+                let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "Noise function cache unavailable".to_string()));
                 return;
             }
         };
-        // We already checked noise_manager is Some, so noise_cache_handle should also be Some
-         let noise_cache_handle = noise_cache_handle.unwrap();
-    
-    
+  
         self.compute_pool.read().unwrap().execute(move || {
             // --- Read the BiomeData Arc INSIDE the worker ---
             let biome_data_guard = biome_data_rwlock_arc.read().unwrap();
@@ -394,7 +393,7 @@ impl ChunkManager {
                 pos,
                 storage_clone,
                 biome_data, // Pass the Arc<ThreadSafeBiomeData>
-                noise_cache_handle, // Pass the noise cache handle for heights
+                noise_funcs_cache_handle, // Pass the noise cache handle for heights
                 chunk_size,
                 sender_clone,
             );
@@ -448,111 +447,74 @@ impl ChunkManager {
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        biome_data: Arc<ThreadSafeBiomeData>, // Changed type
-        noise_params_cache_handle: Arc<RwLock<HashMap<String, NoiseParameters>>>, // Renamed for clarity
+        biome_data: Arc<ThreadSafeBiomeData>,
+        // Accept function cache handle
+        noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
         chunk_size: u32,
         sender: Sender<ChunkResult>,
-    ) { 
-        // --- Generation ---
+    ) {
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
         let mut biome_ids = vec![0u8; chunk_area];
-    
-        { // Scope for noise cache lock
-            let noise_cache_reader = noise_params_cache_handle.read().unwrap();
-            for z in 0..chunk_size { for x in 0..chunk_size { /* ... */
+
+        // --- Use Function Cache ---
+        let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
+        // Pre-fetch blend noise function Arc
+        let blend_noise_fn_arc = noise_funcs_reader.get("biome_blend").cloned();
+        // --- End Use ---
+
+        for z in 0..chunk_size {
+            for x in 0..chunk_size {
                 let idx = (z * chunk_size + x) as usize;
                 let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
+
                 let biome_id = biome_data.get_biome_id(world_x, world_z);
                 biome_ids[idx] = biome_id;
+
+                // --- Height generation using cached FUNCTION ---
                 let biome_key = format!("{}", biome_id);
-                if let Some(params) = noise_cache_reader.get(&biome_key) {
-                    let noise_fn = Self::create_noise_function(params);
-                    let height_val = noise_fn.get([world_x as f64, world_z as f64]);
-                    let height_scale = 4.0;
-                    heightmap[idx] = (height_val * height_scale) as f32;
-                } else { heightmap[idx] = 0.0; }
-            }}
-        } // Lock dropped
-    
-        // --- Blend heights ---
-        let blend_noise_params_for_heights = noise_params_cache_handle.read().unwrap().get("blend").cloned(); // Use blend params for height smoothing too?
-        Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance(), blend_noise_params_for_heights, pos);
-    
-        // --- MESH GENERATION ---
-        println!("ChunkManager Worker: Generating mesh geometry for {:?}", pos);
-        let geometry = generate_mesh_geometry(&heightmap, chunk_size); // Call the new helper
-
-        // --- CHUNK DATA CREATION ---
-        // Create ChunkData including the generated geometry
-        let chunk_data = ChunkData {
-            position: pos,
-            heightmap: heightmap, // heightmap is moved here
-            biome_ids: biome_ids, // biome_ids is moved here
-            mesh_geometry: Some(geometry), // Store the geometry
-        };
-
-
-        // --- Save and Send Result ---
-        storage.queue_save_chunk(chunk_data.clone()); // Save still uses heightmap/biomes separately
-        // Send the *complete* ChunkData back
-        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) { // Send the data structure containing the mesh
-             eprintln!("Error sending Generated result for {:?}: {}", pos, e);
+                if let Some(noise_fn_arc) = noise_funcs_reader.get(&biome_key) {
+                     // Use the cached function Arc directly
+                     let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
+                     // REMOVED: Call to create_noise_function
+                     let height_scale = 4.0;
+                     heightmap[idx] = (height_val * height_scale) as f32;
+                     // TODO: Apply offset if needed - requires getting NoiseParameters too?
+                     // Maybe store (NoiseParameters, Arc<NoiseFn>) in cache? Or apply offset where noise is used.
+                } else {
+                     println!("Warning: Noise function for biome key '{}' not found.", biome_key);
+                     heightmap[idx] = 0.0;
+                }
+                // --- END CHANGE ---
+            }
         }
+        drop(noise_funcs_reader); // Drop read lock
+
+        // --- Pass function Arc to blend_heights ---
+        Self::blend_heights(
+            &mut heightmap,
+            &biome_ids,
+            chunk_size,
+            biome_data.blend_distance(),
+            blend_noise_fn_arc, // Pass Option<Arc<...>>
+            pos
+        );
+        // --- END CHANGE ---
+
+        // Generate mesh geometry (unchanged)
+        println!("ChunkManager Worker: Generating mesh geometry for {:?}", pos); // Use println
+        let geometry = generate_mesh_geometry(&heightmap, chunk_size);
+
+        // Create ChunkData (unchanged)
+        let chunk_data = ChunkData { /* ... */ position: pos, heightmap, biome_ids, mesh_geometry: Some(geometry) };
+
+        // Save and Send Result (unchanged)
+        storage.queue_save_chunk(chunk_data.clone());
+        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) { /* ... */ }
     }
 
 
-    // --- Helper function to create noise-rs NoiseFn ---
-    // (Needs careful implementation based on NoiseParameters struct and noise-rs library)
-    fn create_noise_function(params: &NoiseParameters) -> Box<dyn noise::NoiseFn<f64, 2> + Send + Sync> {
-        // Import necessary items INSIDE the function
-        use noise::{NoiseFn, Fbm, Perlin, Billow, RidgedMulti, ScalePoint, MultiFractal}; // Added Perlin here
-        use crate::terrain::noise::noise_parameters::{RustNoiseType, RustFractalType};
-
-        // Determine the base noise type explicitly
-        // We default to Perlin here based on previous logic, adjust if needed
-        // Note: noise-rs doesn't have built-in Simplex, consider external crates or fallback
-        let base_noise_generator = Perlin::new(params.seed as u32);
-
-        // Create the final noise function, potentially wrapping the base with fractals
-        let final_noise: Box<dyn NoiseFn<f64, 2> + Send + Sync> = match params.fractal_type {
-            RustFractalType::Fbm => {
-                // **FIXED:** Specify <Perlin> for Fbm
-                Box::new(Fbm::<Perlin>::new(params.seed as u32)
-                    .set_frequency(params.frequency as f64)
-                    .set_octaves(params.fractal_octaves as usize)
-                    .set_lacunarity(params.fractal_lacunarity as f64)
-                    .set_persistence(params.fractal_gain as f64))
-            }
-            RustFractalType::Ridged => {
-                 // **FIXED:** Specify <Perlin> for RidgedMulti
-                Box::new(RidgedMulti::<Perlin>::new(params.seed as u32)
-                    .set_frequency(params.frequency as f64)
-                    .set_octaves(params.fractal_octaves as usize)
-                    .set_lacunarity(params.fractal_lacunarity as f64))
-                    // Add .set_attenuation() if needed based on Godot's Ridged settings
-            }
-            RustFractalType::PingPong => {
-                 // **FIXED:** Specify <Perlin> for Billow
-                Box::new(Billow::<Perlin>::new(params.seed as u32)
-                    .set_frequency(params.frequency as f64)
-                    .set_octaves(params.fractal_octaves as usize)
-                    .set_lacunarity(params.fractal_lacunarity as f64)
-                    .set_persistence(params.fractal_gain as f64))
-            }
-            RustFractalType::None => {
-                 // No fractal, just use the base noise scaled by frequency
-                 Box::new(ScalePoint::new(base_noise_generator).set_scale(params.frequency as f64))
-            }
-        };
-
-        // TODO: Apply Offset - Example: Add offset AFTER getting noise value in generate_and_save_chunk
-        // TODO: Apply Domain Warp - Wrap `final_noise` with noise-rs domain warp modules if needed
-
-        final_noise
-    }
-       
     #[func]
     pub fn get_chunk(&mut self, x: i32, z: i32) -> bool {
         let pos = ChunkPosition { x, z };
@@ -596,118 +558,55 @@ impl ChunkManager {
         biome_ids: &[u8],
         chunk_size: u32,
         blend_distance: i32,
-        blend_noise_params: Option<NoiseParameters>, // Keep param for now (Step 4 will refine)
+        // Accept Option<Arc<NoiseFn>> directly
+        blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
         chunk_pos: ChunkPosition,
     ) {
         if blend_distance <= 0 || chunk_size == 0 { return; }
 
-        let cs = chunk_size as i32;
-        let cs_usize = chunk_size as usize;
-        let blend_radius = blend_distance.max(1); // Kernel radius for blending calc
-        let max_idx = (chunk_size * chunk_size - 1) as usize;
-
-        // --- Pass 1: Identify indices near biome boundaries ---
+        let cs = chunk_size as i32; let cs_usize = chunk_size as usize;
+        let blend_radius = blend_distance.max(1);
         let mut boundary_indices = HashSet::<usize>::new();
 
-        for z in 0..cs {
-            for x in 0..cs {
-                let current_idx = (z * cs + x) as usize;
-                let current_biome = biome_ids[current_idx];
+        if boundary_indices.is_empty() { return; }
 
-                // Check right neighbor
-                if x + 1 < cs {
-                    let right_idx = current_idx + 1;
-                    if biome_ids[right_idx] != current_biome {
-                        boundary_indices.insert(current_idx);
-                        boundary_indices.insert(right_idx);
-                    }
-                }
-                // Check bottom neighbor
-                if z + 1 < cs {
-                    let bottom_idx = current_idx + cs_usize;
-                    if bottom_idx <= max_idx && biome_ids[bottom_idx] != current_biome {
-                         boundary_indices.insert(current_idx);
-                         boundary_indices.insert(bottom_idx);
-                    }
-                }
-                 // Optional: Check diagonals if needed for smoother diagonal borders
-                 // if x + 1 < cs && z + 1 < cs {
-                 //     let diag_idx = current_idx + cs_usize + 1;
-                 //     if diag_idx <= max_idx && biome_ids[diag_idx] != current_biome {
-                 //          boundary_indices.insert(current_idx);
-                 //          boundary_indices.insert(diag_idx);
-                 //          boundary_indices.insert(current_idx + 1); // Also mark adjacent
-                 //          boundary_indices.insert(current_idx + cs_usize); // Also mark adjacent
-                 //     }
-                 // }
-            }
-        }
-
-        // If no boundaries detected, skip blending
-        if boundary_indices.is_empty() {
-             // println!("Chunk {:?}: No biome boundaries found, skipping blend.", chunk_pos); // Optional log
-            return;
-        }
-        // println!("Chunk {:?}: Found {} boundary indices to blend.", chunk_pos, boundary_indices.len()); // Optional log
-
-        // --- Pass 2: Blend only the boundary indices ---
-        let original_heights = heightmap.to_vec(); // Still need original values
-        // TODO (Step 4): Get pre-built noise function Arc instead of creating per call
-        let blend_noise_fn = blend_noise_params.as_ref().map(Self::create_noise_function);
+        let original_heights = heightmap.to_vec();
 
         for idx in boundary_indices {
-             // Get 2D coordinates from linear index
-             let x = (idx % cs_usize) as i32;
-             let z = (idx / cs_usize) as i32;
+             let x = (idx % cs_usize) as i32; let z = (idx / cs_usize) as i32;
+             let mut total_weight = 0.0; let mut weighted_height_sum = 0.0;
+             let mut blend_needed_for_this_cell = false;
 
-             // --- Perform the blending calculation (similar to original inner loop) ---
-             let mut total_weight = 0.0;
-             let mut weighted_height_sum = 0.0;
-             let mut blend_needed_for_this_cell = false; // Check if any neighbors contribute
-
-             // Iterate in a square kernel around the boundary cell (x, z)
              for dz in -blend_radius..=blend_radius {
                  for dx in -blend_radius..=blend_radius {
-                     let nx = x + dx;
-                     let nz = z + dz;
+                     // ... (neighbor index calculation) ...
+                      let nx = x + dx; let nz = z + dz;
+                      if nx >= 0 && nx < cs && nz >= 0 && nz < cs {
+                           let nidx = (nz * cs + nx) as usize;
+                           // ... (calculate base weight) ...
+                           let distance_sq = (dx * dx + dz * dz) as f32;
+                           let weight_factor = (blend_radius as f32 * blend_radius as f32 - distance_sq).max(0.0);
+                           if weight_factor <= 0.0 { continue; }
+                           let mut weight = weight_factor / (blend_radius as f32 * blend_radius as f32);
 
-                     // Check if neighbor coords (nx, nz) are within chunk bounds
-                     if nx >= 0 && nx < cs && nz >= 0 && nz < cs {
-                         let nidx = (nz * cs + nx) as usize; // Neighbor's linear index
-                         let distance_sq = (dx * dx + dz * dz) as f32;
+                           // --- Use passed function Arc ---
+                           if let Some(ref noise_fn_arc) = blend_noise_fn { // Use the passed Option<Arc>
+                               let world_nx = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
+                               let world_nz = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
+                               let noise_val = noise_fn_arc.get([world_nx as f64 * 0.01, world_nz as f64 * 0.01]);
+                               let noise_influence = (noise_val * 0.4) as f32;
+                               weight = (weight + noise_influence).clamp(0.0, 1.0);
+                           }
+                           // --- END CHANGE ---
 
-                         // Use squared distance for falloff calculation if possible, sqrt only if needed
-                         // Example simple linear falloff (can be replaced with smoother falloff)
-                         let weight_factor = (blend_radius as f32 * blend_radius as f32 - distance_sq).max(0.0);
-                         if weight_factor <= 0.0 { continue; } // Skip if outside radius
-
-                         let mut weight = weight_factor / (blend_radius as f32 * blend_radius as f32); // Normalize base weight
-
-                         // Apply noise modulation if available
-                         if let Some(ref noise_fn) = blend_noise_fn {
-                             // Use neighbor coords for noise calculation relative to chunk origin
-                             let world_nx = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
-                             let world_nz = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
-                             let noise_val = noise_fn.get([world_nx as f64 * 0.01, world_nz as f64 * 0.01]); // Adjust noise scale as needed
-                             let noise_influence = (noise_val * 0.4) as f32; // Example: Noise adjusts weight by +/- 40%
-                             weight = (weight + noise_influence).clamp(0.0, 1.0);
-                         }
-
-                         // Add neighbor's contribution
-                         if weight > 0.001 { // Use a small epsilon
-                             total_weight += weight;
-                             weighted_height_sum += original_heights[nidx] * weight;
-                             blend_needed_for_this_cell = true;
-                         }
-                     }
+                           if weight > 0.001 { /* ... accumulate ... */ total_weight += weight; weighted_height_sum += original_heights[nidx] * weight; blend_needed_for_this_cell = true; }
+                      }
                  }
              }
 
-             // Update the heightmap if blending occurred
              if blend_needed_for_this_cell && total_weight > 0.001 {
                  heightmap[idx] = weighted_height_sum / total_weight;
              }
-             // If no neighbors contributed weight, heightmap[idx] remains unchanged (original value)
         }
     }
 
@@ -868,7 +767,7 @@ impl ChunkManager {
                 if let Some(ref mut existing_data_arc) = *current_data_guard {
                     // Try to get mutable access to update existing data efficiently
                     if let Some(existing_data_mut) = Arc::get_mut(existing_data_arc) {
-                         existing_data_mut.update_from_biome_manager(&biome_mgr_bind, &noise_mgr_bind);
+                        existing_data_mut.update_from_biome_manager(&biome_mgr_bind, &noise_mgr_bind);
                     } else {
                         // If shared elsewhere, clone and update (less efficient)
                         let mut cloned_data = (**existing_data_arc).clone(); // Requires ThreadSafeBiomeData to derive Clone
