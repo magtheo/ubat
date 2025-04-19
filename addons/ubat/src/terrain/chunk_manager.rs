@@ -70,6 +70,7 @@ pub struct ChunkManager {
     biome_manager: Option<Gd<BiomeManager>>,
     noise_manager: Option<Gd<NoiseManager>>, // Add this
     thread_safe_biome_data: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
+    is_thread_safe_data_ready: bool,
 
     // handle to the noise parameter cache
     noise_params_cache: Option<Arc<RwLock<HashMap<String, NoiseParameters>>>>,
@@ -110,6 +111,7 @@ impl INode3D for ChunkManager {
             biome_manager: None,
             noise_manager: None,
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
+            is_thread_safe_data_ready: false,
             noise_params_cache: None, // Initialize as None
             render_distance: 2, // TODO This overides terrain initalizer, and it shuold not
             chunk_size,
@@ -130,7 +132,6 @@ impl INode3D for ChunkManager {
                     godot_print!("ChunkManager: BiomeManager is initialized.");
                     // Assign if ready (original simple assignment should work now)
                     self.biome_manager = Some(biome_manager_node.clone());
-                    self.update_thread_safe_biome_data();
                 } else {
                     godot_error!("ChunkManager: Found 'BiomeManager', but it's not initialized yet.");
                     // biome_manager remains None
@@ -164,6 +165,25 @@ impl INode3D for ChunkManager {
     }
 
     fn process(&mut self, _delta: f64) {
+        
+        // --- Initialization Check (at the beginning of process) ---
+        if !self.is_thread_safe_data_ready {
+            // Attempt to initialize/update if managers seem ready
+            if self.biome_manager.is_some() && self.noise_manager.is_some() {
+                // Call the update function (it has internal checks for None)
+                self.update_thread_safe_biome_data();
+
+                // Check if the update was successful by reading the value
+                if self.thread_safe_biome_data.read().unwrap().is_some() {
+                     println!("ChunkManager: ThreadSafeBiomeData successfully initialized/updated in process."); // Use println!
+                     self.is_thread_safe_data_ready = true; // Set flag only on success
+                } else {
+                     // Optional: Log that managers are present but data update failed
+                     // eprintln!("ChunkManager process: Managers linked, but ThreadSafeBiomeData update still results in None.");
+                }
+            } // Else: Managers not linked yet, will try again next frame
+        }
+        
         // Process results received from background tasks
         let mut result_count = 0;
         loop {
@@ -240,7 +260,7 @@ impl ChunkManager {
     }
 
     fn queue_generation(&self, pos: ChunkPosition) {
-        godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
+        println!("ChunkManager: Queuing generation task for {:?}", pos);
         let storage_clone = Arc::clone(&self.storage);
         // --- Clone the Arc containing the Option<Arc<ThreadSafeBiomeData>> ---
         let biome_data_rwlock_arc = Arc::clone(&self.thread_safe_biome_data);
@@ -253,7 +273,7 @@ impl ChunkManager {
         let noise_cache_handle = match &self.noise_manager {
             Some(nm_gd) => Some(nm_gd.bind().get_noise_cache_handle()),
             None => {
-                godot_error!("ChunkManager: Cannot queue generation for {:?}, NoiseManager is not available.", pos);
+                eprintln!("ChunkManager: Cannot queue generation for {:?}, NoiseManager is not available.", pos);
                 let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "NoiseManager unavailable".to_string()));
                 return;
             }
@@ -275,11 +295,10 @@ impl ChunkManager {
     
             // --- Check if biome data is available ---
             if biome_data_clone.is_none() {
-                let err_msg = format!("BiomeData unavailable for generation task at {:?}", pos);
-                // Send the original String
+                let err_msg = format!("BiomeData unavailable for generation task at {:?} (ChunkManager's shared data is None)", pos);                // Send the original String
                 let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, err_msg.clone())); // Clone err_msg here
                 // Log using the original still-owned string
-                godot_error!("{}", err_msg);
+                eprintln!("{}", err_msg);
                 return;
             }
             

@@ -13,6 +13,7 @@ use crate::terrain::chunk_manager::{ChunkPosition, ChunkResult};
 use crate::terrain::terrain_config::{TerrainConfigManager};
 use lru::LruCache;
 use std::num::NonZeroUsize; 
+use bincode;
 
 
 // Enum to differentiate request types
@@ -37,11 +38,6 @@ pub struct ChunkData {
     pub heightmap: Vec<f32>,
     pub biome_ids: Vec<u8>,
     // Add other data as needed
-}
-
-struct LoadRequest {
-    position: ChunkPosition,
-    sender: Sender<ChunkResult>,
 }
 
 
@@ -103,8 +99,8 @@ impl ChunkStorage {
 
         // Validate and create NonZeroUsize for LruCache capacity
         let lru_capacity = NonZeroUsize::new(cache_limit).unwrap_or_else(|| {
-             eprintln!("Chunk cache size config is zero or invalid, defaulting cache capacity to 1.");
-             NonZeroUsize::new(1).expect("Default LRU capacity of 1 failed unexpectedly")
+            eprintln!("Chunk cache size config is zero or invalid, defaulting cache capacity to 1.");
+            NonZeroUsize::new(1).expect("Default LRU capacity of 1 failed unexpectedly")
         });
 
         // Create the channel for sending requests TO the IO thread
@@ -151,15 +147,15 @@ impl ChunkStorage {
 
                             // --- Cache miss - Load from disk ---
                             // println!("IO Thread: Cache miss for {:?}. Attempting disk load.", pos);
-                            let path_str = format!("{}/chunk_{}_{}.json", save_dir_clone, pos.x, pos.z);
+                            let path_str = format!("{}/chunk_{}_{}.chunk", save_dir_clone, pos.x, pos.z);
                             let path = Path::new(&path_str);
 
                             // Standard Rust file IO
                             let load_outcome = match fs::File::open(path) {
                                 Ok(mut file) => {
-                                    let mut contents = String::new();
-                                    match file.read_to_string(&mut contents) {
-                                        Ok(_) => match serde_json::from_str::<ChunkData>(&contents) {
+                                    let mut buffer = Vec::new();
+                                    match file.read_to_end(&mut buffer) {
+                                        Ok(_) => match bincode::deserialize::<ChunkData>(&buffer) {
                                             Ok(data) => Ok(data),
                                             Err(e) => Err(format!("Deserialize error: {}", e)),
                                         },
@@ -200,22 +196,22 @@ impl ChunkStorage {
                         IORequestType::Save(chunk_data) => {
                             let pos = request.position;
                             // println!("IO Thread: Processing Save for {:?}", pos);
-                            let path_str = format!("{}/chunk_{}_{}.json", save_dir_clone, pos.x, pos.z);
+                            let path_str = format!("{}/chunk_{}_{}.chunk", save_dir_clone, pos.x, pos.z);
                             let path = Path::new(&path_str);
 
                             // Ensure parent directory exists (optional, create_dir_all did this)
                             // if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
 
-                            match serde_json::to_string_pretty(&chunk_data) { // Use pretty print for readability
-                                Ok(json) => match fs::File::create(path) {
+                            match bincode::serialize(&chunk_data) { // Use pretty print for readability
+                                Ok(bytes) => match fs::File::create(path) {
                                     Ok(mut file) => {
-                                        if let Err(e) = file.write_all(json.as_bytes()) {
+                                        if let Err(e) = file.write_all(&bytes) {
                                             eprintln!("IO Thread: Failed to write to chunk file {}: {}", path_str, e);
                                         } else {
                                             // println!("IO Thread: Successfully wrote chunk {:?} to {}.", pos, path_str);
                                             // Update cache AFTER successful save
                                             if let Ok(mut cache_w) = cache_arc_thread.write() {
-                                                cache_w.push(pos, chunk_data.clone()); // Add/Update in LRU
+                                                cache_w.push(pos, chunk_data); // Add/Update in LRU
                                             } else {
                                                 eprintln!("IO Thread: Cache write lock poisoned updating cache for saved {:?}", pos);
                                             }
@@ -261,7 +257,7 @@ impl ChunkStorage {
         
     // Make this method public
     pub fn get_chunk_path(&self, position: ChunkPosition) -> String {
-        format!("{}/chunk_{}_{}.json", self.save_dir, position.x, position.z)
+        format!("{}/chunk_{}_{}.chunk", self.save_dir, position.x, position.z)
     }
     
     // Check if a chunk exists in storage
