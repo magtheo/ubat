@@ -7,7 +7,7 @@ use godot::prelude::*;
 use crate::terrain::GenerationRules;
 use crate::terrain::{BiomeManager, ChunkManager};
 use crate::core::event_bus::EventBus;
-use crate::core::config_manager::{GameConfiguration, GameModeConfig, WorldSize};
+use crate::config::config_manager::{GameConfiguration, GameModeConfig, WorldSize};
 
 
 // Unique identifier for world entities

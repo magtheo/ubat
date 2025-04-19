@@ -1,27 +1,34 @@
-# World Generation Parameters
-world_seed = 12345
-world_size = { width = 10000, height = 10000 }
+debug_mode = false
 
-# Generation rules
-[generation_rules]
-terrain_octaves = 6
-terrain_scale = 100.0
-terrain_persistence = 0.5
-terrain_lacunarity = 2.0
-biome_blend_distance = 100.0
-biome_transition_noise = 0.2
-feature_density = 0.1
+[world]
+seed = 12345
+width = 10000
+height = 10000
+# generation_rules would likely be a nested table matching your struct
 
-
-# Network Configuration
 [network]
+default_port = 7878
 max_players = 64
-server_port = 7878
-connection_timeout = 5000
+connection_timeout_ms = 5000
 
-# Game Mode (one of: Standalone, Host, Client)
-#game_mode = "Standalone"  # Can be "Standalone", "Host", or "Client"
+[terrain]
+max_threads = 7 # Example: Default based on detection or a sensible value
+chunk_size = 32
+blend_distance = 400.0
+use_parallel_processing = true
+chunk_cache_size = 600
+chunks_per_frame = 4
+render_distance = 2 # Moved from terrain_initializer
 
-# Custom settings
-[custom_settings]
-# Any additional settings can go here
+[terrain.noise_paths]
+"1" = "res://project/terrain/noise/corralNoise.tres"
+"2" = "res://project/terrain/noise/sandNoise.tres"
+"3" = "res://project/terrain/noise/rockNoise.tres"
+"4" = "res://project/terrain/noise/kelpNoise.tres"
+"5" = "res://project/terrain/noise/lavaRockNoise.tres"
+"blend" = "res://project/terrain/noise/blendNoise.tres"
+"biome_blend" = "res://project/terrain/noise/blendNoise.tres"
+"section" = "res://project/terrain/noise/sectionNoise.tres"
+
+# [custom_settings] # If needed
+# my_custom_value = "example"

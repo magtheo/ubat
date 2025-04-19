@@ -1,11 +1,12 @@
 // File: src/core/initialization/world_initializer.rs
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::error::Error;
 use std::fmt;
+use std::collections::HashMap;
 
 use crate::core::event_bus::EventBus;
-use crate::core::config_manager::{ConfigurationManager, GameConfiguration};
+use crate::config::config_manager::{ConfigurationManager, GameConfiguration};
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
 use crate::initialization::world::TerrainInitializer;
 use crate::networking::network_manager::{NetworkHandler, NetworkMode};
@@ -45,9 +46,9 @@ impl From<String> for WorldInitError {
 
 pub struct WorldInitializer {
     // Core dependencies
-    config_manager: Arc<Mutex<ConfigurationManager>>,
+    config_manager: Arc<RwLock<ConfigurationManager>>,
     event_bus: Arc<EventBus>,
-    
+
     // Initialized systems
     world_manager: Option<Arc<Mutex<WorldStateManager>>>,
     terrain_initializer: Option<TerrainInitializer>,
@@ -60,7 +61,7 @@ pub struct WorldInitializer {
 
 impl WorldInitializer {
     pub fn new(
-        config_manager: Arc<Mutex<ConfigurationManager>>, 
+        config_manager: Arc<RwLock<ConfigurationManager>>, 
         event_bus: Arc<EventBus>
     ) -> Self {
         Self {
@@ -113,18 +114,19 @@ impl WorldInitializer {
     fn initialize_world_manager(&mut self) -> Result<(), WorldInitError> {
         println!("WorldInitializer: Initializing world state manager");
         
-        // Get configuration
+        // Get configuration from the global manager
         let world_config = {
-            let config_manager = self.config_manager.lock()
-                .map_err(|_| WorldInitError::ConfigError("Failed to lock config manager".to_string()))?;
-            
-            let game_config = config_manager.get_config();
-            
+            // Lock the global config manager for reading
+            let config_manager_guard = self.config_manager.read()
+                .map_err(|_| WorldInitError::ConfigError("Failed to lock global config manager for reading".to_string()))?;
+
+            let game_config: &GameConfiguration = config_manager_guard.get_config(); // Get immutable ref
+
             // Convert from GameConfiguration to WorldStateConfig
             WorldStateConfig {
                 seed: game_config.world_seed,
                 world_size: (game_config.world_size.width, game_config.world_size.height),
-                generation_parameters: game_config.generation_rules.clone(),
+                generation_parameters: game_config.generation_rules.clone(), // Clone rules
             }
         };
         
@@ -156,25 +158,25 @@ impl WorldInitializer {
     fn initialize_terrain_systems(&mut self) -> Result<TerrainSystemContext, WorldInitError> {
         println!("WorldInitializer: Initializing terrain systems");
         
+        // Get seed, world size, and noise paths from the global config
+        let (seed, world_size, noise_paths) = {
+            let config_manager_guard = self.config_manager.read()
+                .map_err(|_| WorldInitError::ConfigError("Failed to lock global config manager for reading terrain data".to_string()))?;
+            let game_config = config_manager_guard.get_config();
+            (
+                game_config.world_seed,
+                (game_config.world_size.width, game_config.world_size.height),
+                game_config.terrain.noise_paths.clone() // Clone the noise paths map
+            )
+       };
+
         // Create TerrainInitializer
         let mut terrain_init = TerrainInitializer::new();
-        
-        // Configure it based on world configuration
-        let (seed, world_size) = {
-            if let Some(world_manager) = &self.world_manager {
-                let world_mgr = world_manager.lock()
-                    .map_err(|_| WorldInitError::WorldStateError("Failed to lock world manager".to_string()))?;
-                
-                let config = world_mgr.get_config();
-                (config.seed, config.world_size)
-            } else {
-                return Err(WorldInitError::TerrainError("World manager not initialized".to_string()));
-            }
-        };
-        
+
         // Set up terrain initializer
         terrain_init.set_seed(seed as u32);
         terrain_init.set_world_dimensions(world_size.0 as f32, world_size.1 as f32);
+        terrain_init.set_noise_paths(noise_paths); // <-- Pass the noise paths // TODO: Noise paths should not be stored in the config toml file.
         
         // Initialize terrain systems
         terrain_init.initialize_terrain_system()

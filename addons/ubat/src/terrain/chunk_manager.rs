@@ -13,7 +13,9 @@ use noise::NoiseFn; // Keep NoiseFn trait import
 
 
 // Use ChunkData from ChunkStorage
-use crate::threading::chunk_storage::{ChunkData, ChunkStorage};
+use crate::threading::chunk_storage::{ChunkData, MeshGeometry, ChunkStorage};
+
+use crate::terrain::chunk_controller::get_clamped_height; // Import helper if needed, or redefine here
 // Use ThreadPool (specifically for compute tasks, using the global pool)
 use crate::threading::thread_pool::{ThreadPool, global_thread_pool, get_or_init_global_pool};
 // Use BiomeManager and its thread-safe data
@@ -48,6 +50,89 @@ pub enum ChunkResult {
     // Saved(ChunkPosition), // Optional for now
 }
 
+// Helper function:
+// This function mirrors the calculation logic previously in ChunkController
+fn generate_mesh_geometry(heightmap: &[f32], chunk_size: u32) -> MeshGeometry {
+    if chunk_size == 0 || heightmap.is_empty() {
+        godot_warn!("generate_mesh_geometry called with invalid parameters. Returning empty geometry.");
+        return MeshGeometry {
+            vertices: vec![],
+            normals: vec![],
+            uvs: vec![],
+            indices: vec![],
+        };
+    }
+    let expected_len = (chunk_size * chunk_size) as usize;
+    if heightmap.len() != expected_len {
+        // Log error or handle appropriately
+        godot_error!("Heightmap size mismatch in generate_mesh_geometry! Expected {}, got {}", expected_len, heightmap.len());
+        // Return empty geometry or panic, depending on desired robustness
+        return MeshGeometry { vertices: vec![], normals: vec![], uvs: vec![], indices: vec![] };
+    }
+
+
+    let mut vertices_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
+    let mut uvs_vec: Vec<[f32; 2]> = Vec::with_capacity(expected_len);
+    let mut normals_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
+
+    // Vertices and UVs
+    for z in 0..chunk_size {
+        for x in 0..chunk_size {
+            let idx = (z * chunk_size + x) as usize;
+            let h = heightmap[idx];
+            vertices_vec.push([x as f32, h, z as f32]); // Store as array
+            uvs_vec.push([                               // Store as array
+                x as f32 / (chunk_size - 1).max(1) as f32,
+                z as f32 / (chunk_size - 1).max(1) as f32,
+            ]);
+        }
+    }
+
+
+    // Normals (using helper from ChunkController or redefined)
+    // Make sure get_clamped_height is accessible here
+    for z in 0..chunk_size {
+        for x in 0..chunk_size {
+            let h_l = get_clamped_height(x as i32 - 1, z as i32, heightmap, chunk_size);
+            let h_r = get_clamped_height(x as i32 + 1, z as i32, heightmap, chunk_size);
+            let h_d = get_clamped_height(x as i32, z as i32 - 1, heightmap, chunk_size);
+            let h_u = get_clamped_height(x as i32, z as i32 + 1, heightmap, chunk_size);
+            let dx = h_l - h_r;
+            let dz = h_d - h_u;
+
+            // Calculate Vector3 first for normalization
+            let normal_v = Vector3::new(dx, 2.0, dz).normalized();
+            normals_vec.push([normal_v.x, normal_v.y, normal_v.z]); // Store as array
+
+        }
+    }
+
+    // Indices
+    let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
+    let mut indices_vec = Vec::with_capacity(index_count);
+    for z in 0..chunk_size - 1 {
+        for x in 0..chunk_size - 1 {
+            let idx00 = (z * chunk_size + x) as i32;
+            let idx10 = idx00 + 1;
+            let idx01 = idx00 + chunk_size as i32;
+            let idx11 = idx01 + 1;
+            indices_vec.push(idx00);
+            indices_vec.push(idx10);
+            indices_vec.push(idx01);
+            indices_vec.push(idx10);
+            indices_vec.push(idx11);
+            indices_vec.push(idx01);
+        }
+    }
+
+    MeshGeometry {
+        vertices: vertices_vec,
+        normals: normals_vec,
+        uvs: uvs_vec,
+        indices: indices_vec,
+    }
+}
+
 
 // Constants
 const UNLOAD_CHECK_INTERVAL: Duration = Duration::from_secs(5); // How often to check for unloading
@@ -68,7 +153,9 @@ pub struct ChunkManager {
     compute_pool: Arc<RwLock<ThreadPool>>,
     chunk_states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>,
     biome_manager: Option<Gd<BiomeManager>>,
+    noise_manager: Option<Gd<NoiseManager>>, // Add this
     thread_safe_biome_data: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
+    is_thread_safe_data_ready: bool,
 
     // handle to the noise parameter cache
     noise_params_cache: Option<Arc<RwLock<HashMap<String, NoiseParameters>>>>,
@@ -89,10 +176,13 @@ impl INode3D for ChunkManager {
         let storage = Arc::new(ChunkStorage::new("user://terrain_data", tx.clone()));
         let compute_pool = get_or_init_global_pool(); // Use global pool
 
-        let chunk_size = if let Some(config_arc) = TerrainConfigManager::get_config() {
-            config_arc.read().map_or(32, |guard| guard.chunk_size())
-        } else {
-            32 // Default if config not ready
+        let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+        let chunk_size = match config_arc.read() { // Lock it
+            Ok(guard) => guard.chunk_size, // Access field
+            Err(_) => {
+                godot_error!("ChunkManager::init: Failed to read terrain config lock for chunk size. Using default 32.");
+                32 // Default if lock fails
+            }
         };
 
         ChunkManager {
@@ -104,9 +194,11 @@ impl INode3D for ChunkManager {
 
             chunk_states: Arc::new(RwLock::new(HashMap::new())),
             biome_manager: None,
+            noise_manager: None,
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
+            is_thread_safe_data_ready: false,
             noise_params_cache: None, // Initialize as None
-            render_distance: 4, // TODO This overides terrain initalizer, and it shuold not
+            render_distance: 2, // TODO This overides terrain initalizer, and it shuold not
             chunk_size,
             last_unload_check: Instant::now(),
         }
@@ -125,7 +217,6 @@ impl INode3D for ChunkManager {
                     godot_print!("ChunkManager: BiomeManager is initialized.");
                     // Assign if ready (original simple assignment should work now)
                     self.biome_manager = Some(biome_manager_node.clone());
-                    self.update_thread_safe_biome_data();
                 } else {
                     godot_error!("ChunkManager: Found 'BiomeManager', but it's not initialized yet.");
                     // biome_manager remains None
@@ -138,9 +229,10 @@ impl INode3D for ChunkManager {
             // --- Link NoiseManager ---
             let noise_manager_node = parent.get_node_as::<NoiseManager>("NoiseManager"); // Adjust path if needed
             if noise_manager_node.is_instance_valid() {
-                godot_print!("ChunkManager: Linking NoiseManager cache...");
+                godot_print!("ChunkManager: Linking NoiseManager");
+                self.noise_manager = Some(noise_manager_node);
                 // Get the Arc handle from NoiseManager
-                self.noise_params_cache = Some(noise_manager_node.bind().get_noise_cache_handle());
+                // self.noise_params_cache = Some(noise_manager_node.bind().get_noise_cache_handle());
             } else {
                  godot_error!("ChunkManager: Could not find node 'NoiseManager'. Noise parameters will be unavailable.");
                  self.noise_params_cache = None;
@@ -158,6 +250,25 @@ impl INode3D for ChunkManager {
     }
 
     fn process(&mut self, _delta: f64) {
+        
+        // --- Initialization Check (at the beginning of process) ---
+        if !self.is_thread_safe_data_ready {
+            // Attempt to initialize/update if managers seem ready
+            if self.biome_manager.is_some() && self.noise_manager.is_some() {
+                // Call the update function (it has internal checks for None)
+                self.update_thread_safe_biome_data();
+
+                // Check if the update was successful by reading the value
+                if self.thread_safe_biome_data.read().unwrap().is_some() {
+                     println!("ChunkManager: ThreadSafeBiomeData successfully initialized/updated in process."); // Use println!
+                     self.is_thread_safe_data_ready = true; // Set flag only on success
+                } else {
+                     // Optional: Log that managers are present but data update failed
+                     // eprintln!("ChunkManager process: Managers linked, but ThreadSafeBiomeData update still results in None.");
+                }
+            } // Else: Managers not linked yet, will try again next frame
+        }
+        
         // Process results received from background tasks
         let mut result_count = 0;
         loop {
@@ -234,31 +345,59 @@ impl ChunkManager {
     }
 
     fn queue_generation(&self, pos: ChunkPosition) {
-        godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
+        println!("ChunkManager: Queuing generation task for {:?}", pos);
         let storage_clone = Arc::clone(&self.storage);
-        let biome_data_clone = Arc::clone(&self.thread_safe_biome_data);
+        // --- Clone the Arc containing the Option<Arc<ThreadSafeBiomeData>> ---
+        let biome_data_rwlock_arc = Arc::clone(&self.thread_safe_biome_data);
+        // --- Do NOT read() here, read inside the worker thread ---
+    
         let chunk_size = self.chunk_size;
-        let sender_clone = self.result_sender.clone(); // Clone sender for the task
-        
-        let noise_cache_clone = self.noise_params_cache.as_ref().map(Arc::clone);
-
-        if noise_cache_clone.is_none() {
-            godot_error!("ChunkManager: Cannot queue generation for {:?}, NoiseManager cache is not available.", pos);
-            // Send a GenerationFailed result immediately
-            let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "Noise cache unavailable".to_string()));
-            return;
-       }
-       let noise_cache_clone = noise_cache_clone.unwrap(); // We know it's Some now
-
-
+        let sender_clone = self.result_sender.clone();
+    
+        // Fetch the noise parameter cache for height generation (still needed)
+        let noise_cache_handle = match &self.noise_manager {
+            Some(nm_gd) => Some(nm_gd.bind().get_noise_cache_handle()),
+            None => {
+                eprintln!("ChunkManager: Cannot queue generation for {:?}, NoiseManager is not available.", pos);
+                let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "NoiseManager unavailable".to_string()));
+                return;
+            }
+        };
+        // We already checked noise_manager is Some, so noise_cache_handle should also be Some
+         let noise_cache_handle = noise_cache_handle.unwrap();
+    
+    
         self.compute_pool.read().unwrap().execute(move || {
+            // --- Read the BiomeData Arc INSIDE the worker ---
+            let biome_data_guard = biome_data_rwlock_arc.read().unwrap();
+            // Clone the inner Arc<ThreadSafeBiomeData> if it exists
+            let biome_data_clone = match *biome_data_guard {
+                 Some(ref arc) => Some(Arc::clone(arc)),
+                 None => None,
+            };
+            // Drop the read guard quickly
+            drop(biome_data_guard);
+    
+            // --- Check if biome data is available ---
+            if biome_data_clone.is_none() {
+                let err_msg = format!("BiomeData unavailable for generation task at {:?} (ChunkManager's shared data is None)", pos);                // Send the original String
+                let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, err_msg.clone())); // Clone err_msg here
+                // Log using the original still-owned string
+                eprintln!("{}", err_msg);
+                return;
+            }
+            
+            // We know it's Some now
+            let biome_data = biome_data_clone.unwrap();
+    
+    
             Self::generate_and_save_chunk(
                 pos,
-                storage_clone, // Pass storage Arc
-                biome_data_clone,
-                noise_cache_clone,
+                storage_clone,
+                biome_data, // Pass the Arc<ThreadSafeBiomeData>
+                noise_cache_handle, // Pass the noise cache handle for heights
                 chunk_size,
-                sender_clone, // Pass the sender
+                sender_clone,
             );
         });
     }
@@ -310,71 +449,56 @@ impl ChunkManager {
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        // Corrected Argument Order
-        biome_data_arc_rwlock: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
-        noise_params_cache: Arc<RwLock<HashMap<String, NoiseParameters>>>,
+        biome_data: Arc<ThreadSafeBiomeData>, // Changed type
+        noise_params_cache_handle: Arc<RwLock<HashMap<String, NoiseParameters>>>, // Renamed for clarity
         chunk_size: u32,
         sender: Sender<ChunkResult>,
-    ) {
-        // --- Get BiomeData ---
-        let biome_data_opt_arc = biome_data_arc_rwlock.read().unwrap();
-        let biome_data = match &*biome_data_opt_arc {
-            Some(arc) => Some(Arc::clone(arc)),
-            None => None,
-        };
-        drop(biome_data_opt_arc);
-
-        if biome_data.is_none() {
-            let err_msg = "BiomeData missing for generation".to_string();
-            let _ = sender.send(ChunkResult::GenerationFailed(pos, err_msg));
-            return;
-        }
-        let biome_data = biome_data.unwrap();
-
+    ) { 
         // --- Generation ---
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
         let mut biome_ids = vec![0u8; chunk_area];
-
-        let noise_cache_reader = noise_params_cache.read().unwrap();
-
-        for z in 0..chunk_size {
-            for x in 0..chunk_size {
+    
+        { // Scope for noise cache lock
+            let noise_cache_reader = noise_params_cache_handle.read().unwrap();
+            for z in 0..chunk_size { for x in 0..chunk_size { /* ... */
                 let idx = (z * chunk_size + x) as usize;
                 let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
-
                 let biome_id = biome_data.get_biome_id(world_x, world_z);
                 biome_ids[idx] = biome_id;
-
                 let biome_key = format!("{}", biome_id);
-
                 if let Some(params) = noise_cache_reader.get(&biome_key) {
                     let noise_fn = Self::create_noise_function(params);
                     let height_val = noise_fn.get([world_x as f64, world_z as f64]);
-                    heightmap[idx] = (height_val * 15.0) as f32; // TODO: Use biome-specific scaling
-                } else {
-                    if biome_id != 0 {
-                        let _ = sender.send(ChunkResult::LogMessage(
-                            format!("Warning: Missing noise parameters for biome key '{}' at {:?}" , biome_key, pos)
-                        ));
-                    }
-                    heightmap[idx] = 0.0;
-                }
-            }
-        }
-        drop(noise_cache_reader);
-
+                    let height_scale = 4.0;
+                    heightmap[idx] = (height_val * height_scale) as f32;
+                } else { heightmap[idx] = 0.0; }
+            }}
+        } // Lock dropped
+    
         // --- Blend heights ---
-        let blend_params = noise_params_cache.read().unwrap().get("blend").cloned();
-        Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance(), blend_params, pos); // Pass pos for world coords
+        let blend_noise_params_for_heights = noise_params_cache_handle.read().unwrap().get("blend").cloned(); // Use blend params for height smoothing too?
+        Self::blend_heights(&mut heightmap, &biome_ids, chunk_size, biome_data.blend_distance(), blend_noise_params_for_heights, pos);
+    
+        // --- MESH GENERATION ---
+        println!("ChunkManager Worker: Generating mesh geometry for {:?}", pos);
+        let geometry = generate_mesh_geometry(&heightmap, chunk_size); // Call the new helper
+
+        // --- CHUNK DATA CREATION ---
+        // Create ChunkData including the generated geometry
+        let chunk_data = ChunkData {
+            position: pos,
+            heightmap: heightmap, // heightmap is moved here
+            biome_ids: biome_ids, // biome_ids is moved here
+            mesh_geometry: Some(geometry), // Store the geometry
+        };
+
 
         // --- Save and Send Result ---
-        let heightmap_vec = heightmap;
-        let biome_ids_vec = biome_ids;
-        storage.queue_save_chunk(pos, &heightmap_vec, &biome_ids_vec);
-        let chunk_data = ChunkData { position: pos, heightmap: heightmap_vec, biome_ids: biome_ids_vec };
-        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
+        storage.queue_save_chunk(chunk_data.clone()); // Save still uses heightmap/biomes separately
+        // Send the *complete* ChunkData back
+        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) { // Send the data structure containing the mesh
              eprintln!("Error sending Generated result for {:?}: {}", pos, e);
         }
     }
@@ -445,6 +569,26 @@ impl ChunkManager {
         // Return true to indicate the request was initiated
         // Note: This doesn't mean the chunk is immediately available
         true
+    }
+
+    /// Attempts to retrieve ChunkData (including height, biomes, and potentially mesh)
+    /// directly from the underlying storage cache.
+    /// Returns None if the chunk is not ready or not found in the cache.
+    pub fn get_cached_chunk_data(&self, position_x: i32, position_z: i32) -> Option<ChunkData> {
+        let pos = ChunkPosition { x: position_x, z: position_z };
+        // Check readiness state first (optional, but good practice)
+        // Note: This read lock is brief
+        let is_ready = matches!(
+            self.chunk_states.read().unwrap().get(&pos),
+            Some(ChunkGenState::Ready(_))
+        );
+
+        if is_ready {
+            // Access storage cache directly
+             self.storage.get_data_from_cache(pos)
+        } else {
+            None // Not ready, so definitely not in cache in a usable state
+        }
     }
 
     // Height Blending Logic (Static)
@@ -673,42 +817,58 @@ impl ChunkManager {
     // Update thread-safe biome data cache
     #[func]
     pub fn update_thread_safe_biome_data(&mut self) {
-        if let Some(ref biome_mgr_gd) = self.biome_manager {
+        if let (Some(biome_mgr_gd), Some(noise_mgr_gd)) = (&self.biome_manager, &self.noise_manager) {
             let biome_mgr_bind = biome_mgr_gd.bind();
+            let noise_mgr_bind = noise_mgr_gd.bind(); // Bind noise manager
+    
             if biome_mgr_bind.is_fully_initialized() {
-                // godot_print!("ChunkManager: Updating thread-safe biome data cache.");
-                let new_data = Arc::new(ThreadSafeBiomeData::from_biome_manager(&biome_mgr_bind));
-                // Acquire write lock on the Option<Arc<...>>
-                let mut biome_data_guard = self.thread_safe_biome_data.write().unwrap();
-                *biome_data_guard = Some(new_data); // Set the new data
+                godot_print!("ChunkManager: Updating thread-safe biome data cache using BiomeManager and NoiseManager.");
+    
+                let mut current_data_guard = self.thread_safe_biome_data.write().unwrap();
+    
+                if let Some(ref mut existing_data_arc) = *current_data_guard {
+                    // Try to get mutable access to update existing data efficiently
+                    if let Some(existing_data_mut) = Arc::get_mut(existing_data_arc) {
+                         existing_data_mut.update_from_biome_manager(&biome_mgr_bind, &noise_mgr_bind);
+                    } else {
+                        // If shared elsewhere, clone and update (less efficient)
+                        let mut cloned_data = (**existing_data_arc).clone(); // Requires ThreadSafeBiomeData to derive Clone
+                        cloned_data.update_from_biome_manager(&biome_mgr_bind, &noise_mgr_bind);
+                        *existing_data_arc = Arc::new(cloned_data);
+                    }
+                } else {
+                     // Create new data if none exists
+                    let new_data = Arc::new(ThreadSafeBiomeData::from_biome_manager(&biome_mgr_bind, &noise_mgr_bind));
+                    *current_data_guard = Some(new_data);
+                }
+    
+    
             } else {
                 godot_warn!("ChunkManager: Attempted to update biome data, but BiomeManager is not ready.");
             }
         } else {
-            godot_warn!("ChunkManager: Cannot update biome data, BiomeManager reference missing.");
+            godot_warn!("ChunkManager: Cannot update biome data, BiomeManager or NoiseManager reference missing.");
         }
     }
 
-     // Apply config changes dynamically
-     #[func]
-     pub fn apply_config_updates(&mut self) {
-         if let Some(config_arc) = TerrainConfigManager::get_config() {
-             if let Ok(guard) = config_arc.read() {
-                 let old_chunk_size = self.chunk_size;
-                 self.chunk_size = guard.chunk_size();
-                 // Tell storage to update its cache limit
-                 self.storage.update_cache_limit();
-                 godot_print!("ChunkManager: Applied config updates (chunk_size: {}, cache_limit updated)", self.chunk_size);
-                 // If chunk size changes, existing data becomes invalid!
-                 if old_chunk_size != self.chunk_size {
-                     godot_warn!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
-                     self.chunk_states.write().unwrap().clear();
-                     self.storage.clear_cache();
-                     // Ideally, also delete stored files, but that's more complex.
-                 }
-             }
-         }
-     }
+    // Apply config changes dynamically
+    #[func]
+    pub fn apply_config_updates(&mut self) {
+    let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+    if let Ok(guard) = config_arc.read() { // Lock it
+        let old_chunk_size = self.chunk_size;
+        self.chunk_size = guard.chunk_size; // Access field
+        // REMOVED: self.storage.update_cache_limit();
+        godot_print!("ChunkManager: Applied config updates (chunk_size: {})", self.chunk_size);
+        if old_chunk_size != self.chunk_size {
+            godot_warn!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
+            self.chunk_states.write().unwrap().clear();
+            self.storage.clear_cache(); // Make sure clear_cache exists or remove if LRU handles it
+        }
+        } else {
+            godot_error!("ChunkManager::apply_config_updates: Failed to read terrain config lock.");
+        }
+    }
 }
 
 impl Drop for ChunkManager {

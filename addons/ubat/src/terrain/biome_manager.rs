@@ -6,11 +6,20 @@ use std::collections::HashMap;
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
 
+use crate::terrain::noise::noise_parameters::NoiseParameters; // Assuming you have this struct
+use noise::{NoiseFn, Seedable, Perlin}; // Import necessary noise-rs items
+use rand::{SeedableRng, Rng}; // For deterministic PRNG
+use rand_chacha::ChaCha8Rng; // A good deterministic PRNG
+use std::hash::{Hash, Hasher}; // For hashing option
+use std::collections::hash_map::DefaultHasher; // For hashing option
+
 use crate::resource::resource_manager::resource_manager;
 use crate::terrain::chunk_manager::ChunkManager;
 use crate::terrain::generation_rules::GenerationRules;
 
 use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
+
+use super::noise::NoiseManager;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BiomeManagerState {
@@ -123,29 +132,44 @@ struct BiomeSection {
 }
 
 // Thread-safe versions of biome structures
+#[derive(Clone)]
 pub struct ThreadSafeBiomeData {
     world_width: f32,
     world_height: f32,
     seed: u32,
-    sections: Vec<ThreadSafeBiomeSection>,
     pub blend_distance: i32,
+    blend_noise_params: Option<NoiseParameters>, // Store blend noise config
 
     // Add reference to image data
     image_data: Vec<u8>,
     image_width: i32,
     image_height: i32,
+
+    /// All Voronoi points from all sections, flattened into one list. Arc for cheap cloning.
+    points: Arc<Vec<ThreadSafeVoronoiPoint>>,
+    /// Grid containing indices into the `points` vector. Arc for cheap cloning.
+    /// Structure: grid[grid_x][grid_y] -> Vec<point_index>
+    spatial_grid_indices: Arc<Vec<Vec<Vec<usize>>>>,
+    /// The size of each square cell in the spatial grid.
+    grid_cell_size: f32,
+    /// Width of the spatial grid in cells.
+    grid_width: usize,
+    /// Height of the spatial grid in cells.
+    grid_height: usize,
 }
 
-
+#[derive(Clone)]
 struct ThreadSafeBiomeSection {
     section_id: u8,
     possible_biomes: Vec<u8>,
     voronoi_points: Vec<ThreadSafeVoronoiPoint>,
 }
 
+#[derive(Clone)]
 struct ThreadSafeVoronoiPoint {
     position: (f32, f32),
     biome_id: u8,
+    section_id: u8,
 }
 
 
@@ -876,104 +900,221 @@ impl BiomeManager {
 
 impl ThreadSafeBiomeData {
     // Update only changed properties
-    pub fn update_from_biome_manager(&mut self, biome_mgr: &BiomeManager) {
-        // Update image data if needed
+    pub fn update_from_biome_manager(&mut self, biome_mgr: &BiomeManager, noise_manager: &NoiseManager) {
+        let mut rebuild_grid = false;
+        if self.seed != biome_mgr.seed { self.seed = biome_mgr.seed; rebuild_grid = true; }
+        if self.world_width != biome_mgr.world_width || self.world_height != biome_mgr.world_height {
+            self.world_width = biome_mgr.world_width;
+            self.world_height = biome_mgr.world_height;
+            rebuild_grid = true;
+        }
+
+        if rebuild_grid {
+            println!("ThreadSafeBiomeData: Rebuilding points and spatial grid due to changes.");
+
+            // Declare temporary variables to hold the new data
+            let new_points_arc: Arc<Vec<ThreadSafeVoronoiPoint>>;
+            let new_spatial_grid_indices_arc: Arc<Vec<Vec<Vec<usize>>>>;
+            let new_grid_cell_size: f32;
+            let new_grid_width: usize;
+            let new_grid_height: usize;
+
+            if let Some(grid) = &biome_mgr.spatial_grid {
+                let mut all_points = Vec::new();
+                for section in &biome_mgr.sections {
+                    for point in &section.voronoi_points {
+                         all_points.push(ThreadSafeVoronoiPoint {
+                             position: (point.position.x, point.position.y),
+                             biome_id: point.biome_id,
+                             section_id: section.section_id,
+                         });
+                    }
+                }
+                new_points_arc = Arc::new(all_points);
+
+                new_grid_cell_size = grid.cell_size;
+                new_grid_width = grid.grid_width;
+                new_grid_height = grid.grid_height;
+
+                let mut grid_indices = vec![vec![Vec::new(); new_grid_height]; new_grid_width];
+                for (point_index, point) in new_points_arc.iter().enumerate() {
+                    let grid_x = (point.position.0 / new_grid_cell_size).floor() as usize;
+                    let grid_y = (point.position.1 / new_grid_cell_size).floor() as usize;
+                    if grid_x < new_grid_width && grid_y < new_grid_height {
+                        grid_indices[grid_x][grid_y].push(point_index);
+                    }
+                }
+                new_spatial_grid_indices_arc = Arc::new(grid_indices);
+            } else {
+                 godot_error!("ThreadSafeBiomeData: BiomeManager spatial_grid is None during update!");
+                 new_points_arc = Arc::new(Vec::new());
+                 new_spatial_grid_indices_arc = Arc::new(Vec::new());
+                 new_grid_cell_size = 1.0; // Default
+                 new_grid_width = 0;
+                 new_grid_height = 0;
+            }
+
+            // Assign the newly built data to self fields
+            self.points = new_points_arc;
+            self.spatial_grid_indices = new_spatial_grid_indices_arc;
+            self.grid_cell_size = new_grid_cell_size;
+            self.grid_width = new_grid_width;
+            self.grid_height = new_grid_height;
+        }
+
+        // Update other fields (image data, blend distance, noise params) as before
         if let Some(ref img) = biome_mgr.biome_image {
             let image_width = img.get_width();
             let image_height = img.get_height();
-            
-            // Check if image dimensions changed
             if self.image_width != image_width || self.image_height != image_height {
                 self.image_width = image_width;
                 self.image_height = image_height;
-                
-                // Get raw image data
-                let img_data = img.get_data();
-                self.image_data = img_data.to_vec();
+                self.image_data = img.get_data().to_vec();
             }
         }
-        
-        // Only update these if they've changed
-        if self.world_width != biome_mgr.world_width {
-            self.world_width = biome_mgr.world_width;
+        self.blend_distance = biome_mgr.blend_distance;
+        let current_blend_params = noise_manager.get_parameters("biome_blend");
+        if self.blend_noise_params != current_blend_params {
+            godot_print!("ThreadSafeBiomeData: Updating blend noise parameters."); // Use println! if preferred
+            self.blend_noise_params = current_blend_params;
+            if self.blend_noise_params.is_none() {
+                godot_warn!("ThreadSafeBiomeData: 'biome_blend' noise parameters not found during update. Biome blending noise disabled."); // Use eprintln! if preferred
+            }
         }
-        
-        if self.world_height != biome_mgr.world_height {
-            self.world_height = biome_mgr.world_height;
-        }
-        
-        if self.seed != biome_mgr.seed {
-            self.seed = biome_mgr.seed;
-            
-            // When seed changes, we need to update sections and voronoi points
-            self.sections.clear();
-            
-            // Clone all sections and their Voronoi points
+    }
+    
+
+    pub fn from_biome_manager(biome_mgr: &BiomeManager, noise_manager: &NoiseManager) -> Self {
+
+        // --- Declare variables in the outer scope ---
+        let points_arc: Arc<Vec<ThreadSafeVoronoiPoint>>;
+        let spatial_grid_indices_arc: Arc<Vec<Vec<Vec<usize>>>>;
+        let grid_cell_size: f32;
+        let grid_width: usize;
+        let grid_height: usize;
+        // --- End Declaration ---
+
+        if let Some(grid) = &biome_mgr.spatial_grid {
+            let mut all_points = Vec::new();
             for section in &biome_mgr.sections {
-                let mut voronoi_points = Vec::new();
-                
                 for point in &section.voronoi_points {
-                    voronoi_points.push(ThreadSafeVoronoiPoint {
+                    all_points.push(ThreadSafeVoronoiPoint {
                         position: (point.position.x, point.position.y),
                         biome_id: point.biome_id,
+                        section_id: section.section_id,
                     });
                 }
-                
-                self.sections.push(ThreadSafeBiomeSection {
-                    section_id: section.section_id,
-                    possible_biomes: section.possible_biomes.clone(),
-                    voronoi_points,
-                });
             }
-        }
-        
-        // Always update blend distance as it doesn't require rebuilding sections
-        self.blend_distance = biome_mgr.blend_distance;
-    }
+            // Assign to the outer scope variable
+            points_arc = Arc::new(all_points);
 
-    pub fn from_biome_manager(biome_mgr: &BiomeManager) -> Self {
-        let mut sections = Vec::new();
-        
-        // Clone all sections and their Voronoi points
-        for section in &biome_mgr.sections {
-            let mut voronoi_points = Vec::new();
-            
-            for point in &section.voronoi_points {
-                voronoi_points.push(ThreadSafeVoronoiPoint {
-                    position: (point.position.x, point.position.y),
-                    biome_id: point.biome_id,
-                });
+            // Assign to outer scope variables
+            grid_cell_size = grid.cell_size;
+            grid_width = grid.grid_width;
+            grid_height = grid.grid_height;
+
+            let mut grid_indices: Vec<Vec<Vec<usize>>> = vec![vec![Vec::new(); grid_height]; grid_width];
+            for (point_index, point) in points_arc.iter().enumerate() {
+                let grid_x = (point.position.0 / grid_cell_size).floor() as usize;
+                let grid_y = (point.position.1 / grid_cell_size).floor() as usize;
+                if grid_x < grid_width && grid_y < grid_height {
+                    grid_indices[grid_x][grid_y].push(point_index);
+                }
             }
-            
-            sections.push(ThreadSafeBiomeSection {
-                section_id: section.section_id,
-                possible_biomes: section.possible_biomes.clone(),
-                voronoi_points,
-            });
+            // Assign to the outer scope variable
+            spatial_grid_indices_arc = Arc::new(grid_indices);
+
+        } else {
+            // Assign default values to outer scope variables in the error case
+            godot_error!("ThreadSafeBiomeData: BiomeManager spatial_grid is None during creation!");
+            points_arc = Arc::new(Vec::new());
+            spatial_grid_indices_arc = Arc::new(Vec::new());
+            grid_cell_size = 1.0; // Avoid division by zero later, use a default
+            grid_width = 0;
+            grid_height = 0;
         }
-        
-        // Copy image data from biome_mgr.biome_image
+
+        // Copy image data (remains the same)
         let mut image_data = Vec::new();
         let mut image_width = 0;
         let mut image_height = 0;
-        
         if let Some(ref img) = biome_mgr.biome_image {
-          image_width = img.get_width();
-          image_height = img.get_height();
-          image_data = img.get_data().to_vec();
+            image_width = img.get_width();
+            image_height = img.get_height();
+            image_data = img.get_data().to_vec();
         }
 
-        
+        // Fetch Blend Noise Parameters (remains the same)
+        let blend_noise_params = noise_manager.get_parameters("biome_blend");
+        if blend_noise_params.is_none() {
+            godot_warn!("ThreadSafeBiomeData: Could not find 'biome_blend' noise parameters in NoiseManager. Biome blending noise disabled.");
+        }
+
+
+        // Construct the struct - variables are now correctly in scope
         ThreadSafeBiomeData {
             world_width: biome_mgr.world_width,
             world_height: biome_mgr.world_height,
             seed: biome_mgr.seed,
-            sections,
             blend_distance: biome_mgr.blend_distance,
+            blend_noise_params,
             image_data,
             image_width,
             image_height,
+            points: points_arc, // Use outer variable
+            spatial_grid_indices: spatial_grid_indices_arc, // Use outer variable
+            grid_cell_size, // Use outer variable
+            grid_width, // Use outer variable
+            grid_height, // Use outer variable
         }
+    }
+
+    fn create_blend_noise_fn(params: &NoiseParameters) -> Option<Box<dyn noise::NoiseFn<f64, 2> + Send + Sync>> {
+        // Use noise-rs based on params. Adjust noise type as needed for blending.
+        // Example using simple Perlin:
+        let noise_fn = Perlin::new(params.seed)
+            .set_seed(params.seed); // Use the seed from params
+   
+        // Wrap with ScalePoint for frequency ONLY IF params represent simple noise.
+        // If params include fractal settings, use Fbm, RidgedMulti etc. like in ChunkManager.
+        // Let's assume simple Perlin scaled by frequency for blend noise for now.
+        // You might need to adjust this based on your actual blend noise settings.
+        let scaled_noise = noise::ScalePoint::new(noise_fn)
+            .set_scale(params.frequency as f64); // Apply frequency
+   
+        Some(Box::new(scaled_noise))
+   
+        // If using fractals for blending noise:
+        /*
+        match params.fractal_type {
+            // ... cases for Fbm<Perlin>, RidgedMulti<Perlin>, etc. ...
+            // Use params.frequency, params.fractal_octaves, etc.
+            RustFractalType::None => {
+                // Just Perlin scaled by frequency
+                let noise_fn = Perlin::new(params.seed);
+                let scaled_noise = noise::ScalePoint::new(noise_fn)
+                    .set_scale(params.frequency as f64);
+                Some(Box::new(scaled_noise))
+            }
+            _ => { // Handle FBM, Ridged etc.
+               // ... create Fbm<Perlin>::new(params.seed).set_frequency(...) etc. ...
+            }
+        }
+        */
+    }
+
+    // Helper for deterministic random value [0.0, 1.0) using ChaCha8Rng
+    fn get_deterministic_random(&self, world_x: f32, world_y: f32) -> f32 {
+        // Combine seed and coordinates for a unique seed per position
+        // Using XOR and to_bits for a simple combination
+        let pos_hash_low = world_x.to_bits() ^ world_y.to_bits();
+        let seed64 = (self.seed as u64) << 32 | (pos_hash_low as u64);
+
+        // Create a ChaCha8Rng seeded with this value
+        let mut rng = ChaCha8Rng::seed_from_u64(seed64);
+
+        // Generate a random f32 in [0.0, 1.0)
+        rng.r#gen::<f32>()
     }
     
     // Get section ID based on world coordinates
@@ -1034,37 +1175,114 @@ impl ThreadSafeBiomeData {
   
     // Get biome ID at world coordinates
     pub fn get_biome_id(&self, world_x: f32, world_y: f32) -> u8 {
-        // Get the section for this position
-        let section_id = self.get_section_id(world_x, world_y);
-        
-        // Find the section
-        if let Some(section) = self.sections.iter().find(|s| s.section_id == section_id) {
-            // If no Voronoi points, return first possible biome
-            if section.voronoi_points.is_empty() {
-                return *section.possible_biomes.first().unwrap_or(&0);
-            }
-            
-            // Calculate distances to all Voronoi points in this section
-            let pos = (world_x, world_y);
-            let mut distances: Vec<(f32, &ThreadSafeVoronoiPoint)> = section.voronoi_points.iter()
-                .map(|point| {
-                    let dx = pos.0 - point.position.0;
-                    let dy = pos.1 - point.position.1;
-                    let distance = (dx * dx + dy * dy).sqrt();
-                    (distance, point)
-                })
-                .collect();
-            
-            // Sort by distance
-            distances.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            
-            // Return the biome ID of the closest point
-            if !distances.is_empty() {
-                return distances[0].1.biome_id;
+        // Determine the target section for the query location
+        let target_section_id = self.get_section_id(world_x, world_y);
+        if target_section_id == 0 { return 0; } // Undefined section
+
+        if self.points.is_empty() || self.grid_width == 0 || self.grid_height == 0 {
+            // Handle cases with no points or invalid grid
+            // Maybe return a default biome for the section? Needs design decision.
+            godot_warn!("get_biome_id called with no points or invalid grid for section {}.", target_section_id);
+            return 0; // Or find the section definition and return its first possible biome
+        }
+
+        // --- Use Spatial Grid ---
+        let mut closest1: Option<(usize, f32)> = None; // (point_index, dist_sq)
+        let mut closest2: Option<(usize, f32)> = None; // (point_index, dist_sq)
+        let pos = (world_x, world_y);
+
+        // Calculate query point's grid cell
+        let grid_x = (world_x / self.grid_cell_size).floor() as usize;
+        let grid_y = (world_y / self.grid_cell_size).floor() as usize;
+
+        // Determine search radius in cells (e.g., cover blend distance + 1 cell buffer)
+        // Search slightly larger area than blend distance to ensure we find the correct neighbours
+        let search_radius_world = self.blend_distance as f32 * 1.5; // Adjust multiplier as needed
+        let cell_radius = (search_radius_world / self.grid_cell_size).ceil() as usize + 1;
+
+        // Iterate through nearby grid cells
+        let min_cx = grid_x.saturating_sub(cell_radius);
+        let max_cx = (grid_x + cell_radius).min(self.grid_width - 1);
+        let min_cy = grid_y.saturating_sub(cell_radius);
+        let max_cy = (grid_y + cell_radius).min(self.grid_height - 1);
+
+        for cx in min_cx..=max_cx {
+            for cy in min_cy..=max_cy {
+                // Access the list of point indices for this cell
+                // Cloning Arc is cheap, direct indexing is fine for read access
+                let point_indices_in_cell = &self.spatial_grid_indices[cx][cy];
+
+                for point_index in point_indices_in_cell {
+                    let candidate_point = &self.points[*point_index];
+
+                    // *** Filter by target section ID ***
+                    if candidate_point.section_id != target_section_id {
+                        continue; // Skip points not in the target section
+                    }
+
+                    // Calculate squared distance (cheaper than sqrt initially)
+                    let dx = pos.0 - candidate_point.position.0;
+                    let dy = pos.1 - candidate_point.position.1;
+                    let dist_sq = dx * dx + dy * dy;
+
+                    // Update closest points found *so far* within the target section
+                    if closest1.is_none() || dist_sq < closest1.unwrap().1 {
+                        closest2 = closest1;
+                        closest1 = Some((*point_index, dist_sq));
+                    } else if closest2.is_none() || dist_sq < closest2.unwrap().1 {
+                         // Avoid selecting the same point twice
+                         if closest1.unwrap().0 != *point_index {
+                              closest2 = Some((*point_index, dist_sq));
+                         }
+                    }
+                }
             }
         }
-        
-        // Default biome
+
+        // --- Process the closest points found ---
+        if let (Some((p1_idx, dist1_sq)), Some((p2_idx, dist2_sq))) = (closest1, closest2) {
+            // Calculate real distances now for blending check
+            let dist1 = dist1_sq.sqrt();
+            let dist2 = dist2_sq.sqrt();
+            let blend_dist_f32 = self.blend_distance as f32;
+
+            // Use the same blending logic as before
+            if dist1 < blend_dist_f32 && (dist2 - dist1) < blend_dist_f32 {
+                // Blend noise calculation (using create_blend_noise_fn for now)
+                let mut noise_influence = 0.0;
+                if let Some(ref params) = self.blend_noise_params {
+                    if let Some(noise_fn) = Self::create_blend_noise_fn(params) { // Will be replaced in Step 4
+                         let noise_val = noise_fn.get([world_x as f64, world_y as f64]);
+                         let normalized_noise = (noise_val as f32 * 0.5) + 0.5;
+                         let noise_factor = 0.3;
+                         noise_influence = (normalized_noise - 0.5) * noise_factor;
+                    }
+                }
+                // Blend factor calculation
+                let blend_factor = (dist1 / blend_dist_f32).clamp(0.0, 1.0);
+                let adjusted_blend = (blend_factor + noise_influence).clamp(0.0, 1.0);
+
+                // Deterministic random choice
+                let rand_val = self.get_deterministic_random(world_x, world_y);
+                let p1_biome_id = self.points[p1_idx].biome_id;
+                let p2_biome_id = self.points[p2_idx].biome_id;
+
+                return if rand_val < adjusted_blend { p2_biome_id } else { p1_biome_id };
+
+            } else {
+                // No blending needed, return closest point's biome
+                return self.points[p1_idx].biome_id;
+            }
+
+        } else if let Some((p1_idx, _)) = closest1 {
+            // Only one relevant point found in the search area
+            return self.points[p1_idx].biome_id;
+        }
+
+        // Fallback if no relevant points found in search radius (should be rare if radius is sufficient)
+        // Find the absolute closest point in the section using a linear scan as a last resort?
+        // Or return a default for the section. Let's return 0 for now.
+        godot_warn!("get_biome_id: No Voronoi points found in spatial grid search radius for section {}.", target_section_id);
         0
     }
     

@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use std::sync::{Arc, Mutex};
 use crate::initialization::system_initializer::SystemInitializer;
-use crate::bridge::{ConfigBridge, GameManagerBridge, NetworkManagerBridge, EventBridge};
+use crate::bridge::{ GameManagerBridge, NetworkManagerBridge, EventBridge};
 
 /// Helper class for simplified game initialization
 ///
@@ -11,25 +11,26 @@ use crate::bridge::{ConfigBridge, GameManagerBridge, NetworkManagerBridge, Event
 #[class(base=Node)]
 pub struct GameInitHelper {
     base: Base<Node>,
-    
-    #[export]
-    debug_mode: bool,
+    debug_mode_internal: bool,
 }
 
 #[godot_api]
 impl INode for GameInitHelper {
     fn init(base: Base<Node>) -> Self {
+        let debug_enabled = crate::config::global_config::get_config_manager()
+                                .read().unwrap().get_config().debug_mode;
         Self {
             base,
-            debug_mode: false,
+            debug_mode_internal: debug_enabled, // Use internal flag
         }
     }
     
     fn ready(&mut self) {
-        if self.debug_mode {
+
+        if self.debug_mode_internal {
             godot_print!("GameInitHelper: Ready, will use SystemInitializer singleton");
         }
-        
+
         // Ensure the SystemInitializer is properly initialized once at startup
         SystemInitializer::ensure_initialized();
     }
@@ -156,28 +157,28 @@ impl GameInitHelper {
     }
 
     // Similar implementations for other bridge getters (config, network, event)
-    #[func]
-    pub fn get_config_bridge(&self) -> Variant {
-        match SystemInitializer::get_instance() {
-            Some(system_initializer) => {
-                match system_initializer.lock() {
-                    Ok(system_init) => {
-                        system_init.get_config_bridge()
-                            .map(|bridge| bridge.to_variant())
-                            .unwrap_or(Variant::nil())
-                    },
-                    Err(_) => {
-                        godot_error!("Could not acquire lock to get config bridge");
-                        Variant::nil()
-                    }
-                }
-            },
-            None => {
-                godot_error!("SystemInitializer not initialized");
-                Variant::nil()
-            }
-        }
-    }
+    // #[func]
+    // pub fn get_config_bridge(&self) -> Variant {
+    //     match SystemInitializer::get_instance() {
+    //         Some(system_initializer) => {
+    //             match system_initializer.lock() {
+    //                 Ok(system_init) => {
+    //                     system_init.get_config_bridge()
+    //                         .map(|bridge| bridge.to_variant())
+    //                         .unwrap_or(Variant::nil())
+    //                 },
+    //                 Err(_) => {
+    //                     godot_error!("Could not acquire lock to get config bridge");
+    //                     Variant::nil()
+    //                 }
+    //             }
+    //         },
+    //         None => {
+    //             godot_error!("SystemInitializer not initialized");
+    //             Variant::nil()
+    //         }
+    //     }
+    // }
 
     #[func]
     pub fn get_network_bridge(&self) -> Variant {

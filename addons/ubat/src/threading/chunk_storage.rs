@@ -1,22 +1,18 @@
 use std::fs;
 use std::path::Path;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use rayon::prelude::*;
-use std::sync::mpsc::{Sender, Receiver, channel}; // Add import
+use std::sync::mpsc::{Sender, Receiver, channel}; 
 use std::thread;
-use std::panic::{catch_unwind, AssertUnwindSafe}; // Added for panic catching
+use std::panic::{catch_unwind, AssertUnwindSafe}; // For panic catching
 use std::io::{Read, Write};
-const FILE_READ: i32 = 1;  // This is typically the value for READ
-const FILE_WRITE: i32 = 2; // This is typically the value for WRITE
 
 
-
-
-use crate::threading::thread_pool::{ThreadPool, global_thread_pool};
 use crate::terrain::chunk_manager::{ChunkPosition, ChunkResult};
-use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
+use crate::terrain::terrain_config::TerrainConfigManager;
+use lru::LruCache;
+use std::num::NonZeroUsize; 
+use bincode;
 
 
 // Enum to differentiate request types
@@ -40,37 +36,28 @@ pub struct ChunkData {
     pub position: ChunkPosition,
     pub heightmap: Vec<f32>,
     pub biome_ids: Vec<u8>,
+    pub mesh_geometry: Option<MeshGeometry>,
     // Add other data as needed
 }
 
-struct LoadRequest {
-    position: ChunkPosition,
-    sender: Sender<ChunkResult>,
-}
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MeshGeometry {
+    // Store as plain arrays for easy serialization
+    pub vertices: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub uvs: Vec<[f32; 2]>,
+    pub indices: Vec<i32>,
 
+}
 
 // ChunkStorage handles saving and loading chunks from disk
 pub struct ChunkStorage {
     save_dir: String,
-    cache: Arc<RwLock<HashMap<ChunkPosition, ChunkData>>>,
-    cache_size_limit: Arc<RwLock<usize>>,
+    cache: Arc<RwLock<LruCache<ChunkPosition, ChunkData>>>,
    
     result_sender: Sender<ChunkResult>, // Store a clone of the sender from ChunkManager
     io_request_sender: Option<Sender<IORequest>>, // To send requests TO IO thread
     io_thread_handle: Option<thread::JoinHandle<()>>, // Handle to the IO thread
-
-
-}
-
-// Helper function for cache eviction (independent function)
-fn enforce_cache_limit(cache: &mut HashMap<ChunkPosition, ChunkData>, limit: usize) {
-    while cache.len() > limit {
-        if let Some(key_to_remove) = cache.keys().next().cloned() {
-            cache.remove(&key_to_remove);
-        } else {
-            break; // Should not happen if len > 0
-        }
-    }
 }
 
 impl ChunkStorage {
@@ -84,260 +71,209 @@ impl ChunkStorage {
     /// * `result_sender` - An `mpsc::Sender` to send loaded or failed chunk results back to the main thread (typically held by ChunkManager).
     pub fn new(save_dir: &str, result_sender: Sender<ChunkResult>) -> Self {
         println!("ChunkStorage: Initializing new storage with save_dir: {}", save_dir);
-    
+
+        // Convert Godot path (like user://) to an absolute path if necessary for std::fs
+        // This assumes save_dir is already a path std::fs can handle.
+        // If save_dir uses Godot's pseudo-protocols, you might need:
+        // let absolute_save_dir = ProjectSettings::singleton().globalize_path(save_dir.into()).to_string();
+        // For simplicity, we'll use save_dir directly assuming it's valid for std::fs.
+        let fs_save_dir = save_dir; // Use this variable below
+
         // Ensure directory exists using standard Rust fs
-        match fs::create_dir_all(save_dir) {
+        match fs::create_dir_all(fs_save_dir) {
             Ok(_) => {
-                println!("ChunkStorage: Save directory verified/created: {}", save_dir);
+                println!("ChunkStorage: Save directory verified/created: {}", fs_save_dir);
             }
             Err(e) => {
-                eprintln!("ChunkStorage: ERROR - Failed to create save directory '{}': {}. Subsequent saves WILL likely fail.", save_dir, e);
+                // Use eprintln! for critical errors
+                eprintln!("ChunkStorage: ERROR - Failed to create save directory '{}': {}. Subsequent saves WILL likely fail.", fs_save_dir, e);
+                // Depending on requirements, you might want to panic or return Result here.
             }
         }
-    
-        // Get cache limit from config
-        let default_cache_limit = 128*3; // Sensible default if config fails
-        let cache_limit = TerrainConfigManager::get_config()
-            .and_then(|config_arc| {
-                match config_arc.read() {
-                    Ok(guard) => {
-                        let limit = guard.chunk_cache_size();
-                        Some(limit)
-                    },
-                    Err(e) => {
-                        eprintln!("ChunkStorage: Failed to read TerrainConfig lock: {}. Using default cache limit.", e);
-                        None // Fallback to default
-                    }
+
+        // Get cache limit from config (using lazy init for TerrainConfigManager)
+        let default_cache_limit = 400; // Sensible default matching TerrainInitialConfigData default
+        let cache_limit = {
+            let terrain_config_arc = TerrainConfigManager::get_config(); // Ensures TerrainConfigManager is initialized
+            match terrain_config_arc.read() {
+                Ok(guard) => guard.chunk_cache_size, // Direct field access
+                Err(e) => {
+                    eprintln!("ChunkStorage: Failed to read TerrainConfig lock: {}. Using default cache limit.", e);
+                    default_cache_limit // Fallback to default
                 }
-            })
-            .unwrap_or_else(|| {
-                eprintln!("ChunkStorage: TerrainConfig not available. Using default cache limit: {}", default_cache_limit);
-                default_cache_limit
-            });
-    
+            }
+        };
+
         println!("ChunkStorage: Cache limit set to: {}", cache_limit);
-    
+
+        // Validate and create NonZeroUsize for LruCache capacity
+        let lru_capacity = NonZeroUsize::new(cache_limit).unwrap_or_else(|| {
+            eprintln!("Chunk cache size config is zero or invalid, defaulting cache capacity to 1.");
+            NonZeroUsize::new(1).expect("Default LRU capacity of 1 failed unexpectedly")
+        });
+
         // Create the channel for sending requests TO the IO thread
         let (io_tx, io_rx): (Sender<IORequest>, Receiver<IORequest>) = channel();
-    
+
         // Prepare shared data for the IO thread
-        let cache_arc = Arc::new(RwLock::new(HashMap::<ChunkPosition, ChunkData>::new()));
-        let limit_arc = Arc::new(RwLock::new(cache_limit)); // Store the resolved limit
-    
-        // Clone data needed *specifically* for the IO thread's continuous operation
-        let save_dir_clone = save_dir.to_string();
+        let cache_arc = Arc::new(RwLock::new(LruCache::<ChunkPosition, ChunkData>::new(lru_capacity)));
+        let save_dir_clone = fs_save_dir.to_string(); // Clone the potentially globalized path
         let result_sender_clone = result_sender.clone(); // Clone sender for results back to main
         let cache_arc_thread = Arc::clone(&cache_arc); // Clone Arc for thread access
-        let limit_arc_thread = Arc::clone(&limit_arc); // Clone Arc for thread access
-    
+
         println!("ChunkStorage: Spawning IO thread...");
-    
+
         // Spawn the dedicated IO thread
         let handle = thread::spawn(move || {
-            println!("IO Thread: <<< STARTED (stdout) >>>");
-            println!("IO Thread: <<< STARTED (println) >>>");
-    
+            println!("IO Thread: <<< STARTED >>>");
+
             // Optional: Catch panics to prevent silent thread death and log the event.
             let result = catch_unwind(AssertUnwindSafe(|| {
                 println!("IO Thread: Starting receiver loop...");
-    
-                // This loop runs until the sender (io_tx) is dropped (channel closed)
-                // or until a Shutdown request is received.
-                for request in io_rx { // io_rx moved into this closure, owned by the loop
-                    println!("IO Thread: Processing request for {:?}: {:?}", request.position, request.request_type);
-    
+
+                // Loop processes requests until channel closes or Shutdown received
+                for request in io_rx {
+                    // Uncomment for detailed logging:
+                    // println!("IO Thread: Processing request for {:?}: {:?}", request.position, request.request_type);
+
                     match request.request_type {
                         IORequestType::Load => {
                             let pos = request.position;
-                            // --- Load Logic ---
-    
-                            // 1. Check cache FIRST (read lock scope)
                             let mut found_in_cache = false;
-                            if let Ok(cache_guard) = cache_arc_thread.read() {
-                                if let Some(data) = cache_guard.get(&pos) {
-                                    println!("IO Thread: Cache hit for {:?}. Sending Loaded.", pos);
-                                    // Send result back - ignore error if receiver disconnected
+
+                            // --- Check cache FIRST (write lock for get_mut) ---
+                            if let Ok(mut cache_guard) = cache_arc_thread.write() {
+                                if let Some(data) = cache_guard.get_mut(&pos) { // get_mut updates LRU order
+                                    // println!("IO Thread: Cache hit for {:?}. Sending Loaded.", pos);
                                     let _ = result_sender_clone.send(ChunkResult::Loaded(pos, data.clone()));
                                     found_in_cache = true;
                                 }
                             } else {
-                                eprintln!("IO Thread: Cache read lock poisoned for {:?} during load check!", pos);
+                                eprintln!("IO Thread: Cache write lock poisoned for {:?} during load check!", pos);
                             }
-    
-                            // If found and sent from cache, skip the rest
-                            if found_in_cache {
-                                println!("IO Thread: Finished processing Load (Cache Hit) for {:?}", pos);
-                                continue;
-                            }
-    
-                            // 2. Cache miss - try loading from disk using std fs
-                            println!("IO Thread: Cache miss for {:?}. Attempting disk load.", pos);
-                            let path_str = format!("{}/chunk_{}_{}.json", save_dir_clone, pos.x, pos.z);
+
+                            if found_in_cache { continue; } // Skip disk if found
+
+                            // --- Cache miss - Load from disk ---
+                            // println!("IO Thread: Cache miss for {:?}. Attempting disk load.", pos);
+                            let path_str = format!("{}/chunk_{}_{}.chunk", save_dir_clone, pos.x, pos.z);
                             let path = Path::new(&path_str);
-    
-                            // Using standard Rust file operations - not Godot's
-                            let load_outcome = if path.exists() {
-                                match std::fs::File::open(path) {
-                                    Ok(mut file) => {
-                                        let mut contents = String::new();
-                                        match file.read_to_string(&mut contents) {
-                                            Ok(_) => {
-                                                // Try to deserialize
-                                                match serde_json::from_str::<ChunkData>(&contents) {
-                                                    Ok(data) => {
-                                                        println!("IO Thread: Deserialized chunk {:?} successfully.", pos);
-                                                        Ok(data)
-                                                    },
-                                                    Err(e) => {
-                                                        eprintln!("IO Thread: Failed to deserialize chunk {:?} from {}: {}", pos, path_str, e);
-                                                        Err(format!("Deserialize error: {}", e))
-                                                    }
-                                                }
-                                            },
-                                            Err(e) => {
-                                                eprintln!("IO Thread: Failed to read file {}: {}", path_str, e);
-                                                Err(format!("File read error: {}", e))
-                                            }
-                                        }
-                                    },
-                                    Err(e) => {
-                                        eprintln!("IO Thread: Failed to open chunk file {} for reading: {}", path_str, e);
-                                        Err(format!("File open error: {}", e))
+
+                            // Standard Rust file IO
+                            let load_outcome = match fs::File::open(path) {
+                                Ok(mut file) => {
+                                    let mut buffer = Vec::new();
+                                    match file.read_to_end(&mut buffer) {
+                                        Ok(_) => match bincode::deserialize::<ChunkData>(&buffer) {
+                                            Ok(data) => Ok(data),
+                                            Err(e) => Err(format!("Deserialize error: {}", e)),
+                                        },
+                                        Err(e) => Err(format!("File read error: {}", e)),
                                     }
                                 }
-                            } else {
-                                // Handle file not found specifically for clearer logging
-                                println!("IO Thread: Chunk file not found for {:?}: {}", pos, path_str);
-                                Err(format!("File not found: {}", path_str))
+                                Err(e) => {
+                                    // Distinguish file not found from other errors
+                                    if e.kind() == std::io::ErrorKind::NotFound {
+                                        Err(format!("File not found: {}", path_str)) // Normal case if chunk never saved/generated
+                                    } else {
+                                        Err(format!("File open error: {}", e)) // Other OS-level error
+                                    }
+                                }
                             };
-    
-                            // 3. Process outcome & send result
+
+                            // --- Process outcome ---
                             match load_outcome {
                                 Ok(loaded_data) => {
-                                    println!("IO Thread: Successfully loaded {:?} from disk. Updating cache.", pos);
-                                    // Update cache (write lock scope)
+                                    // println!("IO Thread: Loaded {:?} from disk. Updating cache.", pos);
                                     if let Ok(mut cache_w) = cache_arc_thread.write() {
-                                        cache_w.insert(pos, loaded_data.clone());
-                                        // Check and enforce cache limit AFTER inserting
-                                        if let Ok(limit) = limit_arc_thread.read() {
-                                            enforce_cache_limit(&mut cache_w, *limit);
-                                        } else {
-                                            eprintln!("IO Thread: Cache limit read lock poisoned while enforcing limit for loaded {:?}", pos);
-                                        }
+                                        cache_w.push(pos, loaded_data.clone()); // Add to LRU cache
                                     } else {
-                                        eprintln!("IO Thread: Cache write lock poisoned when updating for loaded {:?}", pos);
+                                        eprintln!("IO Thread: Cache write lock poisoned updating cache for loaded {:?}", pos);
                                     }
-                                    // Send loaded result back
                                     let _ = result_sender_clone.send(ChunkResult::Loaded(pos, loaded_data));
                                 }
                                 Err(error_msg) => {
-                                    // Log specific reason for load failure
-                                    println!("IO Thread: Load failed for {:?}: {}. Sending LoadFailed.", pos, error_msg);
+                                    // Don't spam errors if it's just file not found
+                                    if !error_msg.starts_with("File not found") {
+                                        eprintln!("IO Thread: Load failed for {:?}: {}", pos, error_msg);
+                                    }
                                     let _ = result_sender_clone.send(ChunkResult::LoadFailed(pos));
                                 }
                             }
-                            println!("IO Thread: Finished processing Load (Disk Attempt) for {:?}", pos);
-                        } // End IORequestType::Load case
-    
+                        } // End Load case
+
                         IORequestType::Save(chunk_data) => {
                             let pos = request.position;
-                            println!("IO Thread: Processing Save for {:?}", pos);
-                            
-                            // --- Save Logic ---
-                            let path_str = format!("{}/chunk_{}_{}.json", save_dir_clone, pos.x, pos.z);
+                            // println!("IO Thread: Processing Save for {:?}", pos);
+                            let path_str = format!("{}/chunk_{}_{}.chunk", save_dir_clone, pos.x, pos.z);
                             let path = Path::new(&path_str);
-    
-                            // Ensure parent directory exists
-                            if let Some(parent) = path.parent() {
-                                if !parent.exists() {
-                                    if let Err(e) = std::fs::create_dir_all(parent) {
-                                        eprintln!("IO Thread: Failed to create parent directories for {}: {}", path_str, e);
-                                        continue;
-                                    }
-                                }
-                            }
-    
-                            match serde_json::to_string(&chunk_data) {
-                                Ok(json) => {
-                                    // Use standard Rust file operations for writing
-                                    match std::fs::File::create(path) {
-                                        Ok(mut file) => {
-                                            match file.write_all(json.as_bytes()) {
-                                                Ok(_) => {
-                                                    println!("IO Thread: Successfully wrote chunk {:?} to {}.", pos, path_str);
-    
-                                                    // Update cache AFTER successful save (write lock scope)
-                                                    if let Ok(mut cache_w) = cache_arc_thread.write() {
-                                                        cache_w.insert(pos, chunk_data.clone());
-                                                        if let Ok(limit) = limit_arc_thread.read() {
-                                                            enforce_cache_limit(&mut cache_w, *limit);
-                                                        } else {
-                                                            eprintln!("IO Thread: Cache limit read lock poisoned while enforcing limit for saved {:?}", pos);
-                                                        }
-                                                    } else {
-                                                        eprintln!("IO Thread: Cache write lock poisoned when updating for saved {:?}", pos);
-                                                    }
-                                                },
-                                                Err(e) => {
-                                                    eprintln!("IO Thread: Failed to write to chunk file {}: {}", path_str, e);
-                                                }
+
+                            // Ensure parent directory exists (optional, create_dir_all did this)
+                            // if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
+
+                            match bincode::serialize(&chunk_data) { // Use pretty print for readability
+                                Ok(bytes) => match fs::File::create(path) {
+                                    Ok(mut file) => {
+                                        if let Err(e) = file.write_all(&bytes) {
+                                            eprintln!("IO Thread: Failed to write to chunk file {}: {}", path_str, e);
+                                        } else {
+                                            // println!("IO Thread: Successfully wrote chunk {:?} to {}.", pos, path_str);
+                                            // Update cache AFTER successful save
+                                            if let Ok(mut cache_w) = cache_arc_thread.write() {
+                                                cache_w.push(pos, chunk_data); // Add/Update in LRU
+                                            } else {
+                                                eprintln!("IO Thread: Cache write lock poisoned updating cache for saved {:?}", pos);
                                             }
-                                        },
-                                        Err(e) => {
-                                            eprintln!("IO Thread: Failed to create chunk file {} for writing: {}", path_str, e);
                                         }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("IO Thread: Failed to create chunk file {} for writing: {}", path_str, e);
                                     }
                                 },
                                 Err(e) => {
                                     eprintln!("IO Thread: Failed to serialize chunk {:?}: {}", pos, e);
                                 }
                             }
-                            println!("IO Thread: Finished processing Save for {:?}", pos);
-                        } // End IORequestType::Save case
-    
+                        } // End Save case
+
                         IORequestType::Shutdown => {
                             println!("IO Thread: Processing Shutdown request. Breaking loop.");
-                            break; // Exit the `for request in io_rx` loop
-                        } // End IORequestType::Shutdown case
-                    } // End match request.request_type
-                } // End `for request in io_rx` loop
-    
-                // This point is reached if the loop terminates either by
-                // receiving Shutdown or by the channel closing (sender dropped).
+                            break; // Exit the loop
+                        }
+                    } // End match request_type
+                } // End loop
+
                 println!("IO Thread: Receiver loop finished.");
-            })); // End of catch_unwind closure
-    
-            // Check if the thread panicked after the catch_unwind call
+            })); // End catch_unwind
+
             if result.is_err() {
                 eprintln!("!!!!!!!!!!!!!!!! IO Thread: *** PANICKED *** !!!!!!!!!!!!!!!!");
             }
-    
             println!("IO Thread: <<< TERMINATED >>>");
-        }); // End of thread::spawn
-    
+        }); // End thread::spawn
+
         println!("ChunkStorage: Construction complete. IO thread spawned.");
-    
+
         // Return the ChunkStorage instance for the main thread
         ChunkStorage {
-            save_dir: save_dir.to_string(),
+            save_dir: fs_save_dir.to_string(), // Store the potentially globalized path
             cache: cache_arc, // Original Arc for main thread access
-            cache_size_limit: limit_arc, // Original Arc for main thread access
-            result_sender, // Original sender (passed in) for sending results back
+            result_sender, // Original sender passed in
             io_request_sender: Some(io_tx), // Sender *TO* the IO thread
-            io_thread_handle: Some(handle), // Handle to join the IO thread later during shutdown
+            io_thread_handle: Some(handle), // Handle to join the IO thread later
         }
-    }
+    } // End new()
         
     // Make this method public
     pub fn get_chunk_path(&self, position: ChunkPosition) -> String {
-        format!("{}/chunk_{}_{}.json", self.save_dir, position.x, position.z)
+        format!("{}/chunk_{}_{}.chunk", self.save_dir, position.x, position.z)
     }
     
     // Check if a chunk exists in storage
     pub fn chunk_exists(&self, position: ChunkPosition) -> bool {
         // Check cache first
         if let Ok(cache) = self.cache.read() {
-            if cache.contains_key(&position) {
+            if cache.contains(&position) {
                 return true;
             }
         }
@@ -348,45 +284,38 @@ impl ChunkStorage {
     }
     
     // Queue a chunk to be saved asynchronously
-    pub fn queue_save_chunk(&self, position: ChunkPosition, heightmap: &[f32], biome_ids: &[u8]) {
-        let chunk_data = ChunkData {
-            position,
-            heightmap: heightmap.to_vec(),
-            biome_ids: biome_ids.to_vec(),
+    pub fn queue_save_chunk(&self, chunk_data: ChunkData) { // Accept full ChunkData
+        let position = chunk_data.position; // Get position needed for error msg
+        let request = IORequest {
+            position, // Use extracted position
+            request_type: IORequestType::Save(chunk_data), // chunk_data is moved here
         };
-        // Cache update is done by IO thread AFTER successful save. Send request.
-        let request = IORequest { position, request_type: IORequestType::Save(chunk_data) };
         if let Some(sender) = &self.io_request_sender {
+            // Send moves request. If it fails, use the position we already extracted.
             if let Err(e) = sender.send(request) {
-                eprintln!("Failed to send Save request for {:?}: {}", position, e);
+                eprintln!("Failed to send Save request for {:?}: {}", position, e); // Use extracted position
             }
         }
+
     }
-   
-    pub fn update_cache_limit(&self) {
-        if let Some(config_arc) = TerrainConfigManager::get_config() {
-           if let Ok(guard) = config_arc.read() {
-                let new_limit = guard.chunk_cache_size();
-                self.set_cache_size_limit(new_limit); // Call existing method
-                println!("ChunkStorage: Updated cache limit to {}", new_limit);
-           }
-       }
-   }
-    
+
+
     // Queue a chunk to be loaded asynchronously
     pub fn queue_load_chunk(&self, position: ChunkPosition) {
         // Cache check is now done by the IO thread. Just send the request.
         let request = IORequest { position, request_type: IORequestType::Load };
         if let Some(sender) = &self.io_request_sender {
-            if let Err(e) = sender.send(request) {
-                eprintln!("Failed to send Load request for {:?}: {}", position, e);
+            // --- FIX: Extract position *before* moving request ---
+            let pos_for_error = request.position; // Copy position needed for error msg (ChunkPosition is Copy)
+            if let Err(e) = sender.send(request) { // request is moved here
+                eprintln!("Failed to send Load request for {:?}: {}", pos_for_error, e); // Use copied position
             }
         }
     }
     
     pub fn get_data_from_cache(&self, position: ChunkPosition) -> Option<ChunkData> {
-        match self.cache.read() {
-            Ok(guard) => guard.get(&position).cloned(),
+        match self.cache.write() { // *** Use write lock for get_mut to update LRU order ***
+            Ok(mut guard) => guard.get_mut(&position).cloned(), // Use get_mut
             Err(_) => {
                 eprintln!("Cache lock poisoned while reading for {:?}", position);
                 None
@@ -422,34 +351,28 @@ impl ChunkStorage {
         cache.clear();
     }
     
-    // Set cache size limit
-    pub fn set_cache_size_limit(&self, limit: usize) {
-        // Update the limit
-        *self.cache_size_limit.write().unwrap() = limit;
-        
-        // If current cache exceeds new limit, trim it
-        let mut cache = self.cache.write().unwrap();
-        let keys: Vec<ChunkPosition> = cache.keys().cloned().collect();
-        
-        if keys.len() > limit {
-            let to_remove = keys.len() - limit;
-            for key in keys.iter().take(to_remove) {
-                cache.remove(key);
-            }
-        }
-    }
-    
     // Get the current size of the cache
     pub fn get_cache_size(&self) -> usize {
-        let cache = self.cache.read().unwrap();
-        cache.len()
-    }
-    
+        match self.cache.read() { // Use read lock for len()
+             Ok(guard) => guard.len(),
+             Err(_) => {
+                  eprintln!("Cache lock poisoned while getting size.");
+                  0
+             }
+        }
+   }
+
     // Get all chunk positions currently in the cache
     pub fn get_cached_chunks(&self) -> Vec<ChunkPosition> {
-        let cache = self.cache.read().unwrap();
-        cache.keys().cloned().collect()
-    }
+        match self.cache.read() { // Use read lock
+             Ok(guard) => guard.iter().map(|(pos, _data)| *pos).collect(), // Iterate over LRU
+             Err(_) => {
+                  eprintln!("Cache lock poisoned while getting cached chunks.");
+                  vec![]
+             }
+        }
+   }
+
     
     // Preload chunks in a region to cache
     pub fn preload_chunks_in_region(&self, center: ChunkPosition, radius: i32) {

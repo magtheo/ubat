@@ -8,7 +8,7 @@ signal bridges_initialized
 # Bridge components
 var game_init_helper = null
 var game_bridge = null
-var config_bridge = null
+# var config_bridge = null
 var network_bridge = null
 var event_bridge = null
 
@@ -22,8 +22,7 @@ func _ready():
 	# Create the game init helper
 	game_init_helper = GameInitHelper.new()
 	add_child(game_init_helper)
-	game_init_helper.debug_mode = true
-	
+
 	# Wait a frame to ensure everything is set up
 	await get_tree().process_frame
 	
@@ -68,7 +67,7 @@ func _fetch_bridge_instances():
 	
 	# Make sure your GameInitHelper exposes a way to get these bridges
 	game_bridge = game_init_helper.get_game_bridge()
-	config_bridge = game_init_helper.get_config_bridge()
+	# config_bridge = game_init_helper.get_config_bridge()
 	network_bridge = game_init_helper.get_network_bridge()
 	event_bridge = game_init_helper.get_event_bridge()
 
@@ -78,9 +77,9 @@ func _verify_bridges() -> bool:
 		push_error("BridgeManager: Game bridge not initialized")
 		return false
 	
-	if not config_bridge:
-		push_error("BridgeManager: Config bridge not initialized")
-		return false
+	# if not config_bridge:
+	# 	push_error("BridgeManager: Config bridge not initialized")
+	# 	return false
 	
 	if not network_bridge:
 		push_error("BridgeManager: Network bridge not initialized")

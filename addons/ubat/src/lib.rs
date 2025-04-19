@@ -9,6 +9,7 @@ mod threading;
 
 mod bridge;
 mod utils;
+mod config;
 
 // The entry point of your extension library.
 struct UbatExtension;

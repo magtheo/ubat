@@ -4,12 +4,34 @@ use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, Resource
 use std::collections::{HashMap, HashSet};
 use godot::classes::mesh::{PrimitiveType, ArrayType};
 
+use std::sync::{Arc, RwLock};
+
 // Use ChunkManager and its types
 use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
 // Use BiomeManager if needed for materials etc.
 use crate::terrain::biome_manager::BiomeManager;
 // Use TerrainConfig to get chunk size if needed
-use crate::terrain::terrain_config::TerrainConfigManager;
+use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
+
+use crate::threading::chunk_storage::MeshGeometry;
+
+// --- Helper function to safely get height, clamping at edges ---
+// Returns the height at (x, z) within the heightmap, clamping coordinates to chunk bounds.
+pub fn get_clamped_height(x: i32, z: i32, heightmap: &[f32], chunk_size: u32) -> f32 {
+    // Clamp coordinates to be within the valid range [0, chunk_size - 1]
+    let clamped_x = x.clamp(0, chunk_size as i32 - 1) as u32;
+    let clamped_z = z.clamp(0, chunk_size as i32 - 1) as u32;
+    let idx = (clamped_z * chunk_size + clamped_x) as usize;
+    // Safety check for index bounds (shouldn't be necessary with clamp, but good practice)
+    heightmap.get(idx).copied().unwrap_or(0.0)
+}
+
+#[derive(Clone)] // Need Clone if we store MeshGeometry directly
+enum ChunkAction {
+    CreateMesh(ChunkPosition, MeshGeometry),
+    RemoveMesh(ChunkPosition),
+    Keep,
+}
 
 #[derive(GodotClass)]
 #[class(base=Node3D)]
@@ -71,15 +93,13 @@ impl INode3D for ChunkController {
             self.render_distance = cm_bind.get_render_distance();
 
             // Get chunk size directly from config manager for consistency
-            if let Some(config_arc) = TerrainConfigManager::get_config() {
-                if let Ok(guard) = config_arc.read() {
-                    self.chunk_size = guard.chunk_size();
-                } else {
-                     godot_error!("ChunkController: Failed to read config for chunk size.");
-                 }
+            let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+            if let Ok(guard) = config_arc.read() { // Lock it
+                self.chunk_size = guard.chunk_size; // Access field
             } else {
-                 godot_warn!("ChunkController: Config manager not available for chunk size.");
-             }
+                godot_error!("ChunkController: Failed to read terrain config lock for chunk size.");
+                // Keep default self.chunk_size
+            }
 
             godot_print!("ChunkController: Initial render distance: {}, chunk size: {}", self.render_distance, self.chunk_size);
         } else {
@@ -267,190 +287,173 @@ impl ChunkController {
     // Update the visual representation of chunks
     fn update_visualization(&mut self) {
         if self.chunk_manager.is_none() { return; }
-        
-        // Fix: Create a local data copy to avoid borrow conflicts
+
         let player_chunk_x = (self.player_position.x / self.chunk_size as f32).floor() as i32;
         let player_chunk_z = (self.player_position.z / self.chunk_size as f32).floor() as i32;
         let render_distance = self.render_distance;
-        let chunk_size = self.chunk_size;
-        
-        let mut active_chunks_in_view = HashSet::new();
-        let chunk_mgr = self.chunk_manager.as_ref().unwrap().clone();  // Clone to avoid borrow issues
 
-        // Iterate within render distance
-        for x in (player_chunk_x - render_distance)..=(player_chunk_x + render_distance) {
-            for z in (player_chunk_z - render_distance)..=(player_chunk_z + render_distance) {
-                let pos = ChunkPosition { x, z };
-                active_chunks_in_view.insert(pos); // Mark this chunk as required visually
+        let mut actions_to_take = HashMap::<ChunkPosition, ChunkAction>::new();
+        let mut current_visible_keys = HashSet::new(); // Track keys currently managed visually
 
-                // Check if the chunk data is ready in ChunkManager
-                if chunk_mgr.bind().is_chunk_ready(x, z) {
-                    // If ready, ensure its mesh exists
-                    if !self.chunk_meshes.contains_key(&pos) {
-                        // Mesh doesn't exist, need to create it. Get data.
-                        let heightmap = chunk_mgr.bind().get_chunk_heightmap(x, z);
-                        // let biomes = chunk_mgr.bind().get_chunk_biomes(x, z); // Get if needed
+        // --- Phase 1: Determine Action for Each Chunk (Minimize Borrow Conflicts) ---
+        { // Scope for immutable borrows of self needed for reads
+            let chunk_manager_bind = self.chunk_manager.as_ref().unwrap().bind(); // Immutable borrow of self.chunk_manager
 
-                        if !heightmap.is_empty() {
-                             // Got data, create the mesh instance
-                            self.create_or_update_chunk_mesh(pos, &heightmap.to_vec());
+            // Determine actions for chunks within render distance
+            for x in (player_chunk_x - render_distance)..=(player_chunk_x + render_distance) {
+                for z in (player_chunk_z - render_distance)..=(player_chunk_z + render_distance) {
+                    let pos = ChunkPosition { x, z };
+                    current_visible_keys.insert(pos); // Mark as potentially visible
+
+                    let is_ready = chunk_manager_bind.is_chunk_ready(x, z);
+                    // Immutable borrow of self.chunk_meshes
+                    let mesh_exists = self.chunk_meshes.contains_key(&pos);
+
+                    let action = if is_ready {
+                        if !mesh_exists {
+                            // Ready but no mesh -> try to get data to create
+                            if let Some(chunk_data) = chunk_manager_bind.get_cached_chunk_data(x, z) {
+                                if let Some(geometry) = chunk_data.mesh_geometry {
+                                    // Clone geometry here to own it for the action
+                                    ChunkAction::CreateMesh(pos, geometry.clone())
+                                } else {
+                                    godot_warn!("ChunkController: Chunk {:?} Ready, data found, but mesh_geometry is None.", pos);
+                                    ChunkAction::Keep // Cannot create mesh
+                                }
+                            } else {
+                                godot_error!("ChunkController: Chunk {:?} Ready, but failed to retrieve cached data!", pos);
+                                ChunkAction::Keep // Cannot create mesh
+                            }
                         } else {
-                            // Chunk ready but data fetch failed (should be rare)
-                            godot_warn!("ChunkController: Chunk {:?} is Ready but heightmap is empty for visualization.", pos);
+                            ChunkAction::Keep // Ready and mesh exists
                         }
+                    } else { // Not ready
+                        if mesh_exists {
+                            ChunkAction::RemoveMesh(pos) // Not ready but mesh exists
+                        } else {
+                            ChunkAction::Keep // Not ready and no mesh exists
+                        }
+                    };
+                    actions_to_take.insert(pos, action);
+                }
+            }
+
+             // Determine actions for chunks currently visualized but now out of view
+             // Need to clone keys to avoid borrowing self.chunk_meshes while iterating and modifying actions_to_take
+             let existing_mesh_keys: Vec<ChunkPosition> = self.chunk_meshes.keys().cloned().collect();
+             for pos in existing_mesh_keys {
+                 if !current_visible_keys.contains(&pos) {
+                     // If it's tracked visually but not in the current view range, mark for removal
+                      actions_to_take.insert(pos, ChunkAction::RemoveMesh(pos));
+                 }
+             }
+
+        } // Immutable borrows end here
+
+        // --- Phase 2: Execute Actions (Mutable Borrow Allowed) ---
+        for (_pos, action) in actions_to_take {
+            match action {
+                ChunkAction::CreateMesh(pos, geometry) => {
+                    // Check again if mesh was somehow created between phases (unlikely but safe)
+                    if !self.chunk_meshes.contains_key(&pos) {
+                         self.apply_mesh_data_to_instance(pos, &geometry);
                     }
-                    // If mesh already exists, assume it's up-to-date for now
-                } else {
-                    // Chunk is not ready, remove its mesh if it exists
+                }
+                ChunkAction::RemoveMesh(pos) => {
                     if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
                         if mesh_instance.is_instance_valid() {
-                            // godot_print!("ChunkController: Removing mesh for non-ready chunk {:?}", pos);
                             mesh_instance.queue_free();
                         }
                     }
                 }
-            }
-        }
-
-        // Remove meshes that are no longer in the active view area
-        let keys_to_remove: Vec<ChunkPosition> = self.chunk_meshes.keys()
-            .filter(|&key| !active_chunks_in_view.contains(key))
-            .cloned()
-            .collect();
-
-        for key in keys_to_remove {
-            if let Some(mut mesh_instance) = self.chunk_meshes.remove(&key) {
-                if mesh_instance.is_instance_valid() {
-                    // godot_print!("ChunkController: Removing mesh for out-of-view chunk {:?}", key);
-                    mesh_instance.queue_free();
+                ChunkAction::Keep => {
+                    // Do nothing
                 }
             }
         }
     }
 
     // Create or update a MeshInstance3D for a chunk
-    fn create_or_update_chunk_mesh(&mut self, pos: ChunkPosition, heightmap: &[f32]) {
-        // Ensure chunk size is valid and heightmap matches
-        let chunk_size = self.chunk_size;
-        if chunk_size == 0 { godot_error!("Chunk size is 0!"); return; }
-        let expected_len = (chunk_size * chunk_size) as usize;
-        if heightmap.len() != expected_len {
-            godot_error!("Heightmap size mismatch for chunk {:?}! Expected {}, got {}", pos, expected_len, heightmap.len());
+    /// Creates or updates the visual MeshInstance3D using pre-calculated geometry data.
+    /// This function performs only Godot API calls and MUST run on the main thread.
+    fn apply_mesh_data_to_instance(&mut self, pos: ChunkPosition, geometry: &MeshGeometry) {
+        // --- REMOVE ALL MESH CALCULATION LOGIC (Vertices, Normals, UVs, Indices) ---
+        // The `geometry` argument now contains this data.
+
+        // --- Convert Vecs to Godot Packed Arrays ---
+        // Check if geometry is empty (e.g., from failed generation)
+        if geometry.vertices.is_empty() || geometry.indices.is_empty() {
+            godot_warn!("Attempted to apply empty mesh geometry for chunk {:?}", pos);
+            // Optionally remove existing mesh instance if it exists
+            if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
+                if mesh_instance.is_instance_valid() {
+                    mesh_instance.queue_free();
+                }
+            }
             return;
         }
-    
-        // --- Generate Mesh Data (Vertices, Normals, UVs, Indices) ---
-        let mut vertices_vec = Vec::with_capacity(expected_len);
-        let mut normals_vec = Vec::with_capacity(expected_len);
-        let mut uvs_vec = Vec::with_capacity(expected_len);
-        // Calculate index count: (width-1) * (height-1) squares * 2 triangles/square * 3 indices/triangle
-        let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
-        let mut indices_vec = Vec::with_capacity(index_count);
-    
-        // Vertex generation loop
-        for z in 0..chunk_size {
-            for x in 0..chunk_size {
-                let idx = (z * chunk_size + x) as usize;
-                let h = heightmap[idx];
-                vertices_vec.push(Vector3::new(x as f32, h, z as f32));
-                // Placeholder normal - needs proper calculation
-                normals_vec.push(Vector3::UP);
-                uvs_vec.push(Vector2::new(
-                    x as f32 / (chunk_size - 1).max(1) as f32, // Avoid div by zero if chunksize=1
-                    z as f32 / (chunk_size - 1).max(1) as f32
-                ));
-            }
-        }
-    
-        // Index generation loop
-        for z in 0..chunk_size - 1 {
-            for x in 0..chunk_size - 1 {
-                let idx00 = (z * chunk_size + x) as i32;        // Top-left
-                let idx10 = idx00 + 1;                          // Top-right
-                let idx01 = idx00 + chunk_size as i32;          // Bottom-left
-                let idx11 = idx01 + 1;                          // Bottom-right
-    
-                // Triangle 1 (Top-left -> Bottom-left -> Top-right)
-                indices_vec.push(idx00);
-                indices_vec.push(idx01);
-                indices_vec.push(idx10);
-    
-                // Triangle 2 (Top-right -> Bottom-left -> Bottom-right)
-                indices_vec.push(idx10);
-                indices_vec.push(idx01);
-                indices_vec.push(idx11);
-            }
-        }
-        
-        // Convert vectors to packed arrays
-        let vertices = PackedVector3Array::from(&vertices_vec[..]);
-        let normals = PackedVector3Array::from(&normals_vec[..]);
-        let uvs = PackedVector2Array::from(&uvs_vec[..]);
-        let indices = PackedInt32Array::from(&indices_vec[..]);
-        // --- End Mesh Data Generation ---
-    
+
+        let vertices_gd: Vec<Vector3> = geometry.vertices.iter().map(|v| Vector3::new(v[0], v[1], v[2])).collect();
+        let normals_gd: Vec<Vector3> = geometry.normals.iter().map(|n| Vector3::new(n[0], n[1], n[2])).collect();
+        let uvs_gd: Vec<Vector2> = geometry.uvs.iter().map(|u| Vector2::new(u[0], u[1])).collect();
+
+        // --- Convert Vecs to Godot Packed Arrays ---
+        let vertices = PackedVector3Array::from(&vertices_gd[..]); // Use from_slice
+        let normals = PackedVector3Array::from(&normals_gd[..]);   // Use from_slice
+        let uvs = PackedVector2Array::from(&uvs_gd[..]);       // Use from_slice
+        let indices = PackedInt32Array::from(&geometry.indices[..]); // Use from_slice
+
         // --- Create/Update Godot Mesh ---
         let mut array_mesh = ArrayMesh::new_gd();
         let mut arrays = VariantArray::new();
+        arrays.resize(13_usize, &Variant::nil()); // TODO: Find a way to access godot max array size dynamicaly
     
-        // You are using indices 0 (vertices), 1 (normals), 2 (uvs), and 4 (indices)
-        // let highest_used_index = 4;
-        arrays.resize(13_usize, &Variant::nil());
+        // Set arrays at correct indices, casting enum .ord() to usize
+        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
+        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
+        arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());
+        arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
 
-        // Set arrays at the CORRECT indices using the CORRECT enum variants
-        // Cast .ord() (which is i32) to usize as required by the compiler error
-        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant()); // Index 0
-        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());  // Index 1
-        arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());         // Index 4 (Corrected Enum Variant)
-        arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant()); // Index 12 (Corrected Enum Variant & Typo)
-
-        // Add the surface using the 2-argument version that your compiler accepts.
         array_mesh.add_surface_from_arrays(
             PrimitiveType::TRIANGLES,
             &arrays,
         );
 
+        let mesh_resource: Gd<Mesh> = array_mesh.upcast();
+
         // --- Create/Update MeshInstance3D ---
         let chunk_world_pos = Vector3::new(
-            pos.x as f32 * chunk_size as f32,
-            0.0, // Base Y position
-            pos.z as f32 * chunk_size as f32
+            pos.x as f32 * self.chunk_size as f32,
+            0.0, // Base position, actual height is in vertices
+            pos.z as f32 * self.chunk_size as f32,
         );
-    
+
         if let Some(mesh_instance) = self.chunk_meshes.get_mut(&pos) {
-            // Update existing instance if valid
-             if mesh_instance.is_instance_valid() {
-                 // Fix: Specify the type for upcast to avoid ambiguity
-                 mesh_instance.set_mesh(&array_mesh.upcast::<Mesh>());
-                 mesh_instance.set_position(chunk_world_pos); // Ensure position is correct
-                 // Optional: Update material if needed
-             } else {
-                  // Instance became invalid somehow, remove it
-                  godot_error!("MeshInstance for chunk {:?} became invalid. Removing.", pos);
-                  self.chunk_meshes.remove(&pos);
-                  // Consider recreating it in the 'else' block below if needed
-             }
-        } else {
-            // Create new MeshInstance3D
-            let mut mesh_instance = MeshInstance3D::new_alloc();
-            // Fix: Specify the type for upcast to avoid ambiguity
-            mesh_instance.set_mesh(&array_mesh.upcast::<Mesh>());
-            mesh_instance.set_position(chunk_world_pos);
-            // Fix: Convert String to GString with a reference
-            let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
-            mesh_instance.set_name(&mesh_name);
-    
-            // Apply default material if loaded
-            // if let Some(ref mat) = self.default_material {
-            //      mesh_instance.set_surface_override_material(0, mat.clone());
-            // }
-    
-            // Add to scene tree as child of ChunkController
-            // Fix: Specify the type for upcast to avoid ambiguity
-            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
-            // Store the new mesh instance
-            self.chunk_meshes.insert(pos, mesh_instance);
-            // godot_print!("ChunkController: Created new mesh for chunk {:?}", pos);
+            if mesh_instance.is_instance_valid() {
+                // Update existing instance
+                mesh_instance.set_mesh(&mesh_resource);
+                mesh_instance.set_position(chunk_world_pos); // Ensure position is correct
+                // No need to re-add child or change name
+            } else {
+                 // Instance in map but invalid, remove and recreate below
+                 godot_error!("MeshInstance for chunk {:?} was invalid. Will recreate.", pos);
+                 self.chunk_meshes.remove(&pos); // Remove invalid entry
+                 // Fall through to create new instance
+            }
         }
-    }
+
+        // If it wasn't in the map, or the existing one was invalid, create a new one
+        if !self.chunk_meshes.contains_key(&pos) {
+             let mut mesh_instance = MeshInstance3D::new_alloc();
+             mesh_instance.set_mesh(&mesh_resource);
+             mesh_instance.set_position(chunk_world_pos);
+             let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
+             mesh_instance.set_name(&mesh_name);
+
+             // Add to scene and store
+             self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+             self.chunk_meshes.insert(pos, mesh_instance);
+             // godot_print!("Created mesh instance for chunk {:?}", pos);
+        }
+    }    
 }
