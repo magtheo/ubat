@@ -1,6 +1,6 @@
 use godot::prelude::*;
 use godot::global::Error;
-use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh};
+use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, ResourceLoader};
 use std::collections::{HashMap, HashSet};
 use godot::classes::mesh::{PrimitiveType, ArrayType};
 
@@ -38,6 +38,7 @@ pub struct ChunkController {
     // Visualization
     visualization_enabled: bool,
     chunk_meshes: HashMap<ChunkPosition, Gd<MeshInstance3D>>, // Use ChunkPosition as key
+    biome_material: Option<Gd<Material>>,
     // Optional: Preload materials
     // default_material: Option<Gd<Material>>,
 
@@ -60,6 +61,7 @@ impl INode3D for ChunkController {
             chunk_size: 32, // Default, will be updated in ready
             visualization_enabled: true,
             chunk_meshes: HashMap::new(),
+            biome_material: None,
 
             mesh_creation_queue: VecDeque::new(),
             mesh_removal_queue: VecDeque::new(),
@@ -102,10 +104,26 @@ impl INode3D for ChunkController {
             godot_error!("ChunkController: Cannot get initial settings, ChunkManager not found!");
         }
 
-        // Preload default material (example)
-        // let loader = ResourceLoader::singleton();
-        // self.default_material = loader.load("res://materials/default_terrain_mat.tres".into()); // Adjust path
-
+        let mut loader = ResourceLoader::singleton();
+        let path = "res://project/terrain/shader/terrain_material.tres";
+        match loader.load(path) {
+            Some(res) => {
+                match res.try_cast::<Material>() {
+                    Ok(mat) => {
+                        self.biome_material = Some(mat);
+                        godot_print!("ChunkController: Loaded biome material from {}", path);
+                    }
+                    Err(_) => {
+                         godot_error!("ChunkController: Failed to cast resource at {} to Material.", path);
+                         self.biome_material = None; // Ensure it's None on error
+                    }
+                }
+            }
+            None => {
+                godot_error!("ChunkController: Failed to load biome material resource at {}. Check path.", path);
+                self.biome_material = None; // Ensure it's None on error
+            }
+        }
         godot_print!("ChunkController: Initialization complete.");
     }
 
@@ -359,38 +377,55 @@ impl ChunkController {
         // The `geometry` argument now contains chunk mesh data.
 
         // --- Convert Vecs to Godot Packed Arrays ---
-        // Check if geometry is empty (e.g., from failed generation)
+        // Check if geometry *indices* are specifically empty (can happen for chunk_size=1)
+        // Added check for vertices as well for robustness.
         if geometry.vertices.is_empty() || geometry.indices.is_empty() {
-            godot_warn!("Attempted to apply empty mesh geometry for chunk {:?}", pos);
-            // Optionally remove existing mesh instance if it exists
+            godot_warn!(
+                "Attempted to apply mesh geometry with empty vertices ({}) or indices ({}) for chunk {:?}",
+                geometry.vertices.len(), geometry.indices.len(), pos
+            );
+            // If a mesh instance somehow already exists for this empty geometry, remove it.
             if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
                 if mesh_instance.is_instance_valid() {
                     mesh_instance.queue_free();
                 }
             }
-            return;
+            return; // Don't proceed with empty/invalid geometry
         }
+
 
         let vertices_gd: Vec<Vector3> = geometry.vertices.iter().map(|v| Vector3::new(v[0], v[1], v[2])).collect();
         let normals_gd: Vec<Vector3> = geometry.normals.iter().map(|n| Vector3::new(n[0], n[1], n[2])).collect();
         let uvs_gd: Vec<Vector2> = geometry.uvs.iter().map(|u| Vector2::new(u[0], u[1])).collect();
+        let colors_gd: Vec<Color> = geometry.colors.iter().map(|c| Color::from_rgba(c[0], c[1], c[2], c[3])).collect();
 
         // --- Convert Vecs to Godot Packed Arrays ---
         let vertices = PackedVector3Array::from(&vertices_gd[..]); // Use from_slice
         let normals = PackedVector3Array::from(&normals_gd[..]);   // Use from_slice
         let uvs = PackedVector2Array::from(&uvs_gd[..]);       // Use from_slice
         let indices = PackedInt32Array::from(&geometry.indices[..]); // Use from_slice
+        let colors = PackedColorArray::from(&colors_gd[..]); // <--- Create PackedColorArray
 
         // --- Create/Update Godot Mesh ---
         let mut array_mesh = ArrayMesh::new_gd();
         let mut arrays = VariantArray::new();
-        arrays.resize(13_usize, &Variant::nil()); // TODO: Find a way to access godot max array size dynamicaly
+        arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil()); // TODO: Find a way to access godot max array size dynamicaly
     
         // Set arrays at correct indices, casting enum .ord() to usize
         arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
         arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
         arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());
-        arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+
+        // Only set indices if they exist
+        if !geometry.indices.is_empty() { // <--- Check moved here implicitly by the return above
+            arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+        } else {
+            // This case should be handled by the return check at the start now.
+            // If we didn't return, we might log here.
+            godot_warn!("Indices array is empty for chunk {:?}, surface might not render correctly.", pos);
+        }
+
+        arrays.set(ArrayType::COLOR.ord() as usize, &colors.to_variant()); // <--- Add COLOR array
 
         array_mesh.add_surface_from_arrays(
             PrimitiveType::TRIANGLES,
@@ -411,27 +446,34 @@ impl ChunkController {
                 // Update existing instance
                 mesh_instance.set_mesh(&mesh_resource);
                 mesh_instance.set_position(chunk_world_pos); // Ensure position is correct
+                if let Some(ref mat) = self.biome_material {
+                    mesh_instance.set_surface_override_material(0, &mat.clone()); // Set override material
+                }
                 // No need to re-add child or change name
             } else {
-                 // Instance in map but invalid, remove and recreate below
-                 godot_error!("MeshInstance for chunk {:?} was invalid. Will recreate.", pos);
-                 self.chunk_meshes.remove(&pos); // Remove invalid entry
-                 // Fall through to create new instance
+                // Instance in map but invalid, remove and recreate below
+                godot_error!("MeshInstance for chunk {:?} was invalid. Will recreate.", pos);
+                self.chunk_meshes.remove(&pos); // Remove invalid entry
+                // Fall through to create new instance
             }
         }
 
         // If it wasn't in the map, or the existing one was invalid, create a new one
         if !self.chunk_meshes.contains_key(&pos) {
-             let mut mesh_instance = MeshInstance3D::new_alloc();
-             mesh_instance.set_mesh(&mesh_resource);
-             mesh_instance.set_position(chunk_world_pos);
-             let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
-             mesh_instance.set_name(&mesh_name);
+            let mut mesh_instance = MeshInstance3D::new_alloc();
+            mesh_instance.set_mesh(&mesh_resource);
+            mesh_instance.set_position(chunk_world_pos);
+            let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
+            mesh_instance.set_name(&mesh_name);
 
-             // Add to scene and store
-             self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
-             self.chunk_meshes.insert(pos, mesh_instance);
-             // godot_print!("Created mesh instance for chunk {:?}", pos);
+            if let Some(ref mat) = self.biome_material {
+                mesh_instance.set_surface_override_material(0, &mat.clone()); // Set override material
+            }
+
+            // Add to scene and store
+            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+            self.chunk_meshes.insert(pos, mesh_instance);
+            // godot_print!("Created mesh instance for chunk {:?}", pos);
         }
     }
 
@@ -480,13 +522,17 @@ impl ChunkController {
 
                     // --- Get data (requires binding again) ---
                     let chunk_data_option = if let Some(manager_gd) = &self.chunk_manager {
-                         manager_gd.bind().get_cached_chunk_data(pos.x, pos.z)
+                        manager_gd.bind().get_cached_chunk_data(pos.x, pos.z)
                     } else {
-                         None
+                        None
                     };
 
                     if let Some(chunk_data) = chunk_data_option {
-                        let geometry = generate_mesh_geometry(&chunk_data.heightmap, self.chunk_size);
+                        let geometry = generate_mesh_geometry(
+                            &chunk_data.heightmap, 
+                            self.chunk_size,
+                            &chunk_data.biome_ids, 
+                        );
                         if !geometry.vertices.is_empty() {
                             // Now we can call the function requiring &mut self
                             self.apply_mesh_data_to_instance(pos, &geometry);
@@ -513,3 +559,4 @@ impl ChunkController {
         } // end while
     } // end process_mesh_queues    
 }
+

@@ -236,7 +236,7 @@ impl INode for BiomeManager {
             color_cache: Arc::new(RwLock::new(HashMap::new())),
             section_cache: Arc::new(RwLock::new(HashMap::new())),
             biome_cache: Arc::new(RwLock::new(HashMap::new())),
-            biome_mask_image_path: GString::from("res://textures/biomeMask_image.png"),
+            biome_mask_image_path: GString::from("res://project/terrain/textures/biomeMask_image.png"),
             noise_path: GString::from("res://project/terrain/noise/blendNoise.tres"),
             sections: Vec::new(),
             blend_distance: 200,

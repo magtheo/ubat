@@ -47,6 +47,7 @@ pub struct MeshGeometry {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<i32>,
+    pub colors: Vec<[f32; 4]>,
 }
 
 // ChunkStorage handles saving and loading chunks from disk
