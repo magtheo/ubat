@@ -25,23 +25,7 @@ func _ready():
 
 	# Wait a frame to ensure everything is set up
 	await get_tree().process_frame
-	
-	# Set options
-	var options = {
-		"world_seed": randi(),
-		"world_width": 10000,
-		"world_height": 10000
-	}
-	
-	# # Initialize the system first
-	# if game_init_helper.init_standalone(options):
-	# 	# Give it another frame to finish initialization
-	# 	await get_tree().process_frame
-		
-	# 	# Now try to get the bridges
-	# 	_initialize_bridges()
-	# else:
-	# 	push_error("Failed to initialize system")
+
 	
 # Initialize bridge components
 func _initialize_bridges():
