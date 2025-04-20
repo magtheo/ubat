@@ -88,21 +88,33 @@ fn generate_mesh_geometry(heightmap: &[f32], chunk_size: u32) -> MeshGeometry {
     }
 
 
-    // Normals (using helper from ChunkController or redefined)
-    // Make sure get_clamped_height is accessible here
+    // Normals (using pure Rust math)
+    // Make sure get_clamped_height is accessible or copied here if needed
     for z in 0..chunk_size {
         for x in 0..chunk_size {
+            // Get neighbor heights (ensure get_clamped_height is available and thread-safe)
             let h_l = get_clamped_height(x as i32 - 1, z as i32, heightmap, chunk_size);
             let h_r = get_clamped_height(x as i32 + 1, z as i32, heightmap, chunk_size);
             let h_d = get_clamped_height(x as i32, z as i32 - 1, heightmap, chunk_size);
             let h_u = get_clamped_height(x as i32, z as i32 + 1, heightmap, chunk_size);
-            let dx = h_l - h_r;
-            let dz = h_d - h_u;
 
-            // Calculate Vector3 first for normalization
-            let normal_v = Vector3::new(dx, 2.0, dz).normalized();
-            normals_vec.push([normal_v.x, normal_v.y, normal_v.z]); // Store as array
+            // Calculate difference vectors (tangents)
+            // Vector Right = (2, h_r - h_l, 0) - Approximation using neighbor distance of 2
+            // Vector Up    = (0, h_u - h_d, 2)
+            let dx = h_l - h_r; // Component of normal related to change in X
+            let dz = h_d - h_u; // Component of normal related to change in Z
+            let dy = 2.0;       // Constant Y component, adjust if needed based on scaling
 
+            // Calculate magnitude
+            let mag_sq = dx * dx + dy * dy + dz * dz;
+            let mag = if mag_sq > 1e-6 { // Avoid division by zero or near-zero
+                mag_sq.sqrt()
+            } else {
+                1.0 // Default to pointing straight up if flat
+            };
+
+            // Normalize manually and store as array
+            normals_vec.push([dx / mag, dy / mag, dz / mag]);
         }
     }
 
@@ -170,7 +182,7 @@ pub struct ChunkManager {
 #[godot_api]
 impl INode3D for ChunkManager {
     fn init(base: Base<Node3D>) -> Self {
-        godot_print!("ChunkManager: Initializing...");
+        println!("ChunkManager: Initializing...");
         let (tx, rx) = channel(); // Create the channel
         let storage = Arc::new(ChunkStorage::new("user://terrain_data", tx.clone()));
         let compute_pool = get_or_init_global_pool(); // Use global pool
@@ -179,7 +191,7 @@ impl INode3D for ChunkManager {
         let chunk_size = match config_arc.read() { // Lock it
             Ok(guard) => guard.chunk_size, // Access field
             Err(_) => {
-                godot_error!("ChunkManager::init: Failed to read terrain config lock for chunk size. Using default 32.");
+                eprintln!("ChunkManager::init: Failed to read terrain config lock for chunk size. Using default 32.");
                 32 // Default if lock fails
             }
         };
@@ -205,7 +217,7 @@ impl INode3D for ChunkManager {
 
     fn ready(&mut self) {
         let start_time = std::time::Instant::now();
-        godot_print!("ChunkManager: Ready. Linking BiomeManager...");
+        println!("ChunkManager: Ready. Linking BiomeManager...");
         self.biome_manager = None; // Ensure starts as None
 
         if let Some(parent) = self.base().get_parent() {
@@ -213,15 +225,15 @@ impl INode3D for ChunkManager {
             let biome_manager_node = parent.get_node_as::<BiomeManager>("BiomeManager");
             if biome_manager_node.is_instance_valid() {
                 if biome_manager_node.bind().is_fully_initialized() {
-                    godot_print!("ChunkManager: BiomeManager is initialized.");
+                    println!("ChunkManager: BiomeManager is initialized.");
                     // Assign if ready (original simple assignment should work now)
                     self.biome_manager = Some(biome_manager_node.clone());
                 } else {
-                    godot_error!("ChunkManager: Found 'BiomeManager', but it's not initialized yet.");
+                    eprintln!("ChunkManager: Found 'BiomeManager', but it's not initialized yet.");
                     // biome_manager remains None
                 }
             } else {
-                godot_error!("ChunkManager: Could not find node 'BiomeManager' under parent.");
+                eprintln!("ChunkManager: Could not find node 'BiomeManager' under parent.");
                 // biome_manager remains None
             }
 
@@ -240,14 +252,14 @@ impl INode3D for ChunkManager {
             }
 
         } else {
-            godot_error!("ChunkManager: Could not find parent node!");
+            eprintln!("ChunkManager: Could not find parent node!");
             // biome_manager remains None
         }
 
         // Ensure chunk size matches latest config
         self.apply_config_updates();
 
-        godot_print!("ChunkManager: Ready completed in {}ms", start_time.elapsed().as_millis());
+        println!("ChunkManager: Ready completed in {}ms", start_time.elapsed().as_millis());
     }
 
     fn process(&mut self, _delta: f64) {
@@ -261,11 +273,11 @@ impl INode3D for ChunkManager {
 
                 // Check if the update was successful by reading the value
                 if self.thread_safe_biome_data.read().unwrap().is_some() {
-                     println!("ChunkManager: ThreadSafeBiomeData successfully initialized/updated in process."); // Use println!
-                     self.is_thread_safe_data_ready = true; // Set flag only on success
+                    println!("ChunkManager: ThreadSafeBiomeData successfully initialized/updated in process."); // Use println!
+                    self.is_thread_safe_data_ready = true; // Set flag only on success
                 } else {
-                     // Optional: Log that managers are present but data update failed
-                     // eprintln!("ChunkManager process: Managers linked, but ThreadSafeBiomeData update still results in None.");
+                    // Optional: Log that managers are present but data update failed
+                    // eprintln!("ChunkManager process: Managers linked, but ThreadSafeBiomeData update still results in None.");
                 }
             } // Else: Managers not linked yet, will try again next frame
         }
@@ -351,6 +363,17 @@ impl ChunkManager {
         // --- Clone the Arc containing the Option<Arc<ThreadSafeBiomeData>> ---
         let biome_data_rwlock_arc = Arc::clone(&self.thread_safe_biome_data);
         // --- Do NOT read() here, read inside the worker thread ---
+
+        let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config();
+        let amplification = match config_arc.read() {
+            Ok(guard) => guard.amplification,
+            Err(_) => {
+                eprintln!("ERROR: Failed to read terrain config lock in queue_generation. Using default amplification 1.0");
+                1.0 // Default on error
+            }
+        };
+        println!("ChunkManager: Amplification = {}", amplification);
+
     
         let chunk_size = self.chunk_size;
         let sender_clone = self.result_sender.clone();
@@ -370,8 +393,8 @@ impl ChunkManager {
             let biome_data_guard = biome_data_rwlock_arc.read().unwrap();
             // Clone the inner Arc<ThreadSafeBiomeData> if it exists
             let biome_data_clone = match *biome_data_guard {
-                 Some(ref arc) => Some(Arc::clone(arc)),
-                 None => None,
+                Some(ref arc) => Some(Arc::clone(arc)),
+                None => None,
             };
             // Drop the read guard quickly
             drop(biome_data_guard);
@@ -396,6 +419,7 @@ impl ChunkManager {
                 noise_funcs_cache_handle, // Pass the noise cache handle for heights
                 chunk_size,
                 sender_clone,
+                amplification,
             );
         });
     }
@@ -403,40 +427,64 @@ impl ChunkManager {
     fn handle_chunk_result(&mut self, result: ChunkResult) {
         // Lock states only when modification is needed
         match result {
-            ChunkResult::Loaded(pos, _data) => {
+            ChunkResult::Loaded(pos, data) => { // data is owned here
+                // --- Update storage cache immediately ---
+                match self.storage.cache.write() { // Access the cache field directly
+                    Ok(mut cache_w) => {
+                        // godot_print!("ChunkManager handle_chunk_result: Caching Loaded data for {:?}", pos); // Optional debug log
+                        cache_w.push(pos, data); // Push loaded data into LRU cache
+                    },
+                    Err(_) => {
+                        eprintln!("ChunkManager handle_chunk_result: Cache write lock poisoned updating cache for loaded {:?}", pos);
+                    }
+                }
+    
+                // Update state AFTER caching attempt
                 let mut states = self.chunk_states.write().unwrap();
-                godot_print!("ChunkManager: Setting state Ready for loaded chunk {:?}", pos);
+                // godot_print!("ChunkManager: Setting state Ready for loaded chunk {:?}", pos);
                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
-            }
+            }    
             ChunkResult::LoadFailed(pos) => {
                 let mut states = self.chunk_states.write().unwrap();
                 match states.get(&pos) {
                     Some(ChunkGenState::Loading) => {
-                        godot_print!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
+                        println!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
                         states.insert(pos, ChunkGenState::Generating);
                         drop(states); // Drop lock BEFORE queueing
                         self.queue_generation(pos);
                     },
                     other_state => {
-                        godot_warn!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}",
+                        eprintln!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}",
                                    pos, other_state);
                         states.insert(pos, ChunkGenState::Unknown); // Reset state
                     }
                 }
             }
-            ChunkResult::Generated(pos, _data) => {
-                 let mut states = self.chunk_states.write().unwrap();
-                 godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
-                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
+            ChunkResult::Generated(pos, data) => { // data is owned here
+                // --- Update storage cache immediately ---
+                match self.storage.cache.write() { // Access the cache field directly
+                   Ok(mut cache_w) => {
+                       // godot_print!("ChunkManager handle_chunk_result: Caching Generated data for {:?}", pos); // Optional debug log
+                       cache_w.push(pos, data); // Push generated data into LRU cache
+                   },
+                   Err(_) => {
+                       eprintln!("ChunkManager handle_chunk_result: Cache write lock poisoned updating cache for generated {:?}", pos);
+                   }
+                }
+   
+                // Update state AFTER caching attempt
+                let mut states = self.chunk_states.write().unwrap();
+                // godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
+                states.insert(pos, ChunkGenState::Ready(Instant::now()));
             }
             ChunkResult::GenerationFailed(pos, err) => {
-                 godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
-                 let mut states = self.chunk_states.write().unwrap();
-                 states.insert(pos, ChunkGenState::Unknown); // Reset state
+                eprintln!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
+                let mut states = self.chunk_states.write().unwrap();
+                states.insert(pos, ChunkGenState::Unknown); // Reset state
             }
             ChunkResult::LogMessage(msg) => {
                 // Log messages received from worker threads
-                godot_warn!("Log from Worker: {}", msg); // Or godot_print!
+                eprintln!("Log from Worker: {}", msg); // Or godot_print!
                 // No state change needed for log messages
             }
         }
@@ -451,6 +499,7 @@ impl ChunkManager {
         noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
         chunk_size: u32,
         sender: Sender<ChunkResult>,
+        amplification: f64,
     ) {
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
@@ -472,16 +521,15 @@ impl ChunkManager {
                 // --- Height generation using cached FUNCTION ---
                 let biome_key = format!("{}", biome_id);
                 if let Some(noise_fn_arc) = noise_funcs_reader.get(&biome_key) {
-                     // Use the cached function Arc directly
-                     let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
-                     // REMOVED: Call to create_noise_function
-                     let height_scale = 4.0;
-                     heightmap[idx] = (height_val * height_scale) as f32;
-                     // TODO: Apply offset if needed - requires getting NoiseParameters too?
-                     // Maybe store (NoiseParameters, Arc<NoiseFn>) in cache? Or apply offset where noise is used.
+                    // Use the cached function Arc directly
+                    let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
+                    let height_scale = 1.0;
+                    heightmap[idx] = (height_val * height_scale * amplification) as f32;
+                    // TODO: Apply offset if needed - requires getting NoiseParameters too?
+                    // Maybe store (NoiseParameters, Arc<NoiseFn>) in cache? Or apply offset where noise is used.
                 } else {
-                     println!("Warning: Noise function for biome key '{}' not found.", biome_key);
-                     heightmap[idx] = 0.0;
+                    println!("Warning: Noise function for biome key '{}' not found.", biome_key);
+                    heightmap[idx] = 0.0;
                 }
             }
         }
@@ -596,7 +644,7 @@ impl ChunkManager {
             // godot_print!("Chunk {:?}: No biome boundaries found within the chunk, skipping blend.", chunk_pos); // Optional log
             return;
         }
-        godot_print!("Chunk {:?}: Found {} boundary cells to blend.", chunk_pos, boundary_indices.len()); // Add logging
+        println!("Chunk {:?}: Found {} boundary cells to blend.", chunk_pos, boundary_indices.len()); // Add logging
         
         let original_heights = heightmap.to_vec();
 
@@ -643,7 +691,7 @@ impl ChunkManager {
         
         let player_chunk_x = (player_x / self.chunk_size as f32).floor() as i32;
         let player_chunk_z = (player_z / self.chunk_size as f32).floor() as i32;
-        godot_print!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
+        println!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
         
         let mut required_chunks = HashSet::new();
         for x in (player_chunk_x - self.render_distance)..=(player_chunk_x + self.render_distance) {
@@ -714,7 +762,7 @@ impl ChunkManager {
         match self.storage.get_data_from_cache(pos) {
             Some(chunk_data) => PackedFloat32Array::from(&chunk_data.heightmap[..]),
             None => {
-                godot_error!("CRITICAL: Chunk {:?} state is Ready, but data not found in storage cache!", pos);
+                eprintln!("CRITICAL: Chunk {:?} state is Ready, but data not found in storage cache!", pos);
                 PackedFloat32Array::new()
             }
         }
@@ -735,7 +783,7 @@ impl ChunkManager {
                 PackedInt32Array::from(&biomes_i32[..])
             },
             None => {
-                godot_error!("CRITICAL: Chunk {:?} state is Ready, but biome data not found in storage cache!", pos);
+                eprintln!("CRITICAL: Chunk {:?} state is Ready, but biome data not found in storage cache!", pos);
                 PackedInt32Array::new()
             }
         }
@@ -748,12 +796,12 @@ impl ChunkManager {
 
     #[func]
     pub fn shutdown(&mut self) {
-        godot_print!("ChunkManager: Initiating explicit shutdown sequence...");
+        eprintln!("ChunkManager: Initiating explicit shutdown sequence...");
         // If we have unique ownership of the storage Arc, we can call shutdown
         if let Some(storage_mut) = Arc::get_mut(&mut self.storage) {
             storage_mut.shutdown();
         } else {
-            godot_warn!("ChunkManager: Cannot get exclusive access to ChunkStorage for explicit shutdown");
+            eprintln!("ChunkManager: Cannot get exclusive access to ChunkStorage for explicit shutdown");
         }
     }
 
@@ -762,7 +810,7 @@ impl ChunkManager {
         let new_distance = distance.max(1).min(32); // Clamp
         if new_distance != self.render_distance{
             self.render_distance = new_distance;
-            godot_print!("ChunkManager: Render distance set to {}", self.render_distance);
+            println!("ChunkManager: Render distance set to {}", self.render_distance);
             // Trigger an unload check immediately? Optional.
         }
     }
@@ -774,7 +822,7 @@ impl ChunkManager {
 
     #[func]
     pub fn set_biome_manager(&mut self, biome_manager: Gd<BiomeManager>) {
-        godot_print!("ChunkManager: BiomeManager reference set.");
+        println!("ChunkManager: BiomeManager reference set.");
         self.biome_manager = Some(biome_manager);
         self.update_thread_safe_biome_data(); // Update data immediately
     }
@@ -787,7 +835,7 @@ impl ChunkManager {
             let noise_mgr_bind = noise_mgr_gd.bind(); // Bind noise manager
     
             if biome_mgr_bind.is_fully_initialized() {
-                godot_print!("ChunkManager: Updating thread-safe biome data cache using BiomeManager and NoiseManager.");
+                println!("ChunkManager: Updating thread-safe biome data cache using BiomeManager and NoiseManager.");
     
                 let mut current_data_guard = self.thread_safe_biome_data.write().unwrap();
     
@@ -809,10 +857,10 @@ impl ChunkManager {
     
     
             } else {
-                godot_warn!("ChunkManager: Attempted to update biome data, but BiomeManager is not ready.");
+                eprintln!("ChunkManager: Attempted to update biome data, but BiomeManager is not ready.");
             }
         } else {
-            godot_warn!("ChunkManager: Cannot update biome data, BiomeManager or NoiseManager reference missing.");
+            eprintln!("ChunkManager: Cannot update biome data, BiomeManager or NoiseManager reference missing.");
         }
     }
 
@@ -824,26 +872,26 @@ impl ChunkManager {
         let old_chunk_size = self.chunk_size;
         self.chunk_size = guard.chunk_size; // Access field
         // REMOVED: self.storage.update_cache_limit();
-        godot_print!("ChunkManager: Applied config updates (chunk_size: {})", self.chunk_size);
+        println!("ChunkManager: Applied config updates (chunk_size: {})", self.chunk_size);
         if old_chunk_size != self.chunk_size {
-            godot_warn!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
+            eprintln!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
             self.chunk_states.write().unwrap().clear();
             self.storage.clear_cache(); // Make sure clear_cache exists or remove if LRU handles it
         }
         } else {
-            godot_error!("ChunkManager::apply_config_updates: Failed to read terrain config lock.");
+            eprintln!("ChunkManager::apply_config_updates: Failed to read terrain config lock.");
         }
     }
 }
 
 impl Drop for ChunkManager {
     fn drop(&mut self) {
-        godot_print!("ChunkManager: Dropping. Shutting down ChunkStorage IO thread...");
+        println!("ChunkManager: Dropping. Shutting down ChunkStorage IO thread...");
         // Since storage is an Arc, we can only call shutdown if we have unique ownership
         if let Some(storage_mut) = Arc::get_mut(&mut self.storage) {
             storage_mut.shutdown();
         } else {
-            godot_warn!("ChunkManager::drop: Cannot get mutable access to ChunkStorage for shutdown (still shared). IO thread may not stop cleanly.");
+            eprintln!("ChunkManager::drop: Cannot get mutable access to ChunkStorage for shutdown (still shared). IO thread may not stop cleanly.");
         }
     }
 }
