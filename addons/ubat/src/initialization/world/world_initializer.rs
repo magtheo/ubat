@@ -126,7 +126,6 @@ impl WorldInitializer {
             WorldStateConfig {
                 seed: game_config.world_seed,
                 world_size: (game_config.world_size.width, game_config.world_size.height),
-                generation_parameters: game_config.generation_rules.clone(), // Clone rules
             }
         };
         

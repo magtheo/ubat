@@ -4,7 +4,6 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use godot::prelude::*;
 
-use crate::terrain::GenerationRules;
 use crate::terrain::{BiomeManager, ChunkManager};
 use crate::core::event_bus::EventBus;
 use crate::config::config_manager::{GameConfiguration, GameModeConfig, WorldSize};
@@ -25,7 +24,6 @@ trait WorldEntity: Send + Sync {
 pub struct WorldStateConfig {
     pub seed: u64,
     pub world_size: (u32, u32),
-    pub generation_parameters: GenerationRules,
 }
 
 // Comprehensive world state management

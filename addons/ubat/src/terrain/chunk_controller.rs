@@ -377,8 +377,7 @@ impl ChunkController {
     /// Creates or updates the visual MeshInstance3D using pre-calculated geometry data.
     /// This function performs only Godot API calls and MUST run on the main thread.
     fn apply_mesh_data_to_instance(&mut self, pos: ChunkPosition, geometry: &MeshGeometry) {
-        // --- REMOVE ALL MESH CALCULATION LOGIC (Vertices, Normals, UVs, Indices) ---
-        // The `geometry` argument now contains this data.
+        // The `geometry` argument now contains chunk mesh data.
 
         // --- Convert Vecs to Godot Packed Arrays ---
         // Check if geometry is empty (e.g., from failed generation)

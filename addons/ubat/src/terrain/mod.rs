@@ -4,7 +4,7 @@ pub mod chunk_manager;
 pub mod chunk_controller;
 pub mod biome_manager;
 
-pub mod generation_rules;
+// pub mod generation_rules;
 pub mod terrain_config;
 
 pub mod noise;
@@ -16,7 +16,7 @@ pub use chunk_controller::ChunkController;
 pub use biome_manager::BiomeManager;
 
 pub use terrain_config::TerrainConfig;
-pub use generation_rules::GenerationRules;
+// pub use generation_rules::GenerationRules;
 
 // Component descriptions:
 

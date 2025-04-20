@@ -389,7 +389,6 @@ impl SystemInitializer {
                 *manager = WorldStateManager::new(WorldStateConfig {
                     seed: 0,
                     world_size: (0, 0),
-                    generation_parameters: Default::default(),
                 });
             }
         }
