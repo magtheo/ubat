@@ -15,7 +15,6 @@ use std::collections::hash_map::DefaultHasher; // For hashing option
 
 use crate::resource::resource_manager::resource_manager;
 use crate::terrain::chunk_manager::ChunkManager;
-use crate::terrain::generation_rules::GenerationRules;
 
 use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
 
@@ -552,42 +551,69 @@ impl BiomeManager {
         // If we have a biome image, use it for section detection
         if let Some(ref img) = self.biome_image {
             let coords = self.world_to_mask_coords(world_x, world_y);
-            
-            // Get the pixel color
-            let color = img.get_pixel(coords.x, coords.y);
-            
-            // Map color to section ID
-            if color.r > 0.7 && color.g < 0.3 && color.b < 0.3 {
-                return 1; // Red section
-            } else if color.r < 0.3 && color.g > 0.7 && color.b < 0.3 {
-                return 2; // Green section
-            } else if color.r < 0.3 && color.g < 0.3 && color.b > 0.7 {
-                return 3; // Blue section
-            } else if color.r > 0.7 && color.g > 0.7 && color.b < 0.3 {
-                return 4; // Yellow section
-            } else if color.r > 0.7 && color.g < 0.3 && color.b > 0.7 {
-                return 5; // Purple section  
-            } else if color.r < 0.3 && color.g > 0.7 && color.b > 0.7 {
-                return 6; // Cyan section
-            } else {
-                // Handle mixed colors
-                let max_component = f32::max(f32::max(color.r, color.g), color.b);
 
-                if max_component < 0.1 {
-                    return 0; // Very dark: undefined section
-                } else if color.r >= color.g && color.r >= color.b {
-                    return 1; // Red dominant: Section 1
-                } else if color.g >= color.r && color.g >= color.b {
-                    return 2; // Green dominant: Section 2
-                } else {
-                    return 3; // Blue dominant: Section 3
+            // Ensure coordinates are valid before getting pixel
+            if coords.x >= 0 && coords.x < self.mask_width && coords.y >= 0 && coords.y < self.mask_height {
+                // Get the pixel color
+                let color = img.get_pixel(coords.x, coords.y);
+
+                // Use color distance matching instead of hardcoded ranges
+
+                let sampled_color = (color.r, color.g, color.b);
+
+                // Define target colors for sections (ensure these match your mask image intent)
+                // Format: (section_id, (R, G, B))
+                let section_colors: &[(u8, (f32, f32, f32))] = &[
+                    (1, (1.0, 0.0, 0.0)), // Section 1: Red
+                    (2, (0.0, 1.0, 0.0)), // Section 2: Green
+                    (3, (0.0, 0.0, 1.0)), // Section 3: Blue
+                    // Add entries for sections 4, 5, 6 if used, e.g.:
+                    // (4, (1.0, 1.0, 0.0)), // Section 4: Yellow
+                    // (5, (1.0, 0.0, 1.0)), // Section 5: Purple
+                    // (6, (0.0, 1.0, 1.0)), // Section 6: Cyan
+                ];
+
+                let mut min_dist_sq = f32::MAX;
+                let mut closest_section_id = 0; // Default to 0 (unknown) if no match or image issue
+
+                for (id, target_color) in section_colors {
+                    let dr = sampled_color.0 - target_color.0;
+                    let dg = sampled_color.1 - target_color.1;
+                    let db = sampled_color.2 - target_color.2;
+                    // Calculate squared distance (faster than sqrt)
+                    let dist_sq = dr*dr + dg*dg + db*db;
+
+                    if dist_sq < min_dist_sq {
+                        min_dist_sq = dist_sq;
+                        closest_section_id = *id;
+                    }
                 }
+
+                // Optional: Add a threshold if needed. If the closest color is still
+                // very different, maybe return 0.
+                // const MAX_ALLOWED_DIST_SQ: f32 = 0.2 * 0.2; // Example: allow 20% deviation per channel
+                // if min_dist_sq > MAX_ALLOWED_DIST_SQ {
+                //     godot_print!("WARN: Sampled color ({}, {}, {}) at mask ({}, {}) is far from any target section color. Min dist sq: {}",
+                //         sampled_color.0, sampled_color.1, sampled_color.2, coords.x, coords.y, min_dist_sq);
+                //     return 0; // Return unknown section
+                // }
+
+
+                // Return the ID of the section with the closest color
+                return closest_section_id;
+
+            } else {
+                // Log warning if coordinates are out of bounds (shouldn't happen with world_to_mask_coords clamp)
+                 eprintln!("BiomeManager::get_section_id - Calculated mask coords ({}, {}) out of bounds ({}, {}) for world ({}, {})",
+                             coords.x, coords.y, self.mask_width, self.mask_height, world_x, world_y);
+                 // Fall through to fallback logic
             }
         }
 
         // Fallback to original behavior if no image data or other error
+        eprintln!("BiomeManager::get_section_id - Falling back to coordinate-based section for world ({}, {})", world_x, world_y);
         let relative_x = world_x / self.world_width;
-        let relative_y = world_y / self.world_height;
+        // let relative_y = world_y / self.world_height; // Y not used in original fallback
 
         if relative_x < 0.33 {
             1 // Section 1
@@ -793,36 +819,7 @@ impl BiomeManager {
         // Notify ChunkManager if possible
         self.notify_data_change();
     }
-    
-    // Apply generation rules to the biome manager
-    #[func]
-    pub fn apply_generation_rules(&mut self, rules_dict: Dictionary) -> VariantArray {
-        // Convert Dictionary to GenerationRules
-        let mut validated_rules = GenerationRules::from_dictionary(&rules_dict);
-        let warnings = validated_rules.validate_and_fix();
-        
-        // Apply the validated rules
-        self.blend_distance = validated_rules.biome_blend_distance as i32;
-        
-        // Update noise settings if available
-        if let Some(ref mut noise) = self.noise {
-            noise.set_fractal_octaves(validated_rules.terrain_octaves as i32);
-            noise.set_frequency(1.0 / validated_rules.terrain_scale);
-            // Set other noise parameters as needed
-        }
-        
-        // Clear caches since we've changed parameters
-        self.clear_cache();
-        
-        // Convert warnings to VariantArray for GDScript
-        let mut result = VariantArray::new();
-        for warning in warnings {
-            result.push(&warning.to_variant());
-        }
-        
-        result
-    }
-    
+       
     // Helper method to notify ChunkManager
     fn notify_data_change(&self) {
         godot_print!("BiomeManager: Data changed (notification)");
@@ -1087,49 +1084,76 @@ impl ThreadSafeBiomeData {
     pub fn get_section_id(&self, world_x: f32, world_y: f32) -> u8 {
         // Use image data if available
         if !self.image_data.is_empty() && self.image_width > 0 && self.image_height > 0 {
-            let mask_x = ((world_x / self.world_width) * self.image_width as f32) as i32;
-            let mask_y = ((world_y / self.world_height) * self.image_height as f32) as i32;
-  
-            let x = mask_x.clamp(0, self.image_width - 1) as usize;
-            let y = mask_y.clamp(0, self.image_height - 1) as usize;
-  
-            // Get the pixel data (RGBA format)
-            let idx = (y * self.image_width as usize + x) * 4;
-  
+            // Calculate mask coordinates, clamping to bounds
+            let mask_x_f = (world_x / self.world_width) * self.image_width as f32;
+            let mask_y_f = (world_y / self.world_height) * self.image_height as f32;
+
+            // Clamp *before* casting to usize to prevent negative indices
+            let x = (mask_x_f.max(0.0) as i32).min(self.image_width - 1) as usize;
+            let y = (mask_y_f.max(0.0) as i32).min(self.image_height - 1) as usize;
+
+            // Calculate the index in the flattened RGBA image data buffer
+            let idx = (y * self.image_width as usize + x) * 4; // 4 bytes per pixel (RGBA)
+
+            // Check if index is valid for reading RGB values
             if idx + 2 < self.image_data.len() {
                 let r = self.image_data[idx] as f32 / 255.0;
                 let g = self.image_data[idx + 1] as f32 / 255.0;
                 let b = self.image_data[idx + 2] as f32 / 255.0;
-  
-                // Use the same section detection logic as BiomeManager
-                if r > 0.7 && g < 0.3 && b < 0.3 {
-                    return 1; // Red section
-                } else if r < 0.3 && g > 0.7 && b < 0.3 {
-                    return 2; // Green section
-                } else if r < 0.3 && g < 0.3 && b > 0.7 {
-                    return 3; // Blue section
-                } else {
-                    // For mixed colors, use dominant component
-                    let max_component = f32::max(f32::max(r, g), b);
-  
-                    if max_component < 0.1 {
-                        return 0; // Very dark: undefined section
-                    } else if r >= g && r >= b {
-                        return 1; // Red dominant: Section 1
-                    } else if g >= r && g >= b {
-                        return 2; // Green dominant: Section 2
-                    } else {
-                        return 3; // Blue dominant: Section 3
+                // Alpha (idx + 3) is ignored here
+
+                // Use color distance matching - MUST BE IDENTICAL TO BiomeManager version
+
+                let sampled_color = (r, g, b);
+
+                // Define target colors for sections (MUST MATCH BiomeManager)
+                let section_colors: &[(u8, (f32, f32, f32))] = &[
+                    (1, (1.0, 0.0, 0.0)), // Section 1: Red
+                    (2, (0.0, 1.0, 0.0)), // Section 2: Green
+                    (3, (0.0, 0.0, 1.0)), // Section 3: Blue
+                    // Add entries for sections 4, 5, 6 if used, e.g.:
+                    // (4, (1.0, 1.0, 0.0)), // Section 4: Yellow
+                    // (5, (1.0, 0.0, 1.0)), // Section 5: Purple
+                    // (6, (0.0, 1.0, 1.0)), // Section 6: Cyan
+                ];
+
+                let mut min_dist_sq = f32::MAX;
+                let mut closest_section_id = 0; // Default to 0 (unknown)
+
+                for (id, target_color) in section_colors {
+                    let dr = sampled_color.0 - target_color.0;
+                    let dg = sampled_color.1 - target_color.1;
+                    let db = sampled_color.2 - target_color.2;
+                    let dist_sq = dr*dr + dg*dg + db*db;
+
+                    if dist_sq < min_dist_sq {
+                        min_dist_sq = dist_sq;
+                        closest_section_id = *id;
                     }
                 }
+
+                // Optional: Add the same threshold check as in BiomeManager if desired
+                // const MAX_ALLOWED_DIST_SQ: f32 = 0.2 * 0.2;
+                // if min_dist_sq > MAX_ALLOWED_DIST_SQ {
+                //     // Note: Cannot use godot_print/warn directly in thread.
+                //     // Consider sending a log message back via the channel if needed.
+                //     return 0; // Return unknown section
+                // }
+
+                return closest_section_id;
+
+            } else {
+                // Index out of bounds - indicates an issue with coordinate calculation or image data
+                // Cannot log directly from thread easily, maybe send error back via channel?
+                 // Fall through to fallback logic
             }
         }
-  
-        // Fallback to simpler logic
+
+        // Fallback to simpler logic if image data is unavailable or calculation failed
         // (same as current implementation)
         let relative_x = world_x / self.world_width;
-        let relative_y = world_y / self.world_height;
-  
+        // let relative_y = world_y / self.world_height; // Y not used in original fallback
+
         if relative_x < 0.33 {
             1 // Section 1
         } else if relative_x < 0.66 {
