@@ -53,7 +53,7 @@ pub enum ChunkResult {
 // This function mirrors the calculation logic previously in ChunkController
 fn generate_mesh_geometry(heightmap: &[f32], chunk_size: u32) -> MeshGeometry {
     if chunk_size == 0 || heightmap.is_empty() {
-        godot_warn!("generate_mesh_geometry called with invalid parameters. Returning empty geometry.");
+        eprintln!("WARN generate_mesh_geometry called with invalid parameters. Returning empty geometry.");
         return MeshGeometry {
             vertices: vec![],
             normals: vec![],
@@ -64,7 +64,7 @@ fn generate_mesh_geometry(heightmap: &[f32], chunk_size: u32) -> MeshGeometry {
     let expected_len = (chunk_size * chunk_size) as usize;
     if heightmap.len() != expected_len {
         // Log error or handle appropriately
-        godot_error!("Heightmap size mismatch in generate_mesh_geometry! Expected {}, got {}", expected_len, heightmap.len());
+        eprintln!("ERROR Heightmap size mismatch in generate_mesh_geometry! Expected {}, got {}", expected_len, heightmap.len());
         // Return empty geometry or panic, depending on desired robustness
         return MeshGeometry { vertices: vec![], normals: vec![], uvs: vec![], indices: vec![] };
     }
@@ -197,7 +197,7 @@ impl INode3D for ChunkManager {
             thread_safe_biome_data: Arc::new(RwLock::new(None)),
             is_thread_safe_data_ready: false,
             noise_functions_cache: None, // Initialize as None
-            render_distance: 2, // TODO This overides terrain initalizer, and it shuold not
+            render_distance: 4, // TODO This overides terrain initalizer, and it shuold not
             chunk_size,
             last_unload_check: Instant::now(),
         }

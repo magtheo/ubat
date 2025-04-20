@@ -41,7 +41,7 @@ impl Default for TerrainConfig {
             use_parallel_processing: true,
             chunk_cache_size: 400,
             chunks_per_frame: 4,
-            render_distance: 2,
+            render_distance: 4,
         }
     }
 }

@@ -18,7 +18,7 @@ blend_distance = 400.0
 use_parallel_processing = true
 chunk_cache_size = 600
 chunks_per_frame = 4
-render_distance = 2 # Moved from terrain_initializer
+render_distance = 4 # Moved from terrain_initializer
 
 [terrain.noise_paths]
 "1" = "res://project/terrain/noise/corralNoise.tres"
