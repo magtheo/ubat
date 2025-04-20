@@ -1163,106 +1163,138 @@ impl ThreadSafeBiomeData {
         }
     }
   
-    // Get biome ID at world coordinates
-    pub fn get_biome_id(&self, world_x: f32, world_y: f32) -> u8 {
+    // Get biome ID and weights at world coordinates
+    pub fn get_biome_id_and_weights(&self, world_x: f32, world_y: f32) -> Vec<(u8, f32)> {
         let target_section_id = self.get_section_id(world_x, world_y);
-        if target_section_id == 0 { return 0; }
-        if self.points.is_empty() { return 0; } // Simplified check
-
-        // --- Use Spatial Grid ---
-        let mut closest1: Option<(usize, f32)> = None; // (point_index, dist_sq)
-        let mut closest2: Option<(usize, f32)> = None; // (point_index, dist_sq)
+        if target_section_id == 0 || self.points.is_empty() {
+            return vec![(0, 1.0)]; // Return unknown biome with full weight
+        }
+    
+        // --- Find Closest Points (Simplified Approach - Closest 2 Overall in Radius) ---
+        // This simplification avoids complex mask boundary checks initially.
+        // Search a radius large enough to potentially cross section boundaries.
+        let search_radius_world = self.blend_distance as f32 * 1.5; // Example radius
         let pos = (world_x, world_y);
-
-        // Calculate query point's grid cell
+    
+        let mut closest_points: Vec<(usize, f32)> = Vec::with_capacity(2); // (point_index, dist_sq)
+    
+        // Use spatial grid search (similar logic to existing get_biome_id, but don't filter by section_id initially)
         let grid_x = (world_x / self.grid_cell_size).floor() as usize;
         let grid_y = (world_y / self.grid_cell_size).floor() as usize;
-
-        // Determine search radius in cells (e.g., cover blend distance + 1 cell buffer)
-        // Search slightly larger area than blend distance to ensure we find the correct neighbours
-        let search_radius_world = self.blend_distance as f32 * 1.5; // Adjust multiplier as needed
         let cell_radius = (search_radius_world / self.grid_cell_size).ceil() as usize + 1;
-
-        // Iterate through nearby grid cells
         let min_cx = grid_x.saturating_sub(cell_radius);
         let max_cx = (grid_x + cell_radius).min(self.grid_width - 1);
         let min_cy = grid_y.saturating_sub(cell_radius);
         let max_cy = (grid_y + cell_radius).min(self.grid_height - 1);
-
+    
         for cx in min_cx..=max_cx {
             for cy in min_cy..=max_cy {
-                // Access the list of point indices for this cell
-                // Cloning Arc is cheap, direct indexing is fine for read access
                 let point_indices_in_cell = &self.spatial_grid_indices[cx][cy];
-
                 for point_index in point_indices_in_cell {
                     let candidate_point = &self.points[*point_index];
-
-                    // *** Filter by target section ID ***
-                    if candidate_point.section_id != target_section_id {
-                        continue; // Skip points not in the target section
-                    }
-
-                    // Calculate squared distance (cheaper than sqrt initially)
                     let dx = pos.0 - candidate_point.position.0;
                     let dy = pos.1 - candidate_point.position.1;
                     let dist_sq = dx * dx + dy * dy;
-
-                    // Update closest points found *so far* within the target section
-                    if closest1.is_none() || dist_sq < closest1.unwrap().1 {
-                        closest2 = closest1;
-                        closest1 = Some((*point_index, dist_sq));
-                    } else if closest2.is_none() || dist_sq < closest2.unwrap().1 {
-                         // Avoid selecting the same point twice
-                         if closest1.unwrap().0 != *point_index {
-                              closest2 = Some((*point_index, dist_sq));
+    
+                    // Keep track of the two closest points found so far
+                    if closest_points.len() < 2 {
+                        closest_points.push((*point_index, dist_sq));
+                        closest_points.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+                    } else if dist_sq < closest_points[1].1 {
+                         // Check if it's also closer than the current closest (index 0)
+                         if dist_sq < closest_points[0].1 {
+                             closest_points[1] = closest_points[0]; // Shift old closest to second
+                             closest_points[0] = (*point_index, dist_sq);
+                         } else {
+                              // Check if it's the same point as the closest before replacing second
+                              if closest_points[0].0 != *point_index {
+                                   closest_points[1] = (*point_index, dist_sq);
+                              }
                          }
                     }
                 }
             }
         }
-
-        // --- Process the closest points found ---
-        if let (Some((p1_idx, dist1_sq)), Some((p2_idx, dist2_sq))) = (closest1, closest2) {
-            let dist1 = dist1_sq.sqrt();
-            let dist2 = dist2_sq.sqrt();
-            let blend_dist_f32 = self.blend_distance as f32;
-
-            if dist1 < blend_dist_f32 && (dist2 - dist1) < blend_dist_f32 {
-                // --- USE cached blend_noise_fn ---
-                let mut noise_influence = 0.0;
-                // Check the stored Option<Arc<...>>
-                if let Some(ref noise_fn_arc) = self.blend_noise_fn {
-                     let noise_val = noise_fn_arc.get([world_x as f64, world_y as f64]); // Use the Arc
-                     let normalized_noise = (noise_val as f32 * 0.5) + 0.5;
-                     let noise_factor = 0.3;
-                     noise_influence = (normalized_noise - 0.5) * noise_factor;
-                }
-                // --- END CHANGE ---
-
-                let blend_factor = (dist1 / blend_dist_f32).clamp(0.0, 1.0);
-                let adjusted_blend = (blend_factor + noise_influence).clamp(0.0, 1.0);
-                let rand_val = self.get_deterministic_random(world_x, world_y);
-                let p1_biome_id = self.points[p1_idx].biome_id;
-                let p2_biome_id = self.points[p2_idx].biome_id;
-                return if rand_val < adjusted_blend { p2_biome_id } else { p1_biome_id };
-            } else {
-                return self.points[p1_idx].biome_id; // No blending
-            }
-        } else if let Some((p1_idx, _)) = closest1 {
-            return self.points[p1_idx].biome_id; // Only one point found
+    
+        // --- Calculate Weights ---
+        if closest_points.is_empty() {
+             godot_warn!("get_biome_id_and_weights: No Voronoi points found for section {}.", target_section_id);
+             return vec![(0, 1.0)]; // Fallback
         }
-        // Fallback
-        godot_warn!("get_biome_id: No Voronoi points found in spatial grid search radius for section {}.", target_section_id);
-        0
+    
+        let (p1_idx, dist1_sq) = closest_points[0];
+        let p1_biome_id = self.points[p1_idx].biome_id;
+    
+        if closest_points.len() < 2 {
+            return vec![(p1_biome_id, 1.0)]; // Only one point found
+        }
+    
+        let (p2_idx, dist2_sq) = closest_points[1];
+        let p2_biome_id = self.points[p2_idx].biome_id;
+    
+        // Prevent division by zero if points are coincident
+        if dist1_sq < 1e-6 && dist2_sq < 1e-6 {
+             // Points are basically at the same location, pick one arbitrarily
+             return vec![(p1_biome_id, 1.0)];
+        }
+    
+        // If biomes are the same, no blending needed
+        if p1_biome_id == p2_biome_id {
+            return vec![(p1_biome_id, 1.0)];
+        }
+    
+        let dist1 = dist1_sq.sqrt();
+        let dist2 = dist2_sq.sqrt();
+        let blend_dist_f32 = self.blend_distance as f32;
+    
+        // Calculate blend factor (0 = all p1, 1 = all p2) based on relative distance within blend range
+        let weight2 = if (dist1 + dist2) < 1e-6 { // Avoid division by zero
+             0.5 // Equally close
+        } else {
+             // Normalize based on distance sum, scaled by blend distance?
+             // Simpler: linear blend based on distance up to blend_distance
+             (dist1 / blend_dist_f32).clamp(0.0, 1.0)
+             // Alternative: (dist1 / (dist1 + dist2)).clamp(0.0, 1.0) - less direct control via blend_distance
+        };
+    
+    
+        // --- Apply Noise Perturbation (Optional but matches previous logic) ---
+        let mut noise_influence = 0.0;
+        if let Some(ref noise_fn_arc) = self.blend_noise_fn {
+            let noise_val = noise_fn_arc.get([world_x as f64, world_y as f64]);
+            let normalized_noise = (noise_val * 0.5) + 0.5; // Map to 0-1
+             // Adjust influence range (e.g., +/- 0.15)
+             let noise_factor = 0.3; // How much noise affects the weight (0.0 to 1.0)
+             noise_influence = (normalized_noise as f32 - 0.5) * noise_factor;
+        }
+        // --- End Noise ---
+    
+        let final_weight2 = (weight2 + noise_influence).clamp(0.0, 1.0);
+        let final_weight1 = 1.0 - final_weight2;
+    
+        // Return weights for both biomes
+        vec![(p1_biome_id, final_weight1), (p2_biome_id, final_weight2)]
+    }
+    
+    // Helper lerp function if not available elsewhere
+    fn lerp(a: f32, b: f32, t: f32) -> f32 {
+        a * (1.0 - t) + b * t
     }
     
     // Get biome color based on biome ID
     pub fn get_biome_color(&self, world_x: f32, world_y: f32) -> Color {
-        let biome_id = self.get_biome_id(world_x, world_y);
-        
-        // Generate a color based on biome ID
-        match biome_id {
+        // Get the list of biome influences and their weights
+        let influences = self.get_biome_id_and_weights(world_x, world_y);
+    
+        // Find the biome ID with the highest weight
+        // Use map_or to handle the case where influences might be empty (though it shouldn't be with defaults)
+        let primary_biome_id = influences
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+            .map_or(0, |(id, _weight)| *id); // Default to 0 (Unknown) if no max found or empty
+    
+        // Generate a color based on the primary biome ID
+        match primary_biome_id { // Match the u8 ID now
             1 => Color::from_rgba(0.8, 0.2, 0.2, 1.0), // Coral - reddish
             2 => Color::from_rgba(0.9, 0.9, 0.2, 1.0), // Sand - yellowish
             3 => Color::from_rgba(0.5, 0.5, 0.5, 1.0), // Rock - gray

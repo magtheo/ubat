@@ -10,6 +10,7 @@ use std::sync::mpsc::{channel, Sender, Receiver, TryRecvError};
 use crate::terrain::noise::noise_manager::NoiseManager;
 use crate::terrain::noise::noise_parameters::{NoiseParameters, RustNoiseType, RustFractalType}; // Import enums too
 use noise::NoiseFn; // Keep NoiseFn trait import
+use std::cmp::Ordering;
 
 // Use ChunkData from ChunkStorage
 use crate::threading::chunk_storage::{ChunkData, MeshGeometry, ChunkStorage};
@@ -196,10 +197,10 @@ impl INode3D for ChunkManager {
                             godot_print!("ChunkManager: Received LoadFailed for {:?}, will queue generation", pos);
                         },
                         ChunkResult::Loaded(pos, _) => {
-                            godot_print!("ChunkManager: Received Loaded result for {:?}", pos);
+                            // godot_print!("ChunkManager: Received Loaded result for {:?}", pos);
                         },
                         ChunkResult::Generated(pos, _) => {
-                            godot_print!("ChunkManager: Received Generated result for {:?}", pos);
+                            // godot_print!("ChunkManager: Received Generated result for {:?}", pos);
                         },
                         _ => {}
                     }
@@ -406,7 +407,7 @@ impl ChunkManager {
     ) {
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
-        let mut biome_ids = vec![0u8; chunk_area];
+        let mut biome_ids_primary = vec![0u8; chunk_area]; // Store the *primary* biome for potential later use/debugging
 
         let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
         // Pre-fetch blend noise function Arc
@@ -418,41 +419,63 @@ impl ChunkManager {
                 let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
 
-                let biome_id = biome_data.get_biome_id(world_x, world_z);
-                biome_ids[idx] = biome_id;
+                // Get biome influences
+                let influences = biome_data.get_biome_id_and_weights(world_x, world_z);
 
-                // --- Height generation using cached FUNCTION ---
-                let biome_key = format!("{}", biome_id);
-                if let Some(noise_fn_arc) = noise_funcs_reader.get(&biome_key) {
-                    // Use the cached function Arc directly
-                    let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
-                    let height_scale = 1.0;
-                    heightmap[idx] = (height_val * height_scale * amplification) as f32;
-                    // TODO: Apply offset if needed - requires getting NoiseParameters too?
-                    // Maybe store (NoiseParameters, Arc<NoiseFn>) in cache? Or apply offset where noise is used.
-                } else {
-                    println!("Warning: Noise function for biome key '{}' not found.", biome_key);
-                    heightmap[idx] = 0.0;
+                if influences.is_empty() {
+                    heightmap[idx] = 0.0; // Should not happen if get_biome_id_and_weights handles defaults
+                    biome_ids_primary[idx] = 0;
+                    continue;
                 }
-            }
-        }
-        drop(noise_funcs_reader); // Drop read lock
+    
+                // Store primary biome (highest weight)
+                biome_ids_primary[idx] = influences.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)).map_or(0, |(id, _)| *id);
+    
+                let mut final_height = 0.0;
+                let mut total_weight = 0.0;
+    
+                for &(biome_id, weight) in &influences {
+                    if weight < 1e-3 { continue; } // Skip negligible influence
+   
+                    let biome_key = format!("{}", biome_id);
+                    if let Some(noise_fn_arc) = noise_funcs_reader.get(&biome_key) {
+                        let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
+                        // Apply amplification *per biome noise source* before interpolation
+                        final_height += (height_val * amplification) as f32 * weight;
+                        total_weight += weight;
+                    } else {
+                        println!("Warning: Noise function for biome key '{}' not found during generation.", biome_key);
+                        // How to handle missing noise? Add 0 height? Skip weight?
+                        // Adding 0 height might be okay if weights don't sum to 1.
+                        // If weights *should* sum to 1, this needs careful handling.
+                        // Let's assume for now it contributes 0 height but keep its weight.
+                        total_weight += weight;
+                    }
+               }
+   
+   
+                // Normalize height if weights summed correctly, otherwise use as is
+                if total_weight > 1e-3 {
+                    // If weights were designed to sum to 1, normalization might not be needed,
+                    // but it adds robustness if they don't perfectly sum due to float issues or missing noise.
+                    heightmap[idx] = final_height / total_weight;
+                } else if influences.len() == 1 && influences[0].0 == 0 {
+                    // If the only influence is biome 0 (Unknown/Fallback)
+                    heightmap[idx] = 0.0; // Explicitly set to 0
+                }
+                else {
+                    heightmap[idx] = 0.0; // Default fallback if no valid weights/noise found
+                }
+           }
+       }
+       drop(noise_funcs_reader); // Drop read lock
 
-        // --- Pass function Arc to blend_heights ---
-        Self::blend_heights(
-            &mut heightmap,
-            &biome_ids,
-            chunk_size,
-            biome_data.blend_distance(),
-            blend_noise_fn_arc, // Pass Option<Arc<...>>
-            pos
-        );
 
         // Create ChunkData (unchanged)
         let chunk_data = ChunkData { 
             position: pos, 
             heightmap, 
-            biome_ids, 
+            biome_ids: biome_ids_primary, 
         };
 
         // Save and Send Result (unchanged)
@@ -497,96 +520,6 @@ impl ChunkManager {
              self.storage.get_data_from_cache(pos)
         } else {
             None // Not ready, so definitely not in cache in a usable state
-        }
-    }
-
-    // Height Blending Logic (Static)
-    fn blend_heights(
-        heightmap: &mut [f32],
-        biome_ids: &[u8],
-        chunk_size: u32,
-        blend_distance: i32,
-        // Accept Option<Arc<NoiseFn>> directly
-        blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
-        chunk_pos: ChunkPosition,
-    ) {
-        if blend_distance <= 0 || chunk_size == 0 { return; }
-
-        let cs = chunk_size as i32;
-        let cs_usize = chunk_size as usize;
-        let blend_radius = blend_distance.max(1);
-        let mut boundary_indices = HashSet::<usize>::new();
-
-        for z in 0..cs {
-            for x in 0..cs {
-                let current_idx = (z * cs + x) as usize;
-                let current_biome_id = biome_ids[current_idx];
-        
-                // Check neighbours (up, down, left, right)
-                let neighbors = [
-                    (x - 1, z), (x + 1, z),
-                    (x, z - 1), (x, z + 1)
-                ];
-        
-                for (nx, nz) in neighbors.iter() {
-                    // Check bounds
-                    if *nx >= 0 && *nx < cs && *nz >= 0 && *nz < cs {
-                        let neighbor_idx = (nz * cs + nx) as usize;
-                        // If neighbor biome is different, mark current cell as boundary
-                        if biome_ids[neighbor_idx] != current_biome_id {
-                            boundary_indices.insert(current_idx);
-                            break; // No need to check other neighbors for this cell
-                        }
-                    }
-                    // Optional: Also consider neighbours in adjacent chunks if necessary,
-                    // but this requires fetching neighbour biome data, adding complexity.
-                    // Start by blending within the chunk first.
-                }
-            }
-        }
-
-        if boundary_indices.is_empty() {
-            // godot_print!("Chunk {:?}: No biome boundaries found within the chunk, skipping blend.", chunk_pos); // Optional log
-            return;
-        }
-        println!("Chunk {:?}: Found {} boundary cells to blend.", chunk_pos, boundary_indices.len()); // Add logging
-        
-        let original_heights = heightmap.to_vec();
-
-        for idx in boundary_indices {
-            let x = (idx % cs_usize) as i32; let z = (idx / cs_usize) as i32;
-            let mut total_weight = 0.0; let mut weighted_height_sum = 0.0;
-            let mut blend_needed_for_this_cell = false;
-
-            for dz in -blend_radius..=blend_radius {
-                for dx in -blend_radius..=blend_radius {
-                    // ... (neighbor index calculation) ...
-                    let nx = x + dx; let nz = z + dz;
-                    if nx >= 0 && nx < cs && nz >= 0 && nz < cs {
-                        let nidx = (nz * cs + nx) as usize;
-                        // ... (calculate base weight) ...
-                        let distance_sq = (dx * dx + dz * dz) as f32;
-                        let weight_factor = (blend_radius as f32 * blend_radius as f32 - distance_sq).max(0.0);
-                        if weight_factor <= 0.0 { continue; }
-                        let mut weight = weight_factor / (blend_radius as f32 * blend_radius as f32);
-
-                        // --- Use passed function Arc ---
-                        if let Some(ref noise_fn_arc) = blend_noise_fn { // Use the passed Option<Arc>
-                            let world_nx = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
-                            let world_nz = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
-                            let noise_val = noise_fn_arc.get([world_nx as f64 * 0.01, world_nz as f64 * 0.01]);
-                            let noise_influence = (noise_val * 0.4) as f32;
-                            weight = (weight + noise_influence).clamp(0.0, 1.0);
-                        }
-
-                        if weight > 0.001 { /* ... accumulate ... */ total_weight += weight; weighted_height_sum += original_heights[nidx] * weight; blend_needed_for_this_cell = true; }
-                    }
-                }
-            }
-
-            if blend_needed_for_this_cell && total_weight > 0.001 {
-                heightmap[idx] = weighted_height_sum / total_weight;
-            }
         }
     }
 
