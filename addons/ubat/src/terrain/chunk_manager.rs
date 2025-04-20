@@ -434,7 +434,6 @@ impl ChunkManager {
                  let mut states = self.chunk_states.write().unwrap();
                  states.insert(pos, ChunkGenState::Unknown); // Reset state
             }
-            // **FIXED:** Handle LogMessage here
             ChunkResult::LogMessage(msg) => {
                 // Log messages received from worker threads
                 godot_warn!("Log from Worker: {}", msg); // Or godot_print!
@@ -457,11 +456,9 @@ impl ChunkManager {
         let mut heightmap = vec![0.0f32; chunk_area];
         let mut biome_ids = vec![0u8; chunk_area];
 
-        // --- Use Function Cache ---
         let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
         // Pre-fetch blend noise function Arc
         let blend_noise_fn_arc = noise_funcs_reader.get("biome_blend").cloned();
-        // --- End Use ---
 
         for z in 0..chunk_size {
             for x in 0..chunk_size {
@@ -486,7 +483,6 @@ impl ChunkManager {
                      println!("Warning: Noise function for biome key '{}' not found.", biome_key);
                      heightmap[idx] = 0.0;
                 }
-                // --- END CHANGE ---
             }
         }
         drop(noise_funcs_reader); // Drop read lock
@@ -500,7 +496,6 @@ impl ChunkManager {
             blend_noise_fn_arc, // Pass Option<Arc<...>>
             pos
         );
-        // --- END CHANGE ---
 
         // Generate mesh geometry (unchanged)
         println!("ChunkManager Worker: Generating mesh geometry for {:?}", pos); // Use println
@@ -564,49 +559,81 @@ impl ChunkManager {
     ) {
         if blend_distance <= 0 || chunk_size == 0 { return; }
 
-        let cs = chunk_size as i32; let cs_usize = chunk_size as usize;
+        let cs = chunk_size as i32;
+        let cs_usize = chunk_size as usize;
         let blend_radius = blend_distance.max(1);
         let mut boundary_indices = HashSet::<usize>::new();
 
-        if boundary_indices.is_empty() { return; }
+        for z in 0..cs {
+            for x in 0..cs {
+                let current_idx = (z * cs + x) as usize;
+                let current_biome_id = biome_ids[current_idx];
+        
+                // Check neighbours (up, down, left, right)
+                let neighbors = [
+                    (x - 1, z), (x + 1, z),
+                    (x, z - 1), (x, z + 1)
+                ];
+        
+                for (nx, nz) in neighbors.iter() {
+                    // Check bounds
+                    if *nx >= 0 && *nx < cs && *nz >= 0 && *nz < cs {
+                        let neighbor_idx = (nz * cs + nx) as usize;
+                        // If neighbor biome is different, mark current cell as boundary
+                        if biome_ids[neighbor_idx] != current_biome_id {
+                            boundary_indices.insert(current_idx);
+                            break; // No need to check other neighbors for this cell
+                        }
+                    }
+                    // Optional: Also consider neighbours in adjacent chunks if necessary,
+                    // but this requires fetching neighbour biome data, adding complexity.
+                    // Start by blending within the chunk first.
+                }
+            }
+        }
 
+        if boundary_indices.is_empty() {
+            // godot_print!("Chunk {:?}: No biome boundaries found within the chunk, skipping blend.", chunk_pos); // Optional log
+            return;
+        }
+        godot_print!("Chunk {:?}: Found {} boundary cells to blend.", chunk_pos, boundary_indices.len()); // Add logging
+        
         let original_heights = heightmap.to_vec();
 
         for idx in boundary_indices {
-             let x = (idx % cs_usize) as i32; let z = (idx / cs_usize) as i32;
-             let mut total_weight = 0.0; let mut weighted_height_sum = 0.0;
-             let mut blend_needed_for_this_cell = false;
+            let x = (idx % cs_usize) as i32; let z = (idx / cs_usize) as i32;
+            let mut total_weight = 0.0; let mut weighted_height_sum = 0.0;
+            let mut blend_needed_for_this_cell = false;
 
-             for dz in -blend_radius..=blend_radius {
-                 for dx in -blend_radius..=blend_radius {
-                     // ... (neighbor index calculation) ...
-                      let nx = x + dx; let nz = z + dz;
-                      if nx >= 0 && nx < cs && nz >= 0 && nz < cs {
-                           let nidx = (nz * cs + nx) as usize;
-                           // ... (calculate base weight) ...
-                           let distance_sq = (dx * dx + dz * dz) as f32;
-                           let weight_factor = (blend_radius as f32 * blend_radius as f32 - distance_sq).max(0.0);
-                           if weight_factor <= 0.0 { continue; }
-                           let mut weight = weight_factor / (blend_radius as f32 * blend_radius as f32);
+            for dz in -blend_radius..=blend_radius {
+                for dx in -blend_radius..=blend_radius {
+                    // ... (neighbor index calculation) ...
+                    let nx = x + dx; let nz = z + dz;
+                    if nx >= 0 && nx < cs && nz >= 0 && nz < cs {
+                        let nidx = (nz * cs + nx) as usize;
+                        // ... (calculate base weight) ...
+                        let distance_sq = (dx * dx + dz * dz) as f32;
+                        let weight_factor = (blend_radius as f32 * blend_radius as f32 - distance_sq).max(0.0);
+                        if weight_factor <= 0.0 { continue; }
+                        let mut weight = weight_factor / (blend_radius as f32 * blend_radius as f32);
 
-                           // --- Use passed function Arc ---
-                           if let Some(ref noise_fn_arc) = blend_noise_fn { // Use the passed Option<Arc>
-                               let world_nx = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
-                               let world_nz = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
-                               let noise_val = noise_fn_arc.get([world_nx as f64 * 0.01, world_nz as f64 * 0.01]);
-                               let noise_influence = (noise_val * 0.4) as f32;
-                               weight = (weight + noise_influence).clamp(0.0, 1.0);
-                           }
-                           // --- END CHANGE ---
+                        // --- Use passed function Arc ---
+                        if let Some(ref noise_fn_arc) = blend_noise_fn { // Use the passed Option<Arc>
+                            let world_nx = chunk_pos.x as f32 * chunk_size as f32 + nx as f32;
+                            let world_nz = chunk_pos.z as f32 * chunk_size as f32 + nz as f32;
+                            let noise_val = noise_fn_arc.get([world_nx as f64 * 0.01, world_nz as f64 * 0.01]);
+                            let noise_influence = (noise_val * 0.4) as f32;
+                            weight = (weight + noise_influence).clamp(0.0, 1.0);
+                        }
 
-                           if weight > 0.001 { /* ... accumulate ... */ total_weight += weight; weighted_height_sum += original_heights[nidx] * weight; blend_needed_for_this_cell = true; }
-                      }
-                 }
-             }
+                        if weight > 0.001 { /* ... accumulate ... */ total_weight += weight; weighted_height_sum += original_heights[nidx] * weight; blend_needed_for_this_cell = true; }
+                    }
+                }
+            }
 
-             if blend_needed_for_this_cell && total_weight > 0.001 {
-                 heightmap[idx] = weighted_height_sum / total_weight;
-             }
+            if blend_needed_for_this_cell && total_weight > 0.001 {
+                heightmap[idx] = weighted_height_sum / total_weight;
+            }
         }
     }
 
@@ -631,37 +658,37 @@ impl ChunkManager {
         self.unload_distant_chunks(&required_chunks);
     }
 
-     // Unload chunks no longer needed
-     fn unload_distant_chunks(&self, required_chunks: &HashSet<ChunkPosition>) {
-         let mut chunks_to_remove = Vec::new();
-         let unload_dist_sq = (self.render_distance + 2) * (self.render_distance + 2); // Use buffer
+    // Unload chunks no longer needed
+    fn unload_distant_chunks(&self, required_chunks: &HashSet<ChunkPosition>) {
+        let mut chunks_to_remove = Vec::new();
+        let unload_dist_sq = (self.render_distance + 2) * (self.render_distance + 2); // Use buffer
 
-         // Scope for read lock
-         {
-             let states_read = self.chunk_states.read().unwrap();
-             for (&pos, &state) in states_read.iter() {
-                 // Check if outside required set
-                 if !required_chunks.contains(&pos) {
-                    // Check if ready and inactive for a while, or just unknown/not busy
-                     if let ChunkGenState::Ready(ready_time) = state {
-                        if ready_time.elapsed() > UNLOAD_CHECK_INTERVAL * 2 { // Example longer timeout
-                             chunks_to_remove.push(pos);
-                         }
-                     } else if state == ChunkGenState::Unknown {
-                          chunks_to_remove.push(pos); // Remove unknown states outside view
-                     }
-                 }
-             }
-         } // Read lock dropped
+        // Scope for read lock
+        {
+            let states_read = self.chunk_states.read().unwrap();
+            for (&pos, &state) in states_read.iter() {
+                // Check if outside required set
+                if !required_chunks.contains(&pos) {
+                // Check if ready and inactive for a while, or just unknown/not busy
+                    if let ChunkGenState::Ready(ready_time) = state {
+                    if ready_time.elapsed() > UNLOAD_CHECK_INTERVAL * 2 { // Example longer timeout
+                            chunks_to_remove.push(pos);
+                        }
+                    } else if state == ChunkGenState::Unknown {
+                        chunks_to_remove.push(pos); // Remove unknown states outside view
+                    }
+                }
+            }
+        } // Read lock dropped
 
          if !chunks_to_remove.is_empty() {
             //  godot_print!("ChunkManager: Unloading {} chunk states.", chunks_to_remove.len());
-             let mut states_write = self.chunk_states.write().unwrap();
-             for pos in chunks_to_remove {
-                 states_write.remove(&pos);
-                 // Optional: Hint to storage cache to remove, but LRU should handle it.
-                 // self.storage.evict_from_cache(pos); // Needs implementation in ChunkStorage
-             }
+            let mut states_write = self.chunk_states.write().unwrap();
+            for pos in chunks_to_remove {
+                states_write.remove(&pos);
+                // Optional: Hint to storage cache to remove, but LRU should handle it.
+                // self.storage.evict_from_cache(pos); // Needs implementation in ChunkStorage
+            }
          }
      }
 
@@ -733,11 +760,11 @@ impl ChunkManager {
     #[func]
     pub fn set_render_distance(&mut self, distance: i32) {
         let new_distance = distance.max(1).min(32); // Clamp
-         if new_distance != self.render_distance{
-             self.render_distance = new_distance;
-             godot_print!("ChunkManager: Render distance set to {}", self.render_distance);
-             // Trigger an unload check immediately? Optional.
-         }
+        if new_distance != self.render_distance{
+            self.render_distance = new_distance;
+            godot_print!("ChunkManager: Render distance set to {}", self.render_distance);
+            // Trigger an unload check immediately? Optional.
+        }
     }
 
     #[func]
