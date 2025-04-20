@@ -1,30 +1,19 @@
 use godot::prelude::*;
 use godot::global::Error;
-use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, ResourceLoader};
+use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh};
 use std::collections::{HashMap, HashSet};
 use godot::classes::mesh::{PrimitiveType, ArrayType};
-
-use std::sync::{Arc, RwLock};
 
 // Use ChunkManager and its types
 use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
 // Use BiomeManager if needed for materials etc.
-use crate::terrain::biome_manager::BiomeManager;
 // Use TerrainConfig to get chunk size if needed
 use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
-
+use crate::terrain::generation_utils::{generate_mesh_geometry, get_clamped_height};
+use std::collections::VecDeque;
 use crate::threading::chunk_storage::MeshGeometry;
 
-// --- Helper function to safely get height, clamping at edges ---
-// Returns the height at (x, z) within the heightmap, clamping coordinates to chunk bounds.
-pub fn get_clamped_height(x: i32, z: i32, heightmap: &[f32], chunk_size: u32) -> f32 {
-    // Clamp coordinates to be within the valid range [0, chunk_size - 1]
-    let clamped_x = x.clamp(0, chunk_size as i32 - 1) as u32;
-    let clamped_z = z.clamp(0, chunk_size as i32 - 1) as u32;
-    let idx = (clamped_z * chunk_size + clamped_x) as usize;
-    // Safety check for index bounds (shouldn't be necessary with clamp, but good practice)
-    heightmap.get(idx).copied().unwrap_or(0.0)
-}
+
 
 #[derive(Clone)] // Need Clone if we store MeshGeometry directly
 enum ChunkAction {
@@ -39,8 +28,6 @@ pub struct ChunkController {
     #[base]
     base: Base<Node3D>,
     chunk_manager: Option<Gd<ChunkManager>>,
-    // Keep BiomeManager ref if needed (e.g., for getting materials)
-    // biome_manager: Option<Gd<BiomeManager>>,
 
     // Config/State
     render_distance: i32,
@@ -53,6 +40,11 @@ pub struct ChunkController {
     chunk_meshes: HashMap<ChunkPosition, Gd<MeshInstance3D>>, // Use ChunkPosition as key
     // Optional: Preload materials
     // default_material: Option<Gd<Material>>,
+
+    mesh_creation_queue: VecDeque<ChunkPosition>, // Queue positions needing meshes
+    mesh_removal_queue: VecDeque<ChunkPosition>, // Queue positions for mesh removal
+    mesh_updates_per_frame: usize, // Store the configured limit
+
 }
 
 #[godot_api]
@@ -68,7 +60,10 @@ impl INode3D for ChunkController {
             chunk_size: 32, // Default, will be updated in ready
             visualization_enabled: true,
             chunk_meshes: HashMap::new(),
-            // default_material: None,
+
+            mesh_creation_queue: VecDeque::new(),
+            mesh_removal_queue: VecDeque::new(),
+            mesh_updates_per_frame: 4, // Initial default, overridden in ready
         }
     }
 
@@ -93,11 +88,12 @@ impl INode3D for ChunkController {
             self.render_distance = cm_bind.get_render_distance();
 
             // Get chunk size directly from config manager for consistency
-            let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config(); // Get static ref
+            let config_arc = TerrainConfigManager::get_config(); // Get static ref
             if let Ok(guard) = config_arc.read() { // Lock it
                 self.chunk_size = guard.chunk_size; // Access field
+                self.mesh_updates_per_frame = guard.mesh_updates_per_frame;
             } else {
-                godot_error!("ChunkController: Failed to read terrain config lock for chunk size.");
+                godot_error!("ChunkController: Failed to read terrain config lock for chunk size or mesh_updates_per_frame");
                 // Keep default self.chunk_size
             }
 
@@ -132,6 +128,7 @@ impl INode3D for ChunkController {
                 self.update_visualization();
             }
         }
+        self.process_mesh_queues();
     }
 }
 
@@ -293,68 +290,52 @@ impl ChunkController {
         let render_distance = self.render_distance;
 
         let mut actions_to_take = HashMap::<ChunkPosition, ChunkAction>::new();
-        let mut current_visible_keys = HashSet::new(); // Track keys currently managed visually
+        let mut current_visible_keys = HashSet::new();
 
-        // --- Phase 1: Determine Action for Each Chunk (Minimize Borrow Conflicts) ---
-        { // Scope for immutable borrows of self needed for reads
-            let chunk_manager_bind = self.chunk_manager.as_ref().unwrap().bind(); // Immutable borrow of self.chunk_manager
+        // --- Phase 1: Determine Action ---
+        { // Scope for chunk_manager_bind read lock
+            let chunk_manager_bind = self.chunk_manager.as_ref().unwrap().bind();
 
-            // Determine actions for chunks within render distance
+            // Identify chunks needing creation
             for x in (player_chunk_x - render_distance)..=(player_chunk_x + render_distance) {
                 for z in (player_chunk_z - render_distance)..=(player_chunk_z + render_distance) {
                     let pos = ChunkPosition { x, z };
-                    current_visible_keys.insert(pos); // Mark as potentially visible
+                    current_visible_keys.insert(pos);
 
                     let is_ready = chunk_manager_bind.is_chunk_ready(x, z);
-                    // Immutable borrow of self.chunk_meshes
                     let mesh_exists = self.chunk_meshes.contains_key(&pos);
 
-                    let action = if is_ready {
-                        if !mesh_exists {
-                            // Ready but no mesh -> try to get data to create
-                            if let Some(chunk_data) = chunk_manager_bind.get_cached_chunk_data(x, z) {
-                                if let Some(geometry) = chunk_data.mesh_geometry {
-                                    // Clone geometry here to own it for the action
-                                    ChunkAction::CreateMesh(pos, geometry.clone())
-                                } else {
-                                    godot_warn!("ChunkController: Chunk {:?} Ready, data found, but mesh_geometry is None.", pos);
-                                    ChunkAction::Keep // Cannot create mesh
-                                }
-                            } else {
-                                godot_error!("ChunkController: Chunk {:?} Ready, but failed to retrieve cached data!", pos);
-                                ChunkAction::Keep // Cannot create mesh
-                            }
-                        } else {
-                            ChunkAction::Keep // Ready and mesh exists
+                    if is_ready && !mesh_exists {
+                        // Need to create mesh, enqueue position if not already queued
+                        // Simple check: avoids adding duplicates in the same frame
+                        if !self.mesh_creation_queue.contains(&pos) {
+                             // godot_print!("ChunkController: Enqueuing {:?} for mesh creation.", pos); // Debug log
+                             self.mesh_creation_queue.push_back(pos);
                         }
-                    } else { // Not ready
-                        if mesh_exists {
-                            ChunkAction::RemoveMesh(pos) // Not ready but mesh exists
-                        } else {
-                            ChunkAction::Keep // Not ready and no mesh exists
-                        }
-                    };
-                    actions_to_take.insert(pos, action);
+                    }
+                    // Note: We don't need to handle the case where it's ready and mesh exists here,
+                    // nor the case where it's not ready and no mesh exists.
                 }
             }
 
-             // Determine actions for chunks currently visualized but now out of view
-             // Need to clone keys to avoid borrowing self.chunk_meshes while iterating and modifying actions_to_take
-             let existing_mesh_keys: Vec<ChunkPosition> = self.chunk_meshes.keys().cloned().collect();
-             for pos in existing_mesh_keys {
-                 if !current_visible_keys.contains(&pos) {
-                     // If it's tracked visually but not in the current view range, mark for removal
-                      actions_to_take.insert(pos, ChunkAction::RemoveMesh(pos));
-                 }
-             }
+            // Identify meshes needing removal
+            let existing_mesh_keys: Vec<ChunkPosition> = self.chunk_meshes.keys().cloned().collect();
+            for pos in existing_mesh_keys {
+                if !current_visible_keys.contains(&pos) {
+                    // Mesh exists but is out of range, enqueue for removal if not already queued
+                     if !self.mesh_removal_queue.contains(&pos) {
+                          // godot_print!("ChunkController: Enqueuing {:?} for mesh removal.", pos); // Debug log
+                          self.mesh_removal_queue.push_back(pos);
+                     }
+                }
+            }
+        } // chunk_manager_bind lock released
 
-        } // Immutable borrows end here
-
-        // --- Phase 2: Execute Actions (Mutable Borrow Allowed) ---
+        // --- Phase 2: Execute Actions (Will be modified in Phase 2 of plan) ---
+        // For now, keep immediate execution to test Phase 1 works
         for (_pos, action) in actions_to_take {
             match action {
                 ChunkAction::CreateMesh(pos, geometry) => {
-                    // Check again if mesh was somehow created between phases (unlikely but safe)
                     if !self.chunk_meshes.contains_key(&pos) {
                          self.apply_mesh_data_to_instance(pos, &geometry);
                     }
@@ -366,9 +347,7 @@ impl ChunkController {
                         }
                     }
                 }
-                ChunkAction::Keep => {
-                    // Do nothing
-                }
+                ChunkAction::Keep => { /* Do nothing */ }
             }
         }
     }
@@ -454,5 +433,83 @@ impl ChunkController {
              self.chunk_meshes.insert(pos, mesh_instance);
              // godot_print!("Created mesh instance for chunk {:?}", pos);
         }
-    }    
+    }
+
+    fn process_mesh_queues(&mut self) {
+        // Process removals first (generally less costly)
+        for _ in 0..self.mesh_updates_per_frame {
+            if let Some(pos) = self.mesh_removal_queue.pop_front() {
+                // Ensure it wasn't added back to visible set or creation queue since enqueued
+                // (More robust check might be needed if rapid back-and-forth is possible)
+                if !self.mesh_creation_queue.contains(&pos) { // Basic check
+                if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
+                    if mesh_instance.is_instance_valid() {
+                        // godot_print!("ChunkController ProcessQueue: Removing mesh for {:?}", pos); // Debug log
+                        mesh_instance.queue_free();
+                    }
+                }
+                } else {
+                    // It was re-queued for creation, so don't remove
+                    // godot_print!("ChunkController ProcessQueue: Skipping removal for {:?}, re-queued for creation.", pos); // Debug log
+                }
+
+            } else {
+                break; // Queue empty
+            }
+        }
+
+        // Process creations
+        let mut processed_creations = 0; // Keep track of how many we actually process
+        while processed_creations < self.mesh_updates_per_frame {
+            // Get the position first, we need it even if we skip
+            if let Some(pos) = self.mesh_creation_queue.front().cloned() { // Clone position to check
+                // --- Get ChunkManager Gd and Bind *inside* loop iteration ---
+                let needs_processing: bool = if let Some(manager_gd) = &self.chunk_manager {
+                    let chunk_manager_bind = manager_gd.bind(); // Borrow manager shortly
+                    chunk_manager_bind.is_chunk_ready(pos.x, pos.z)
+                        && !self.chunk_meshes.contains_key(&pos) // Check self immutably
+                        && !self.mesh_removal_queue.contains(&pos) // Check self immutably
+                    // chunk_manager_bind borrow ends here
+                } else {
+                    false // No manager, cannot process
+                };
+
+                if needs_processing {
+                    // Remove from queue *before* potential mutable borrow
+                    self.mesh_creation_queue.pop_front();
+
+                    // --- Get data (requires binding again) ---
+                    let chunk_data_option = if let Some(manager_gd) = &self.chunk_manager {
+                         manager_gd.bind().get_cached_chunk_data(pos.x, pos.z)
+                    } else {
+                         None
+                    };
+
+                    if let Some(chunk_data) = chunk_data_option {
+                        let geometry = generate_mesh_geometry(&chunk_data.heightmap, self.chunk_size);
+                        if !geometry.vertices.is_empty() {
+                            // Now we can call the function requiring &mut self
+                            self.apply_mesh_data_to_instance(pos, &geometry);
+                            processed_creations += 1;
+                        } else {
+                            godot_warn!("ChunkController ProcessQueue: Generated empty mesh for {:?}, skipping.", pos);
+                            processed_creations += 1; // Still count as processed
+                        }
+                    } else {
+                        godot_warn!("ChunkController ProcessQueue: Failed to get cached data for Ready chunk {:?}. Discarding.", pos);
+                        processed_creations += 1; // Still count as processed
+                    }
+                } else {
+                     // Condition not met (not ready, mesh exists, removing, no manager)
+                     // Remove from queue to avoid infinite loop if condition persists
+                     self.mesh_creation_queue.pop_front();
+                     // godot_print!("ChunkController ProcessQueue: Skipping creation for {:?}, condition no longer met.", pos);
+                     // Don't increment processed_creations, allow loop to try next if budget allows
+                     continue; // Check next item without decrementing budget implicitly
+                }
+            } else {
+                break; // Queue empty
+            }
+        } // end while
+    } // end process_mesh_queues    
 }

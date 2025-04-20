@@ -27,6 +27,7 @@ pub struct TerrainConfig {
     // Render distance (might be used by chunk controller/manager at runtime)
     pub render_distance: i32,
     pub amplification: f64,
+    pub mesh_updates_per_frame: usize, 
 }
 
 // Default implementation for TerrainConfig (RUNTIME defaults, used if init fails)
@@ -44,6 +45,7 @@ impl Default for TerrainConfig {
             chunks_per_frame: 4,
             render_distance: 4,
             amplification: 1.0,
+            mesh_updates_per_frame: 4, 
         }
     }
 }
@@ -73,6 +75,7 @@ fn internal_init_terrain_config() -> Arc<RwLock<TerrainConfig>> {
         chunks_per_frame: initial_data.chunks_per_frame,
         render_distance: initial_data.render_distance,
         amplification: initial_data.amplification,
+        mesh_updates_per_frame: initial_data.mesh_updates_per_frame,
     };
     godot_print!("Created runtime TerrainConfig: {:?}", runtime_config);
 

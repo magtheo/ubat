@@ -3,8 +3,8 @@
 pub mod chunk_manager;
 pub mod chunk_controller;
 pub mod biome_manager;
+pub mod generation_utils;
 
-// pub mod generation_rules;
 pub mod terrain_config;
 
 pub mod noise;

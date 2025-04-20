@@ -13,8 +13,7 @@ use noise::NoiseFn; // Keep NoiseFn trait import
 
 // Use ChunkData from ChunkStorage
 use crate::threading::chunk_storage::{ChunkData, MeshGeometry, ChunkStorage};
-
-use crate::terrain::chunk_controller::get_clamped_height; // Import helper if needed, or redefine here
+use crate::terrain::generation_utils::{generate_mesh_geometry, get_clamped_height};
 // Use ThreadPool (specifically for compute tasks, using the global pool)
 use crate::threading::thread_pool::{ThreadPool, global_thread_pool, get_or_init_global_pool};
 // Use BiomeManager and its thread-safe data
@@ -48,102 +47,6 @@ pub enum ChunkResult {
 
     // Saved(ChunkPosition), // Optional for now
 }
-
-// Helper function:
-// This function mirrors the calculation logic previously in ChunkController
-fn generate_mesh_geometry(heightmap: &[f32], chunk_size: u32) -> MeshGeometry {
-    if chunk_size == 0 || heightmap.is_empty() {
-        eprintln!("WARN generate_mesh_geometry called with invalid parameters. Returning empty geometry.");
-        return MeshGeometry {
-            vertices: vec![],
-            normals: vec![],
-            uvs: vec![],
-            indices: vec![],
-        };
-    }
-    let expected_len = (chunk_size * chunk_size) as usize;
-    if heightmap.len() != expected_len {
-        // Log error or handle appropriately
-        eprintln!("ERROR Heightmap size mismatch in generate_mesh_geometry! Expected {}, got {}", expected_len, heightmap.len());
-        // Return empty geometry or panic, depending on desired robustness
-        return MeshGeometry { vertices: vec![], normals: vec![], uvs: vec![], indices: vec![] };
-    }
-
-
-    let mut vertices_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
-    let mut uvs_vec: Vec<[f32; 2]> = Vec::with_capacity(expected_len);
-    let mut normals_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
-
-    // Vertices and UVs
-    for z in 0..chunk_size {
-        for x in 0..chunk_size {
-            let idx = (z * chunk_size + x) as usize;
-            let h = heightmap[idx];
-            vertices_vec.push([x as f32, h, z as f32]); // Store as array
-            uvs_vec.push([                               // Store as array
-                x as f32 / (chunk_size - 1).max(1) as f32,
-                z as f32 / (chunk_size - 1).max(1) as f32,
-            ]);
-        }
-    }
-
-
-    // Normals (using pure Rust math)
-    // Make sure get_clamped_height is accessible or copied here if needed
-    for z in 0..chunk_size {
-        for x in 0..chunk_size {
-            // Get neighbor heights (ensure get_clamped_height is available and thread-safe)
-            let h_l = get_clamped_height(x as i32 - 1, z as i32, heightmap, chunk_size);
-            let h_r = get_clamped_height(x as i32 + 1, z as i32, heightmap, chunk_size);
-            let h_d = get_clamped_height(x as i32, z as i32 - 1, heightmap, chunk_size);
-            let h_u = get_clamped_height(x as i32, z as i32 + 1, heightmap, chunk_size);
-
-            // Calculate difference vectors (tangents)
-            // Vector Right = (2, h_r - h_l, 0) - Approximation using neighbor distance of 2
-            // Vector Up    = (0, h_u - h_d, 2)
-            let dx = h_l - h_r; // Component of normal related to change in X
-            let dz = h_d - h_u; // Component of normal related to change in Z
-            let dy = 2.0;       // Constant Y component, adjust if needed based on scaling
-
-            // Calculate magnitude
-            let mag_sq = dx * dx + dy * dy + dz * dz;
-            let mag = if mag_sq > 1e-6 { // Avoid division by zero or near-zero
-                mag_sq.sqrt()
-            } else {
-                1.0 // Default to pointing straight up if flat
-            };
-
-            // Normalize manually and store as array
-            normals_vec.push([dx / mag, dy / mag, dz / mag]);
-        }
-    }
-
-    // Indices
-    let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
-    let mut indices_vec = Vec::with_capacity(index_count);
-    for z in 0..chunk_size - 1 {
-        for x in 0..chunk_size - 1 {
-            let idx00 = (z * chunk_size + x) as i32;
-            let idx10 = idx00 + 1;
-            let idx01 = idx00 + chunk_size as i32;
-            let idx11 = idx01 + 1;
-            indices_vec.push(idx00);
-            indices_vec.push(idx10);
-            indices_vec.push(idx01);
-            indices_vec.push(idx10);
-            indices_vec.push(idx11);
-            indices_vec.push(idx01);
-        }
-    }
-
-    MeshGeometry {
-        vertices: vertices_vec,
-        normals: normals_vec,
-        uvs: uvs_vec,
-        indices: indices_vec,
-    }
-}
-
 
 // Constants
 const UNLOAD_CHECK_INTERVAL: Duration = Duration::from_secs(5); // How often to check for unloading
@@ -545,16 +448,18 @@ impl ChunkManager {
             pos
         );
 
-        // Generate mesh geometry (unchanged)
-        println!("ChunkManager Worker: Generating mesh geometry for {:?}", pos); // Use println
-        let geometry = generate_mesh_geometry(&heightmap, chunk_size);
-
         // Create ChunkData (unchanged)
-        let chunk_data = ChunkData { /* ... */ position: pos, heightmap, biome_ids, mesh_geometry: Some(geometry) };
+        let chunk_data = ChunkData { 
+            position: pos, 
+            heightmap, 
+            biome_ids, 
+        };
 
         // Save and Send Result (unchanged)
         storage.queue_save_chunk(chunk_data.clone());
-        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) { /* ... */ }
+        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
+            eprintln!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e);
+        }
     }
 
 

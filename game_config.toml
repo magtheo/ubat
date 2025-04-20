@@ -19,6 +19,8 @@ use_parallel_processing = true
 chunk_cache_size = 600
 chunks_per_frame = 4
 render_distance = 4 # Moved from terrain_initializer
+amplification = 4.0
+mesh_updates_per_frame = 4
 
 [terrain.noise_paths]
 "1" = "res://project/terrain/noise/corralNoise.tres"

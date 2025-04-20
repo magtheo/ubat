@@ -36,7 +36,7 @@ pub struct ChunkData {
     pub position: ChunkPosition,
     pub heightmap: Vec<f32>,
     pub biome_ids: Vec<u8>,
-    pub mesh_geometry: Option<MeshGeometry>,
+    // pub mesh_geometry: Option<MeshGeometry>,
     // Add other data as needed
 }
 
@@ -47,13 +47,12 @@ pub struct MeshGeometry {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<i32>,
-
 }
 
 // ChunkStorage handles saving and loading chunks from disk
 pub struct ChunkStorage {
     save_dir: String,
-    cache: Arc<RwLock<LruCache<ChunkPosition, ChunkData>>>,
+    pub(crate) cache: Arc<RwLock<LruCache<ChunkPosition, ChunkData>>>,
    
     result_sender: Sender<ChunkResult>, // Store a clone of the sender from ChunkManager
     io_request_sender: Option<Sender<IORequest>>, // To send requests TO IO thread
