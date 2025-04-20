@@ -39,7 +39,7 @@ impl Default for TerrainConfig {
         TerrainConfig {
             max_threads: std::cmp::max(1, cpu_count.saturating_sub(1)),
             chunk_size: 32,
-            blend_distance: 200.0,
+            blend_distance: 800.0,
             use_parallel_processing: true,
             chunk_cache_size: 400,
             chunks_per_frame: 4,

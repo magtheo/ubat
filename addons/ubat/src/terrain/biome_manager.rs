@@ -239,7 +239,7 @@ impl INode for BiomeManager {
             biome_mask_image_path: GString::from("res://project/terrain/textures/biomeMask_image.png"),
             noise_path: GString::from("res://project/terrain/noise/blendNoise.tres"),
             sections: Vec::new(),
-            blend_distance: 200,
+            blend_distance: 800,
             noise: None,
             initialized: false,
             seed: 12345,
