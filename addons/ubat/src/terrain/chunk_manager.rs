@@ -627,6 +627,74 @@ impl ChunkManager {
         }
     }
 
+    // Function used foor debugging together with godot terrainDebugger node
+    #[func]
+    pub fn get_chunk_state_at(&self, chunk_x: i32, chunk_z: i32) -> i32 {
+        let pos = ChunkPosition { x: chunk_x, z: chunk_z };
+        match self.chunk_states.read().unwrap().get(&pos) {
+            Some(ChunkGenState::Unknown) => 0,
+            Some(ChunkGenState::Loading) => 1,
+            Some(ChunkGenState::Generating) => 2,
+            Some(ChunkGenState::Ready(_)) => 3,
+            None => -1, // Not tracked
+        }
+    }
+
+    // Function to get data specifically at world coords
+    // This might need refinement based on how you want to sample data precisely
+    #[func]
+    pub fn get_terrain_data_at(&self, world_x: f32, world_z: f32) -> Dictionary {
+        let mut dict = Dictionary::new();
+        dict.insert("world_x", world_x.to_variant());
+        dict.insert("world_z", world_z.to_variant());
+
+        // Find chunk coords
+        let chunk_x = (world_x / self.chunk_size as f32).floor() as i32;
+        let chunk_z = (world_z / self.chunk_size as f32).floor() as i32;
+        dict.insert("chunk_x", chunk_x.to_variant());
+        dict.insert("chunk_z", chunk_z.to_variant());
+
+        let pos = ChunkPosition { x: chunk_x, z: chunk_z };
+
+        // Get chunk state
+        dict.insert("chunk_state", self.get_chunk_state_at(chunk_x, chunk_z).to_variant());
+
+        // Try to get height and biome from cache if ready
+        if let Some(data) = self.get_cached_chunk_data(chunk_x, chunk_z) {
+            // Calculate exact index within the chunk's heightmap/biomemap
+            let local_x = (world_x - (chunk_x as f32 * self.chunk_size as f32)).floor() as u32;
+            let local_z = (world_z - (chunk_z as f32 * self.chunk_size as f32)).floor() as u32;
+            let idx = (local_z.clamp(0, self.chunk_size -1) * self.chunk_size
+                   + local_x.clamp(0, self.chunk_size -1)) as usize;
+
+            if idx < data.heightmap.len() {
+                dict.insert("height", data.heightmap[idx].to_variant());
+            } else {
+                 dict.insert("height", Variant::nil()); // Index out of bounds
+            }
+             if idx < data.biome_ids.len() {
+                 dict.insert("primary_biome_id", (data.biome_ids[idx] as i32).to_variant());
+                 // TODO: Get biome name from BiomeManager if needed
+             } else {
+                 dict.insert("primary_biome_id", Variant::nil());
+             }
+             // TODO: Potentially add biome weights here if ChunkData stores them
+        } else {
+            dict.insert("height", Variant::nil());
+            dict.insert("primary_biome_id", Variant::nil());
+        }
+
+        // TODO: Get Section ID / Weights from BiomeManager if needed
+        // You might need a direct reference or call into BiomeManager here
+        // if let Some(bm) = &self.biome_manager {
+        //     let mut bm_bind = bm.bind_mut(); // May need mut if it uses cache
+        //     dict.insert("section_id", bm_bind.get_section_id(world_x, world_z).to_variant());
+        //     // Add weights etc.
+        // }
+
+        dict
+    }
+
     #[func]
     pub fn get_chunk_count(&self) -> i32 {
         self.chunk_states.read().unwrap().len() as i32

@@ -6,6 +6,7 @@ use std::sync::{Arc};
 use std::time::Instant;
 use std::collections::HashMap;
 
+use crate::bridge::{terrain, TerrainBridge};
 use crate::terrain::biome_manager::{BiomeManager, ThreadSafeBiomeData};
 use crate::initialization::world::terrainInitState::{TerrainInitializationTiming, TerrainInitializationState};
 use crate::terrain::ChunkManager;
@@ -29,6 +30,7 @@ pub struct TerrainInitializer {
     chunk_manager: Option<Gd<ChunkManager>>,
     chunk_controller: Option<Gd<ChunkController>>,
     noise_manager: Option<Gd<NoiseManager>>,
+    terrain_bridge: Option<Gd<TerrainBridge>>,
 
     timing: TerrainInitializationTiming,
     error_logger: Arc<ErrorLogger>,
@@ -54,6 +56,7 @@ impl TerrainInitializer {
             chunk_controller: None,
             noise_manager: None,
             event_bus: None,
+            terrain_bridge: None,
             timing: TerrainInitializationTiming::new(),
             error_logger: Arc::new(ErrorLogger::new(100)),
 
@@ -62,7 +65,7 @@ impl TerrainInitializer {
             world_width: 10000.0,
             world_height: 10000.0,
             seed: 12345,
-            render_distance: 2,
+            render_distance: 4,
 
             initialized: false,
         }
@@ -136,21 +139,26 @@ impl TerrainInitializer {
         let mut chunk_controller = ChunkController::new_alloc();
         chunk_controller.set_name("ChunkController");
 
+        // --- !!! Create TerrainBridge !!! ---
+        let mut terrain_bridge = TerrainBridge::new_alloc();
+        terrain_bridge.set_name("TerrainBridge"); // CRUCIAL: Name needed for finding later
+
         // --- Add all nodes to the parent ---
         // It's generally better to add children *before* adding the parent to the main scene tree
         parent_node.add_child(&noise_manager);
         parent_node.add_child(&biome_manager);
         parent_node.add_child(&chunk_manager);
         parent_node.add_child(&chunk_controller);
+        parent_node.add_child(&terrain_bridge); // bridge
 
         // --- Add parent to scene root ---
         if let Some(mut root) = Self::get_scene_root() {
-             godot_print!("TerrainInitializer: Adding TerrainSystem node to scene root.");
-             root.add_child(&parent_node); // Add parent_node itself
-             // Set owner *after* adding to the loaded scene tree
-             parent_node.set_owner(&root); // Owner for TerrainSystem
-             // Children likely inherit owner or don't strictly need it set manually here
-             // unless you have specific save/instancing requirements.
+            godot_print!("TerrainInitializer: Adding TerrainSystem node to scene root.");
+            root.add_child(&parent_node); // Add parent_node itself
+            // Set owner *after* adding to the loaded scene tree
+            parent_node.set_owner(&root); // Owner for TerrainSystem
+            // Children likely inherit owner or don't strictly need it set manually here
+            // unless you have specific save/instancing requirements.
         } else {
             let err_msg = "Failed to retrieve the scene root node.".to_string();
             self.error_logger.log_error(
@@ -163,10 +171,21 @@ impl TerrainInitializer {
         }
 
         // Store references
-        self.noise_manager = Some(noise_manager); // <-- Store reference
-        self.biome_manager = Some(biome_manager);
-        self.chunk_manager = Some(chunk_manager);
-        self.chunk_controller = Some(chunk_controller);
+        self.noise_manager = Some(noise_manager.clone()); // <-- Store reference
+        self.biome_manager = Some(biome_manager.clone());
+        self.chunk_manager = Some(chunk_manager.clone());
+        self.chunk_controller = Some(chunk_controller.clone());
+
+        // --- !!! Link Managers TO the TerrainBridge !!! ---
+        {
+            let mut bridge_bind = terrain_bridge.bind_mut();
+            bridge_bind.set_terrain_nodes(
+                chunk_manager,    // Pass the Gd
+                chunk_controller, // Pass the Gd
+                biome_manager,    // Pass the Gd
+                // noise_manager, // Add if needed
+            );
+        }
 
         // Update initialization state
         self.timing.update_state(TerrainInitializationState::Ready); // Assuming this tracks internal state

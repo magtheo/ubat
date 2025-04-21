@@ -156,6 +156,29 @@ impl GameInitHelper {
         }
     }
 
+    #[func]
+    pub fn get_terrain_bridge(&self) -> Variant {
+        match SystemInitializer::get_instance() {
+            Some(system_initializer) => {
+                match system_initializer.lock() { // Use lock() if blocking is okay, or try_lock()
+                    Ok(system_init) => {
+                        system_init.get_terrain_bridge() // Call the new SystemInitializer getter
+                            .map(|bridge| bridge.to_variant())
+                            .unwrap_or(Variant::nil())
+                    },
+                    Err(_) => {
+                        godot_error!("GameInitHelper: Could not acquire lock to get terrain bridge");
+                        Variant::nil()
+                    }
+                }
+            },
+            None => {
+                godot_error!("GameInitHelper: SystemInitializer not initialized");
+                Variant::nil()
+            }
+        }
+    }
+
     // Similar implementations for other bridge getters (config, network, event)
     // #[func]
     // pub fn get_config_bridge(&self) -> Variant {
