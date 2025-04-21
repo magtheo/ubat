@@ -154,7 +154,7 @@ func _force_initial_player_update():
 	else:
 		print("TerrainDebugger:   Exported Player instance invalid in _force_initial_player_update.") # ADDED
 
-	print("TerrainDebugger:   Calling _update_debug_labels directly after signal/pos handling.") # ADDED
+	# print("TerrainDebugger:   Calling _update_debug_labels directly after signal/pos handling.") # ADDED
 	_update_debug_labels()
 
 
@@ -184,7 +184,7 @@ func _process(delta):
 	_update_timer += delta
 	if _update_timer >= UPDATE_INTERVAL:
 		_update_timer = 0.0
-		print("TerrainDebugger: Timer triggered, calling _update_debug_labels.") # ADDED
+		# print("TerrainDebugger: Timer triggered, calling _update_debug_labels.") # ADDED
 		_update_debug_labels()
 
 
@@ -210,7 +210,7 @@ func _on_player_chunk_changed(chunk_x: int, chunk_z: int):
 
 # --- _update_debug_labels() (Needs update for Chunk State) ---
 func _update_debug_labels():
-	print("TerrainDebugger: _update_debug_labels called.") # ADDED
+	# print("TerrainDebugger: _update_debug_labels called.") # ADDED
 	# Use the flag for the primary check
 	if not _is_initialized:
 		print("TerrainDebugger:   Not initialized, returning.") # ADDED
@@ -243,7 +243,7 @@ func _update_debug_labels():
 		return
 
 	# --- If we reach here, all references should be valid ---
-	print("TerrainDebugger:   Managers valid, proceeding to update labels.") # ADDED
+	# print("TerrainDebugger:   Managers valid, proceeding to update labels.") # ADDED
 
 	# --- Update UI elements ---
 	# ... (rest of UI update logic remains the same, using self.player, cm, bm) ...
