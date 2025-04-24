@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::io; // For io::Error
 
+use crate::terrain::section::sectionConfig::{SectionTomlConfig, BiomeTomlConfig};
 
 // Default values
 pub fn default_server_address() -> String { "127.0.0.1:7878".to_string() }
@@ -134,6 +135,12 @@ pub struct GameConfiguration {
     // Initial Terrain Config from TOML
     #[serde(default)]
     pub terrain: TerrainInitialConfigData, // Use the new struct
+
+    #[serde(default)]
+    pub sections: Vec<SectionTomlConfig>,
+    
+    #[serde(default)]
+    pub biomes: Vec<BiomeTomlConfig>,
 
     // Custom configuration sections
     #[serde(default)]

@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::collections::HashMap;
 
 use crate::bridge::{terrain, TerrainBridge};
-use crate::terrain::biome_manager::{BiomeManager, ThreadSafeBiomeData};
+use crate::config::global_config;
 use crate::initialization::world::terrainInitState::{TerrainInitializationTiming, TerrainInitializationState};
 use crate::terrain::ChunkManager;
 use crate::terrain::ChunkController;
@@ -15,18 +15,20 @@ use crate::utils::error_logger::{ErrorLogger, ErrorSeverity};
 use crate::core::event_bus::EventBus;
 use crate::terrain::noise::noise_manager::NoiseManager; 
 
+use crate::terrain::section::{SectionManager, ThreadSafeSectionData};
+
 
 // TerrainSystemContext stores references to initialized terrain components
 pub struct TerrainSystemContext {
-    pub biome_manager: Option<Gd<BiomeManager>>,
+    pub section_manager: Option<Gd<SectionManager>>,
     pub chunk_manager: Option<Gd<ChunkManager>>,
     pub noise_manager: Option<Gd<NoiseManager>>,
-    pub thread_safe_biome_data: Option<Arc<ThreadSafeBiomeData>>,
+    pub thread_safe_section_data: Option<Arc<ThreadSafeSectionData>>,
 }
 
 pub struct TerrainInitializer {
 
-    biome_manager: Option<Gd<BiomeManager>>,
+    section_manager: Option<Gd<SectionManager>>,
     chunk_manager: Option<Gd<ChunkManager>>,
     chunk_controller: Option<Gd<ChunkController>>,
     noise_manager: Option<Gd<NoiseManager>>,
@@ -51,7 +53,7 @@ pub struct TerrainInitializer {
 impl TerrainInitializer {
     pub fn new() -> Self {
         Self {
-            biome_manager: None,
+            section_manager: None,
             chunk_manager: None,
             chunk_controller: None,
             noise_manager: None,
@@ -109,27 +111,46 @@ impl TerrainInitializer {
         // Note: NoiseManager's _ready() will run *after* it's added to the scene,
         // where it will then use the paths set above to load parameters.
 
-        // --- Create BiomeManager ---
-        let mut biome_manager = BiomeManager::new_alloc();
-        biome_manager.set_name("BiomeManager");
-        {
-            let mut biome_mgr_mut = biome_manager.bind_mut();
-            let init_result = biome_mgr_mut.initialize(
-                self.world_width,
-                self.world_height,
-                self.seed
+        // Get section/biome config from global_config
+        let (sections_config, biomes_config, seed) = {
+            let config_guard = global_config::get_config_manager().read().unwrap();
+            let config = config_guard.get_config();
+            (config.sections.clone(), config.biomes.clone(), config.world_seed)
+        };
+        
+        // Create SectionManager instead of SectionManager
+        let mut section_manager = SectionManager::new_alloc();
+        section_manager.set_name("SectionManager");
+        
+        // Initialize SectionManager
+        let init_result = section_manager.bind_mut().initialize(
+            sections_config,
+            biomes_config,
+            seed,
+            &noise_manager
+        );
+        
+        if !init_result {
+            let err_msg = "Failed to initialize SectionManager".to_string();
+            self.error_logger.log_error(
+                "TerrainInitializer",
+                &err_msg,
+                ErrorSeverity::Critical,
+                None
             );
-            if !init_result {
-                let err_msg = "Failed to initialize BiomeManager".to_string();
-                self.error_logger.log_error(
-                    "TerrainInitializer", // Module name
-                    &err_msg,             // Message
-                    ErrorSeverity::Critical, // Severity
-                    None                  // Optional context
-                );
-                return Err(err_msg);
-            }
+            return Err(err_msg);
+            
+        } else {
+            let err_msg = "NoiseManager not available for SectionManager initialization".to_string();
+            self.error_logger.log_error(
+                "TerrainInitializer",
+                &err_msg,
+                ErrorSeverity::Critical,
+                None
+            );
+            return Err(err_msg);
         }
+
 
         // --- Create ChunkManager ---
         let mut chunk_manager = ChunkManager::new_alloc();
@@ -146,7 +167,7 @@ impl TerrainInitializer {
         // --- Add all nodes to the parent ---
         // It's generally better to add children *before* adding the parent to the main scene tree
         parent_node.add_child(&noise_manager);
-        parent_node.add_child(&biome_manager);
+        parent_node.add_child(&section_manager);
         parent_node.add_child(&chunk_manager);
         parent_node.add_child(&chunk_controller);
         parent_node.add_child(&terrain_bridge); // bridge
@@ -172,7 +193,7 @@ impl TerrainInitializer {
 
         // Store references
         self.noise_manager = Some(noise_manager.clone()); // <-- Store reference
-        self.biome_manager = Some(biome_manager.clone());
+        self.section_manager = Some(section_manager.clone());
         self.chunk_manager = Some(chunk_manager.clone());
         self.chunk_controller = Some(chunk_controller.clone());
 
@@ -182,7 +203,7 @@ impl TerrainInitializer {
             bridge_bind.set_terrain_nodes(
                 chunk_manager,    // Pass the Gd
                 chunk_controller, // Pass the Gd
-                biome_manager,    // Pass the Gd
+                section_manager,    // Pass the Gd
                 // noise_manager, // Add if needed
             );
         }
@@ -198,22 +219,22 @@ impl TerrainInitializer {
     // Get the terrain context (components needed by the world manager)
     pub fn get_terrain_context(&self) -> TerrainSystemContext {
         TerrainSystemContext {
-            biome_manager: self.biome_manager.clone(),
+            section_manager: self.section_manager.clone(),
             chunk_manager: self.chunk_manager.clone(),
             noise_manager: self.noise_manager.clone(), // Pass the Option<Gd<NoiseManager>>
     
             // Check both options before creating ThreadSafeBiomeData
-            thread_safe_biome_data: match (&self.biome_manager, &self.noise_manager) {
+            thread_safe_section_data: match (&self.section_manager, &self.noise_manager) {
                 (Some(biome_mgr), Some(noise_mgr)) => {
                     // Both managers are Some, proceed to create the data
-                    Some(Arc::new(ThreadSafeBiomeData::from_biome_manager(
+                    Some(Arc::new(ThreadSafeSectionData::from_section_manager(
                         &biome_mgr.bind(),
                         &noise_mgr.bind() // Correctly use the matched 'noise_mgr'
                     )))
                 }
                 _ => {
-                    // Either biome_manager or noise_manager (or both) are None
-                    godot_warn!("get_terrain_context: BiomeManager or NoiseManager is None, cannot create ThreadSafeBiomeData.");
+                    // Either section_manager or noise_manager (or both) are None
+                    godot_warn!("get_terrain_context: SectionManager or NoiseManager is None, cannot create ThreadSafeBiomeData.");
                     None // Cannot create data if dependencies are missing
                 }
             },
@@ -235,18 +256,18 @@ impl TerrainInitializer {
         let mut result = Dictionary::new();
 
         // Get status of each component
-        let biome_initialized = self.biome_manager.is_some() && 
-            self.biome_manager.as_ref().unwrap().bind().is_fully_initialized();
+        let section_initialized = self.section_manager.is_some() && 
+            self.section_manager.as_ref().unwrap().bind().is_fully_initialized();
 
         let chunk_manager_initialized = self.chunk_manager.is_some() && 
             self.chunk_manager.as_ref().unwrap().bind().is_initialized();
 
         let controller_initialized = self.chunk_controller.is_some();
 
-        result.insert("biome_initialized", biome_initialized);
+        result.insert("section_initialized", section_initialized);
         result.insert("chunk_manager_initialized", chunk_manager_initialized);
         result.insert("controller_initialized", controller_initialized);
-        result.insert("fully_initialized", biome_initialized && chunk_manager_initialized && controller_initialized);
+        result.insert("fully_initialized", section_initialized && chunk_manager_initialized && controller_initialized);
 
         result
     }

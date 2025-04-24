@@ -86,15 +86,15 @@ impl WorldInitializer {
         let terrain_context = self.initialize_terrain_systems()?; // Modify this to return context
 
         // Phase 3: Connect WorldStateManager to Terrain Managers (NEW STEP)
-        if let (Some(world_manager_arc), Some(biome_mgr_gd), Some(chunk_mgr_gd)) =
-            (&self.world_manager, terrain_context.biome_manager, terrain_context.chunk_manager)
+        if let (Some(world_manager_arc), Some(section_mgr_gd), Some(chunk_mgr_gd)) =
+            (&self.world_manager, terrain_context.section_manager, terrain_context.chunk_manager)
         {
              println!("WorldInitializer: Connecting WorldStateManager to terrain managers...");
              let mut world_mgr_locked = world_manager_arc.lock()
                 .map_err(|_| WorldInitError::WorldStateError("Failed to lock world manager for setting terrain refs".to_string()))?;
 
              // Call the new setter method
-             world_mgr_locked.set_terrain_managers(biome_mgr_gd, chunk_mgr_gd);
+             world_mgr_locked.set_terrain_managers(section_mgr_gd, chunk_mgr_gd);
 
              println!("WorldInitializer: WorldStateManager connected.");
         } else {

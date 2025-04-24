@@ -1,5 +1,5 @@
 use godot::prelude::*;
-use godot::classes::{FastNoiseLite, Node3D}; // Need FastNoiseLite for generation
+use godot::classes::{Node3D}; // Need FastNoiseLite for generation
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -17,9 +17,8 @@ use crate::threading::chunk_storage::{ChunkData, MeshGeometry, ChunkStorage};
 use crate::terrain::generation_utils::{generate_mesh_geometry, get_clamped_height};
 // Use ThreadPool (specifically for compute tasks, using the global pool)
 use crate::threading::thread_pool::{ThreadPool, global_thread_pool, get_or_init_global_pool};
-// Use BiomeManager and its thread-safe data
-use crate::terrain::biome_manager::{BiomeManager, ThreadSafeBiomeData};
 use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
+use crate::terrain::section::{SectionManager, ThreadSafeSectionData};
 
 // ChunkPosition (Defined here or in a shared location like terrain/mod.rs)
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,9 +66,9 @@ pub struct ChunkManager {
 
     compute_pool: Arc<RwLock<ThreadPool>>,
     chunk_states: Arc<RwLock<HashMap<ChunkPosition, ChunkGenState>>>,
-    biome_manager: Option<Gd<BiomeManager>>,
+    section_manager: Option<Gd<SectionManager>>,
     noise_manager: Option<Gd<NoiseManager>>, // Add this
-    thread_safe_biome_data: Arc<RwLock<Option<Arc<ThreadSafeBiomeData>>>>,
+    thread_safe_section_data: Arc<RwLock<Option<Arc<ThreadSafeSectionData>>>>,
     is_thread_safe_data_ready: bool,
 
     // handle to the noise parameter cache
@@ -108,9 +107,9 @@ impl INode3D for ChunkManager {
             result_receiver: rx, // Store receiver
 
             chunk_states: Arc::new(RwLock::new(HashMap::new())),
-            biome_manager: None,
+            section_manager: None,
             noise_manager: None,
-            thread_safe_biome_data: Arc::new(RwLock::new(None)),
+            thread_safe_section_data: Arc::new(RwLock::new(None)),
             is_thread_safe_data_ready: false,
             noise_functions_cache: None, // Initialize as None
             render_distance: 4, // TODO This overides terrain initalizer, and it shuold not
@@ -121,24 +120,24 @@ impl INode3D for ChunkManager {
 
     fn ready(&mut self) {
         let start_time = std::time::Instant::now();
-        println!("ChunkManager: Ready. Linking BiomeManager...");
-        self.biome_manager = None; // Ensure starts as None
+        println!("ChunkManager: Ready. Linking SectionManager...");
+        self.section_manager = None; // Ensure starts as None
 
         if let Some(parent) = self.base().get_parent() {
             // --- Use string literal for get_node_as ---
-            let biome_manager_node = parent.get_node_as::<BiomeManager>("BiomeManager");
-            if biome_manager_node.is_instance_valid() {
-                if biome_manager_node.bind().is_fully_initialized() {
-                    println!("ChunkManager: BiomeManager is initialized.");
+            let section_manager_node = parent.get_node_as::<SectionManager>("SectionManager");
+            if section_manager_node.is_instance_valid() {
+                if section_manager_node.bind().is_fully_initialized() {
+                    println!("ChunkManager: SectionManager is initialized.");
                     // Assign if ready (original simple assignment should work now)
-                    self.biome_manager = Some(biome_manager_node.clone());
+                    self.section_manager = Some(section_manager_node.clone());
                 } else {
-                    eprintln!("ChunkManager: Found 'BiomeManager', but it's not initialized yet.");
-                    // biome_manager remains None
+                    eprintln!("ChunkManager: Found 'SectionManager', but it's not initialized yet.");
+                    // section_manager remains None
                 }
             } else {
-                eprintln!("ChunkManager: Could not find node 'BiomeManager' under parent.");
-                // biome_manager remains None
+                eprintln!("ChunkManager: Could not find node 'SectionManager' under parent.");
+                // section_manager remains None
             }
 
             // --- Link NoiseManager ---
@@ -157,7 +156,7 @@ impl INode3D for ChunkManager {
 
         } else {
             eprintln!("ChunkManager: Could not find parent node!");
-            // biome_manager remains None
+            // section_manager remains None
         }
 
         // Ensure chunk size matches latest config
@@ -171,17 +170,17 @@ impl INode3D for ChunkManager {
         // --- Initialization Check (at the beginning of process) ---
         if !self.is_thread_safe_data_ready {
             // Attempt to initialize/update if managers seem ready
-            if self.biome_manager.is_some() && self.noise_manager.is_some() {
+            if self.section_manager.is_some() && self.noise_manager.is_some() {
                 // Call the update function (it has internal checks for None)
-                self.update_thread_safe_biome_data();
+                self.update_thread_safe_section_data();
 
                 // Check if the update was successful by reading the value
-                if self.thread_safe_biome_data.read().unwrap().is_some() {
-                    println!("ChunkManager: ThreadSafeBiomeData successfully initialized/updated in process."); // Use println!
+                if self.thread_safe_section_data.read().unwrap().is_some() {
+                    println!("ChunkManager: ThreadSafeSectionData successfully initialized/updated in process."); // Use println!
                     self.is_thread_safe_data_ready = true; // Set flag only on success
                 } else {
                     // Optional: Log that managers are present but data update failed
-                    // eprintln!("ChunkManager process: Managers linked, but ThreadSafeBiomeData update still results in None.");
+                    // eprintln!("ChunkManager process: Managers linked, but ThreadSafeSectionData update still results in None.");
                 }
             } // Else: Managers not linked yet, will try again next frame
         }
@@ -225,8 +224,8 @@ impl INode3D for ChunkManager {
 impl ChunkManager {
     #[func]
     pub fn is_initialized(&self) -> bool {
-        // Consider initialized if biome data is available
-        self.thread_safe_biome_data.read().unwrap().is_some()
+        // Consider initialized if section data is available
+        self.thread_safe_section_data.read().unwrap().is_some()
     }
 
     // Ensure chunk data is loaded or generation is triggered.
@@ -264,8 +263,8 @@ impl ChunkManager {
     fn queue_generation(&self, pos: ChunkPosition) {
         println!("ChunkManager: Queuing generation task for {:?}", pos);
         let storage_clone = Arc::clone(&self.storage);
-        // --- Clone the Arc containing the Option<Arc<ThreadSafeBiomeData>> ---
-        let biome_data_rwlock_arc = Arc::clone(&self.thread_safe_biome_data);
+        // --- Clone the Arc containing the Option<Arc<ThreadSafeSectionData>> ---
+        let section_data_rwlock_arc = Arc::clone(&self.thread_safe_section_data);
         // --- Do NOT read() here, read inside the worker thread ---
 
         let config_arc:&'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config();
@@ -293,19 +292,19 @@ impl ChunkManager {
         };
   
         self.compute_pool.read().unwrap().execute(move || {
-            // --- Read the BiomeData Arc INSIDE the worker ---
-            let biome_data_guard = biome_data_rwlock_arc.read().unwrap();
-            // Clone the inner Arc<ThreadSafeBiomeData> if it exists
-            let biome_data_clone = match *biome_data_guard {
+            // --- Read the SectionData Arc INSIDE the worker ---
+            let section_data_guard = section_data_rwlock_arc.read().unwrap();
+            // Clone the inner Arc<ThreadSafeSectionData> if it exists
+            let section_data_clone = match *section_data_guard {
                 Some(ref arc) => Some(Arc::clone(arc)),
                 None => None,
             };
             // Drop the read guard quickly
-            drop(biome_data_guard);
+            drop(section_data_guard);
     
-            // --- Check if biome data is available ---
-            if biome_data_clone.is_none() {
-                let err_msg = format!("BiomeData unavailable for generation task at {:?} (ChunkManager's shared data is None)", pos);                // Send the original String
+            // --- Check if section data is available ---
+            if section_data_clone.is_none() {
+                let err_msg = format!("SectionData unavailable for generation task at {:?} (ChunkManager's shared data is None)", pos);                // Send the original String
                 let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, err_msg.clone())); // Clone err_msg here
                 // Log using the original still-owned string
                 eprintln!("{}", err_msg);
@@ -313,13 +312,13 @@ impl ChunkManager {
             }
             
             // We know it's Some now
-            let biome_data = biome_data_clone.unwrap();
+            let section_data = section_data_clone.unwrap();
     
     
             Self::generate_and_save_chunk(
                 pos,
                 storage_clone,
-                biome_data, // Pass the Arc<ThreadSafeBiomeData>
+                section_data, // Pass the Arc<ThreadSafeSectionData>
                 noise_funcs_cache_handle, // Pass the noise cache handle for heights
                 chunk_size,
                 sender_clone,
@@ -398,7 +397,7 @@ impl ChunkManager {
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        biome_data: Arc<ThreadSafeBiomeData>,
+        section_data: Arc<ThreadSafeSectionData>,
         // Accept function cache handle
         noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
         chunk_size: u32,
@@ -407,7 +406,7 @@ impl ChunkManager {
     ) {
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
-        let mut biome_ids_primary = vec![0u8; chunk_area]; // Store the *primary* biome for potential later use/debugging
+        let mut biome_ids_primary = vec![0u8; chunk_area]; // Store the *primary* section for potential later use/debugging
 
         let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
         // Pre-fetch blend noise function Arc
@@ -419,8 +418,8 @@ impl ChunkManager {
                 let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
 
-                // Get biome influences
-                let influences = biome_data.get_biome_id_and_weights(world_x, world_z);
+                // Get section influences
+                let influences = section_data.get_biome_id_and_weights(world_x, world_z);
 
                 if influences.is_empty() {
                     heightmap[idx] = 0.0; // Should not happen if get_biome_id_and_weights handles defaults
@@ -428,7 +427,7 @@ impl ChunkManager {
                     continue;
                 }
     
-                // Store primary biome (highest weight)
+                // Store primary section (highest weight)
                 biome_ids_primary[idx] = influences.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)).map_or(0, |(id, _)| *id);
     
                 let mut final_height = 0.0;
@@ -440,11 +439,11 @@ impl ChunkManager {
                     let biome_key = format!("{}", biome_id);
                     if let Some(noise_fn_arc) = noise_funcs_reader.get(&biome_key) {
                         let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
-                        // Apply amplification *per biome noise source* before interpolation
+                        // Apply amplification *per section noise source* before interpolation
                         final_height += (height_val * amplification) as f32 * weight;
                         total_weight += weight;
                     } else {
-                        println!("Warning: Noise function for biome key '{}' not found during generation.", biome_key);
+                        println!("Warning: Noise function for section key '{}' not found during generation.", biome_key);
                         // How to handle missing noise? Add 0 height? Skip weight?
                         // Adding 0 height might be okay if weights don't sum to 1.
                         // If weights *should* sum to 1, this needs careful handling.
@@ -460,7 +459,7 @@ impl ChunkManager {
                     // but it adds robustness if they don't perfectly sum due to float issues or missing noise.
                     heightmap[idx] = final_height / total_weight;
                 } else if influences.len() == 1 && influences[0].0 == 0 {
-                    // If the only influence is biome 0 (Unknown/Fallback)
+                    // If the only influence is section 0 (Unknown/Fallback)
                     heightmap[idx] = 0.0; // Explicitly set to 0
                 }
                 else {
@@ -621,7 +620,7 @@ impl ChunkManager {
                 PackedInt32Array::from(&biomes_i32[..])
             },
             None => {
-                eprintln!("CRITICAL: Chunk {:?} state is Ready, but biome data not found in storage cache!", pos);
+                eprintln!("CRITICAL: Chunk {:?} state is Ready, but section data not found in storage cache!", pos);
                 PackedInt32Array::new()
             }
         }
@@ -659,7 +658,7 @@ impl ChunkManager {
         // Get chunk state
         dict.insert("chunk_state", self.get_chunk_state_at(chunk_x, chunk_z).to_variant());
 
-        // Try to get height and biome from cache if ready
+        // Try to get height and section from cache if ready
         if let Some(data) = self.get_cached_chunk_data(chunk_x, chunk_z) {
             // Calculate exact index within the chunk's heightmap/biomemap
             let local_x = (world_x - (chunk_x as f32 * self.chunk_size as f32)).floor() as u32;
@@ -674,19 +673,19 @@ impl ChunkManager {
             }
              if idx < data.biome_ids.len() {
                  dict.insert("primary_biome_id", (data.biome_ids[idx] as i32).to_variant());
-                 // TODO: Get biome name from BiomeManager if needed
+                 // TODO: Get section name from SectionManager if needed
              } else {
                  dict.insert("primary_biome_id", Variant::nil());
              }
-             // TODO: Potentially add biome weights here if ChunkData stores them
+             // TODO: Potentially add section weights here if ChunkData stores them
         } else {
             dict.insert("height", Variant::nil());
             dict.insert("primary_biome_id", Variant::nil());
         }
 
-        // TODO: Get Section ID / Weights from BiomeManager if needed
-        // You might need a direct reference or call into BiomeManager here
-        // if let Some(bm) = &self.biome_manager {
+        // TODO: Get Section ID / Weights from SectionManager if needed
+        // You might need a direct reference or call into SectionManager here
+        // if let Some(bm) = &self.section_manager {
         //     let mut bm_bind = bm.bind_mut(); // May need mut if it uses cache
         //     dict.insert("section_id", bm_bind.get_section_id(world_x, world_z).to_variant());
         //     // Add weights etc.
@@ -727,46 +726,35 @@ impl ChunkManager {
     }
 
     #[func]
-    pub fn set_biome_manager(&mut self, biome_manager: Gd<BiomeManager>) {
-        println!("ChunkManager: BiomeManager reference set.");
-        self.biome_manager = Some(biome_manager);
-        self.update_thread_safe_biome_data(); // Update data immediately
+    pub fn set_section_manager(&mut self, section_manager: Gd<SectionManager>) {
+        println!("ChunkManager: SectionManager reference set.");
+        self.section_manager = Some(section_manager);
+        self.update_thread_safe_section_data(); // Update data immediately
     }
 
-    // Update thread-safe biome data cache
+    // Update thread-safe section data cache
     #[func]
-    pub fn update_thread_safe_biome_data(&mut self) {
-        if let (Some(biome_mgr_gd), Some(noise_mgr_gd)) = (&self.biome_manager, &self.noise_manager) {
-            let biome_mgr_bind = biome_mgr_gd.bind();
-            let noise_mgr_bind = noise_mgr_gd.bind(); // Bind noise manager
-    
-            if biome_mgr_bind.is_fully_initialized() {
-                println!("ChunkManager: Updating thread-safe biome data cache using BiomeManager and NoiseManager.");
-    
-                let mut current_data_guard = self.thread_safe_biome_data.write().unwrap();
-    
-                if let Some(ref mut existing_data_arc) = *current_data_guard {
-                    // Try to get mutable access to update existing data efficiently
-                    if let Some(existing_data_mut) = Arc::get_mut(existing_data_arc) {
-                        existing_data_mut.update_from_biome_manager(&biome_mgr_bind, &noise_mgr_bind);
-                    } else {
-                        // If shared elsewhere, clone and update (less efficient)
-                        let mut cloned_data = (**existing_data_arc).clone(); // Requires ThreadSafeBiomeData to derive Clone
-                        cloned_data.update_from_biome_manager(&biome_mgr_bind, &noise_mgr_bind);
-                        *existing_data_arc = Arc::new(cloned_data);
-                    }
-                } else {
-                     // Create new data if none exists
-                    let new_data = Arc::new(ThreadSafeBiomeData::from_biome_manager(&biome_mgr_bind, &noise_mgr_bind));
-                    *current_data_guard = Some(new_data);
-                }
-    
-    
+    pub fn update_thread_safe_section_data(&mut self) {
+        if let (Some(section_mgr_gd), Some(noise_mgr_gd)) = (&self.section_manager, &self.noise_manager) {
+            let section_mgr_bind = section_mgr_gd.bind();
+            
+            if section_mgr_bind.is_fully_initialized() {
+                println!("ChunkManager: Updating thread-safe section data cache using SectionManager and NoiseManager.");
+                
+                let mut current_data_guard = self.thread_safe_section_data.write().unwrap();
+                
+                // Create new data
+                let new_data = ThreadSafeSectionData::from_section_manager(
+                    &section_mgr_bind,
+                    &noise_mgr_gd.bind()
+                );
+                
+                *current_data_guard = Some(Arc::new(new_data));
             } else {
-                eprintln!("ChunkManager: Attempted to update biome data, but BiomeManager is not ready.");
+                eprintln!("ChunkManager: Attempted to update section data, but SectionManager is not ready.");
             }
         } else {
-            eprintln!("ChunkManager: Cannot update biome data, BiomeManager or NoiseManager reference missing.");
+            eprintln!("ChunkManager: Cannot update section data, SectionManager or NoiseManager reference missing.");
         }
     }
 

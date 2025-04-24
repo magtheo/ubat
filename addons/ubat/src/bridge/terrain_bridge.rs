@@ -4,7 +4,8 @@ use godot::prelude::*;
 use godot::classes::Node;
 use std::sync::{Arc, Mutex};
 
-use crate::terrain::{ChunkController, ChunkManager, BiomeManager};
+use crate::terrain::{ChunkController, ChunkManager};
+use crate::terrain::section::SectionManager;
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -15,7 +16,7 @@ pub struct TerrainBridge {
     // Reference to the ChunkController
     chunk_controller: Option<Gd<ChunkController>>,
     chunk_manager: Option<Gd<ChunkManager>>,
-    biome_manager: Option<Gd<BiomeManager>>,
+    section_manager: Option<Gd<SectionManager>>,
     // NoiseManager might also be useful to expose if debugger needs noise info
     // noise_manager: Option<Gd<NoiseManager>>,
     
@@ -28,7 +29,7 @@ impl INode for TerrainBridge {
             base,
             chunk_controller: None,
             chunk_manager: None,
-            biome_manager: None,
+            section_manager: None,
             // noise_manager: None,
         }
     }
@@ -46,13 +47,13 @@ impl TerrainBridge {
         &mut self,
         chunk_manager: Gd<ChunkManager>,
         chunk_controller: Gd<ChunkController>,
-        biome_manager: Gd<BiomeManager>,
+        section_manager: Gd<SectionManager>,
         // noise_manager: Gd<NoiseManager>, // Add if needed
     ) {
         godot_print!("TerrainBridge: Setting terrain node references...");
         self.chunk_manager = Some(chunk_manager);
         self.chunk_controller = Some(chunk_controller);
-        self.biome_manager = Some(biome_manager);
+        self.section_manager = Some(section_manager);
         // self.noise_manager = Some(noise_manager);
         godot_print!("TerrainBridge: References set.");
     }
@@ -81,11 +82,11 @@ impl TerrainBridge {
 
     #[func]
     pub fn get_biome_manager(&self) -> Variant {
-        match &self.biome_manager {
+        match &self.section_manager {
             Some(bm) => bm.clone().to_variant(),
             None => Variant::nil(),
         }
-        // self.biome_manager.clone()
+        // self.section_manager.clone()
     }
 
     // #[func]
