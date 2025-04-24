@@ -7,6 +7,7 @@ pub mod generation_utils;
 
 pub mod terrain_config;
 
+pub mod section;
 pub mod noise;
 
 
