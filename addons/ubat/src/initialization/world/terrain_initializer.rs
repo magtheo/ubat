@@ -76,145 +76,167 @@ impl TerrainInitializer {
     // This is the main method to initialize the terrain system
     pub fn initialize_terrain_system(&mut self) -> Result<(), String> {
         if self.initialized {
-             godot_warn!("TerrainInitializer: Attempted to initialize terrain system again.");
-             return Ok(()); // Already done
+            godot_warn!("TerrainInitializer: Attempted to initialize terrain system again.");
+            return Ok(());
         }
         godot_print!("TerrainInitializer: Starting initialization...");
         let start_time = Instant::now();
-
+    
         // 1. Create parent node for our terrain system
         let mut parent_node = Node::new_alloc();
-        parent_node.set_name("TerrainSystem"); // Use GString
-
-        // --- Create and Configure NoiseManager FIRST ---
+        parent_node.set_name("TerrainSystem");
+    
+        // 2. Add the parent container to the scene root so that any children you add
+        //    later will be considered "ready"
+        let mut root = Self::get_scene_root()
+            .ok_or_else(|| {
+                let msg = "Failed to retrieve the scene root node.".to_string();
+                self.error_logger.log_error("TerrainInitializer", &msg, ErrorSeverity::Critical, None);
+                msg
+            })?;
+        root.add_child(&parent_node.clone().upcast::<Node>());
+        parent_node.set_owner(&root.clone().upcast::<Node>());
+    
+        // --- Create & attach NoiseManager ---
         let mut noise_manager = NoiseManager::new_alloc();
-        noise_manager.set_name("NoiseManager"); // Use GString
-
-        // **IMPORTANT:** Populate noise paths from the stored map
+        noise_manager.set_name("NoiseManager");
+        parent_node.add_child(&noise_manager.clone().upcast::<Node>());
+        noise_manager.set_owner(&parent_node.clone().upcast::<Node>());
+    
+        // Now that NoiseManager is in the tree and 'ready', setting paths will auto-load
         {
             let mut nm_bind = noise_manager.bind_mut();
-            // Convert HashMap<String, String> to Godot Dictionary
             let mut noise_paths_dict = Dictionary::new();
             for (key, path) in &self.noise_paths {
-                noise_paths_dict.insert(key.to_variant(), path.to_variant()); // Use GString::from(path) if needed
+                noise_paths_dict.insert(key.to_variant(), path.to_variant());
             }
-
-            // Print regardless, to confirm what's being set
-            godot_print!("TerrainInitializer: Setting noise paths on NoiseManager (Count: {}): {:?}",
+            godot_print!(
+                "TerrainInitializer: Setting noise paths on NoiseManager (Count: {}): {:?}",
                 noise_paths_dict.len(),
-                &self.noise_paths // Log the original HashMap for clarity
+                &self.noise_paths
             );
-
-            // Assuming NoiseManager has a setter like `set_noise_resource_paths`
             nm_bind.set_noise_resource_paths(noise_paths_dict);
+            // no need to call load_and_extract_all_parameters manually
         }
-        // Note: NoiseManager's _ready() will run *after* it's added to the scene,
-        // where it will then use the paths set above to load parameters.
-
-        // Get section/biome config from global_config
-        let (sections_config, biomes_config, seed) = {
-            let config_guard = global_config::get_config_manager().read().unwrap();
-            let config = config_guard.get_config();
-            (config.sections.clone(), config.biomes.clone(), config.world_seed)
+    
+        // --- Fetch TOML‐loaded section & biome configs + seed ---
+        let (sections_config_vec, biomes_config_vec, seed) = {
+            let cfg = global_config::get_config_manager()
+                .read().expect("Failed to lock global config for read")
+                .get_config().clone();
+            (cfg.sections, cfg.biomes, cfg.world_seed)
         };
-        
-        // Create SectionManager instead of SectionManager
+    
+        // --- Convert sections to VariantArray ---
+        let mut sections_array = VariantArray::new();
+        for section in sections_config_vec {
+            let mut dict = Dictionary::new();
+            dict.insert("id".to_variant(), section.id.to_variant());
+            dict.insert("length".to_variant(), section.length.to_variant());
+            dict.insert("transition_zone".to_variant(), section.transition_zone.to_variant());
+            dict.insert(
+                "boundary_noise_key".to_variant(),
+                section.boundary_noise_key.clone().unwrap_or_default().to_variant(),
+            );
+            dict.insert("point_density".to_variant(), section.point_density.to_variant());
+    
+            let mut biomes_ids = VariantArray::new();
+            for &b in &section.possible_biomes {
+                biomes_ids.push(&b.to_variant());
+            }
+            dict.insert("possible_biomes".to_variant(), biomes_ids.to_variant());
+    
+            sections_array.push(&dict.to_variant());
+        }
+        let sections_config_var = sections_array.to_variant();
+    
+        // --- Convert biomes to VariantArray ---
+        let mut biomes_array = VariantArray::new();
+        for biome in biomes_config_vec {
+            let mut dict = Dictionary::new();
+            dict.insert("id".to_variant(), biome.id.to_variant());
+            dict.insert("name".to_variant(), biome.name.to_variant());
+            dict.insert("primary_noise_key".to_variant(), biome.primary_noise_key.to_variant());
+    
+            let mut sec_keys = VariantArray::new();
+            for key in biome.secondary_noise_keys {
+                sec_keys.push(&key.to_variant());
+            }
+            dict.insert("secondary_noise_keys".to_variant(), sec_keys.to_variant());
+    
+            let mut params = Dictionary::new();
+            for (k, v) in biome.texture_params {
+                params.insert(k.to_variant(), v.to_variant());
+            }
+            dict.insert("texture_params".to_variant(), params.to_variant());
+    
+            biomes_array.push(&dict.to_variant());
+        }
+        let biomes_config_var = biomes_array.to_variant();
+    
+        // --- Create & attach SectionManager ---
         let mut section_manager = SectionManager::new_alloc();
         section_manager.set_name("SectionManager");
-        
-        // Initialize SectionManager
-        let init_result = section_manager.bind_mut().initialize(
-            sections_config,
-            biomes_config,
+        parent_node.add_child(&section_manager.clone().upcast::<Node>());
+        section_manager.set_owner(&parent_node.clone().upcast::<Node>());
+    
+        // Initialize SectionManager with our noise_manager
+        let init_ok = section_manager.bind_mut().initialize(
+            sections_config_var,
+            biomes_config_var,
             seed,
-            &noise_manager
+            noise_manager.clone(),
         );
-        
-        if !init_result {
+        if !init_ok {
             let err_msg = "Failed to initialize SectionManager".to_string();
-            self.error_logger.log_error(
-                "TerrainInitializer",
-                &err_msg,
-                ErrorSeverity::Critical,
-                None
-            );
-            return Err(err_msg);
-            
-        } else {
-            let err_msg = "NoiseManager not available for SectionManager initialization".to_string();
-            self.error_logger.log_error(
-                "TerrainInitializer",
-                &err_msg,
-                ErrorSeverity::Critical,
-                None
-            );
+            godot_error!("TerrainInitializer: {}", err_msg);
+            self.error_logger.log_error("TerrainInitializer", &err_msg, ErrorSeverity::Critical, None);
             return Err(err_msg);
         }
-
-
-        // --- Create ChunkManager ---
+    
+        // --- Create & attach ChunkManager, ChunkController, TerrainBridge ---
         let mut chunk_manager = ChunkManager::new_alloc();
         chunk_manager.set_name("ChunkManager");
-
-        // --- Create ChunkController ---
+        parent_node.add_child(&chunk_manager.clone().upcast::<Node>());
+        chunk_manager.set_owner(&parent_node.clone().upcast::<Node>());
+    
         let mut chunk_controller = ChunkController::new_alloc();
         chunk_controller.set_name("ChunkController");
-
-        // --- !!! Create TerrainBridge !!! ---
+        parent_node.add_child(&chunk_controller.clone().upcast::<Node>());
+        chunk_controller.set_owner(&parent_node.clone().upcast::<Node>());
+    
         let mut terrain_bridge = TerrainBridge::new_alloc();
-        terrain_bridge.set_name("TerrainBridge"); // CRUCIAL: Name needed for finding later
-
-        // --- Add all nodes to the parent ---
-        // It's generally better to add children *before* adding the parent to the main scene tree
-        parent_node.add_child(&noise_manager);
-        parent_node.add_child(&section_manager);
-        parent_node.add_child(&chunk_manager);
-        parent_node.add_child(&chunk_controller);
-        parent_node.add_child(&terrain_bridge); // bridge
-
-        // --- Add parent to scene root ---
-        if let Some(mut root) = Self::get_scene_root() {
-            godot_print!("TerrainInitializer: Adding TerrainSystem node to scene root.");
-            root.add_child(&parent_node); // Add parent_node itself
-            // Set owner *after* adding to the loaded scene tree
-            parent_node.set_owner(&root); // Owner for TerrainSystem
-            // Children likely inherit owner or don't strictly need it set manually here
-            // unless you have specific save/instancing requirements.
-        } else {
-            let err_msg = "Failed to retrieve the scene root node.".to_string();
-            self.error_logger.log_error(
-                "TerrainInitializer",
-                &err_msg,
-                ErrorSeverity::Critical,
-                None
-            );
-            return Err(err_msg);
-        }
-
-        // Store references
-        self.noise_manager = Some(noise_manager.clone()); // <-- Store reference
-        self.section_manager = Some(section_manager.clone());
-        self.chunk_manager = Some(chunk_manager.clone());
-        self.chunk_controller = Some(chunk_controller.clone());
-
-        // --- !!! Link Managers TO the TerrainBridge !!! ---
+        terrain_bridge.set_name("TerrainBridge");
+        parent_node.add_child(&terrain_bridge.clone().upcast::<Node>());
+        terrain_bridge.set_owner(&parent_node.clone().upcast::<Node>());
+    
+        // Link managers into the TerrainBridge
         {
             let mut bridge_bind = terrain_bridge.bind_mut();
             bridge_bind.set_terrain_nodes(
-                chunk_manager,    // Pass the Gd
-                chunk_controller, // Pass the Gd
-                section_manager,    // Pass the Gd
-                // noise_manager, // Add if needed
+                chunk_manager.clone(),
+                chunk_controller.clone(),
+                section_manager.clone(),
             );
         }
-
-        // Update initialization state
-        self.timing.update_state(TerrainInitializationState::Ready); // Assuming this tracks internal state
-        self.initialized = true; // Mark this initializer as having run
-
-        godot_print!("TerrainInitializer: Terrain system nodes created and added to scene in {}ms.", start_time.elapsed().as_millis());
+    
+        // --- Finalize ---
+        self.noise_manager      = Some(noise_manager);
+        self.section_manager    = Some(section_manager);
+        self.chunk_manager      = Some(chunk_manager);
+        self.chunk_controller   = Some(chunk_controller);
+        self.terrain_bridge     = Some(terrain_bridge);
+    
+        self.timing.update_state(TerrainInitializationState::Ready);
+        self.initialized = true;
+    
+        godot_print!(
+            "TerrainInitializer: Terrain system initialized and added to scene in {}ms.",
+            start_time.elapsed().as_millis()
+        );
         Ok(())
     }
+    
 
     // Get the terrain context (components needed by the world manager)
     pub fn get_terrain_context(&self) -> TerrainSystemContext {
