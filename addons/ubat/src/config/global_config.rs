@@ -51,48 +51,48 @@ pub fn get_config_manager() -> &'static Arc<RwLock<ConfigurationManager>> {
 /// Gets a read-only reference to the current GameConfiguration.
 /// Convenience function. Panics if not initialized.
 pub fn get_config() -> std::sync::RwLockReadGuard<'static, GameConfiguration> {
-     let manager_lock = get_config_manager();
-     // We acquire the lock and expect it to succeed. If it's poisoned, something is very wrong.
-     let manager_guard = manager_lock.read().expect("Failed to acquire read lock on global config manager (poisoned?)");
-     // We need to leak the guard slightly to satisfy the lifetime requirements,
-     // ensuring the guard lives as long as the reference it returns.
-     // This is generally safe IF the global state isn't destroyed while the guard is held,
-     // which is true for a static OnceCell.
-     // A cleaner way might involve passing the lock guard around, but this is simpler for read-only access.
-     // Alternatively, return the Arc<RwLock<...>> and let callers lock it. Let's do that instead.
-     // manager_guard
-     // --> Let's change this to return the manager lock instead for safer lock management by caller.
-     // This function's signature and purpose changes if we do that. Let's stick to the original intent
-     // but acknowledge the lifetime complexity. A read guard is usually fine for quick access.
-     // Re-evaluating: Returning the guard directly is tricky with lifetimes.
-     // Let's revert to the safer approach: return the manager lock itself.
+    let manager_lock = get_config_manager();
+    // We acquire the lock and expect it to succeed. If it's poisoned, something is very wrong.
+    let manager_guard = manager_lock.read().expect("Failed to acquire read lock on global config manager (poisoned?)");
+    // We need to leak the guard slightly to satisfy the lifetime requirements,
+    // ensuring the guard lives as long as the reference it returns.
+    // This is generally safe IF the global state isn't destroyed while the guard is held,
+    // which is true for a static OnceCell.
+    // A cleaner way might involve passing the lock guard around, but this is simpler for read-only access.
+    // Alternatively, return the Arc<RwLock<...>> and let callers lock it. Let's do that instead.
+    // manager_guard
+    // --> Let's change this to return the manager lock instead for safer lock management by caller.
+    // This function's signature and purpose changes if we do that. Let's stick to the original intent
+    // but acknowledge the lifetime complexity. A read guard is usually fine for quick access.
+    // Re-evaluating: Returning the guard directly is tricky with lifetimes.
+    // Let's revert to the safer approach: return the manager lock itself.
 
-     // ---- SAFER APPROACH ----
-     // Callers will need to lock this themselves.
-     // get_config_manager() // Callers use this and then .read() or .write()
+    // ---- SAFER APPROACH ----
+    // Callers will need to lock this themselves.
+    // get_config_manager() // Callers use this and then .read() or .write()
 
-     // ---- ORIGINAL INTENT (More complex lifetimes, potentially unsafe if misused) ----
-     // If you absolutely need direct access via a simple function:
-     // 1. Ensure your GameConfiguration struct implements Clone if not already.
-     // 2. Return a clone:
-     //    get_config_manager().read().expect("Config lock poisoned").get_config().clone()
-     // This avoids lifetime issues but involves a clone each time.
+    // ---- ORIGINAL INTENT (More complex lifetimes, potentially unsafe if misused) ----
+    // If you absolutely need direct access via a simple function:
+    // 1. Ensure your GameConfiguration struct implements Clone if not already.
+    // 2. Return a clone:
+    //    get_config_manager().read().expect("Config lock poisoned").get_config().clone()
+    // This avoids lifetime issues but involves a clone each time.
 
-     // Let's provide a specific getter for the terrain config data for TerrainConfigManager init
-     // This is safer as it clones just the needed part.
-     unimplemented!("get_config() is complex with lifetimes; use get_config_manager() and lock manually, or implement specific getters like get_terrain_config_data()");
+    // Let's provide a specific getter for the terrain config data for TerrainConfigManager init
+    // This is safer as it clones just the needed part.
+    unimplemented!("get_config() is complex with lifetimes; use get_config_manager() and lock manually, or implement specific getters like get_terrain_config_data()");
 }
 
 
 // Specific getter example
 use crate::config::config_manager::TerrainInitialConfigData; // Adjust path if needed
 pub fn get_terrain_config_data() -> TerrainInitialConfigData {
-     get_config_manager()
-         .read()
-         .expect("Config lock poisoned")
-         .get_config() // Get reference to GameConfiguration
-         .terrain // Access the terrain field
-         .clone() // Clone the TerrainInitialConfigData
+    get_config_manager()
+        .read()
+        .expect("Config lock poisoned")
+        .get_config() // Get reference to GameConfiguration
+        .terrain // Access the terrain field
+        .clone() // Clone the TerrainInitialConfigData
 }
 
 // You might add more specific getters here for commonly accessed, cloneable parts.
