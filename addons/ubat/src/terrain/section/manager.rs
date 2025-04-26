@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use super::sectionConfig::{SectionTomlConfig, BiomeTomlConfig};
 use crate::terrain::section::definition::{SectionDefinition, BiomeDefinition, VoronoiPoint, Rect2};
 use crate::terrain::section::distribution::{generate_voronoi_points_for_section, SpatialGrid};
+use crate::terrain::section::sectionConfig;
 use crate::terrain::section::thread_safe_data::ThreadSafeSectionData;
 use crate::terrain::noise::noise_manager::NoiseManager;
 
@@ -66,10 +67,11 @@ impl SectionManager {
         sections_config_var: Variant,
         biomes_config_var: Variant,
         world_seed: u64,
-        noise_manager: Gd<NoiseManager>, // Keep Gd<T> if ownership transfer is intended
+        noise_manager: Gd<NoiseManager>, // Expects owned Gd<NoiseManager>
     ) -> bool {
         godot_print!("SectionManager: Initializing with seed {}", world_seed);
 
+        // Use types directly, assuming they are imported via `use` statements
         let mut sections_config: Vec<SectionTomlConfig> = Vec::new();
         let mut biomes_config: Vec<BiomeTomlConfig> = Vec::new();
 
@@ -77,67 +79,61 @@ impl SectionManager {
         match sections_config_var.try_to::<VariantArray>() {
             Ok(sections_array) => {
                 for i in 0..sections_array.len() {
-                    // Get the dictionary for the section
-                    let section_var = sections_array.get(i); // Returns Option<Variant>
-                    if let Ok(section_dict) = section_var.try_to::<Dictionary>() { // Try convert Option<Variant> -> Dictionary
-                        // Extract fields, handling Option returned by get() before calling try_to()
-                        let id = section_dict.get("id") // Returns Option<Variant>
-                            .and_then(|v| v.try_to::<i32>().ok()) // Try get, then try convert, result is Option<i32>
-                            .unwrap_or_else(|| {
-                                godot_warn!("SectionManager: Missing or invalid 'id' in section config at index {}. Using 0.", i);
-                                0 // Provide default if key missing or conversion failed
+                    let section_var_opt = sections_array.get(i);
+                    if let Some(section_var) = section_var_opt {
+                        if let Ok(section_dict) = section_var.try_to::<Dictionary>() {
+                            // *** CORRECTED TYPE: Parse id as u8 ***
+                            let id = section_dict.get("id")
+                                .and_then(|v| v.try_to::<u8>().ok()) // Try convert to u8
+                                .unwrap_or_else(|| {
+                                    godot_warn!("SectionManager: Missing/invalid 'id' (expected u8) in section config[{}]. Using 0.", i);
+                                    0 // Default u8
+                                });
+
+                            let length = section_dict.get("length")
+                                .and_then(|v| v.try_to::<f32>().ok())
+                                .unwrap_or(1000.0);
+
+                            let transition_zone = section_dict.get("transition_zone")
+                                .and_then(|v| v.try_to::<f32>().ok())
+                                .unwrap_or(100.0);
+
+                            let boundary_noise_key = section_dict.get("boundary_noise_key")
+                                .and_then(|v| v.try_to::<String>().ok());
+
+                            let point_density = section_dict.get("point_density")
+                                .and_then(|v| v.try_to::<f32>().ok())
+                                .unwrap_or(0.01);
+
+                            // *** CORRECTED TYPE: Parse possible_biomes elements as u8 ***
+                            let mut possible_biomes: Vec<u8> = Vec::new(); // Expect Vec<u8>
+                            if let Some(biomes_var) = section_dict.get("possible_biomes") {
+                               if let Ok(biomes_array_inner) = biomes_var.try_to::<VariantArray>() {
+                                    for j in 0..biomes_array_inner.len() {
+                                        // Try convert to u8
+                                        if let Some(biome_id) = biomes_array_inner.get(j)
+                                                                            .and_then(|v| v.try_to::<u8>().ok()) // Parse as u8
+                                        {
+                                            possible_biomes.push(biome_id);
+                                        } else {
+                                             godot_warn!("SectionManager: Failed to parse biome ID (expected u8) at index {} in section {}", j, id);
+                                        }
+                                    }
+                               } else {
+                                    godot_warn!("SectionManager: 'possible_biomes' in section {} is not a VariantArray", id);
+                               }
+                            }
+
+                            // Create SectionTomlConfig (ensure its definition uses u8 for id and Vec<u8> for possible_biomes)
+                            sections_config.push(SectionTomlConfig {
+                                id, length, transition_zone, boundary_noise_key, possible_biomes, point_density,
                             });
 
-                        let length = section_dict.get("length")
-                            .and_then(|v| v.try_to::<f32>().ok())
-                            .unwrap_or(1000.0);
-
-                        let transition_zone = section_dict.get("transition_zone")
-                            .and_then(|v| v.try_to::<f32>().ok())
-                            .unwrap_or(100.0);
-
-                        // For optional fields, we don't need unwrap_or
-                        let boundary_noise_key = section_dict.get("boundary_noise_key")
-                            .and_then(|v| v.try_to::<String>().ok()); // Result is Option<String>
-
-                        let point_density = section_dict.get("point_density")
-                            .and_then(|v| v.try_to::<f32>().ok())
-                            .unwrap_or(0.01);
-
-                        // Extract possible biomes array
-                        let mut possible_biomes = Vec::new();
-                        // First, get the variant for "possible_biomes"
-                        if let Some(biomes_var) = section_dict.get("possible_biomes") { // get() returns Option<Variant>
-                           // Then, try to convert that variant to a VariantArray
-                           if let Ok(biomes_array) = biomes_var.try_to::<VariantArray>() {
-                                for j in 0..biomes_array.len() {
-                                    // *** FIX HERE ***: Apply the pattern to the result of biomes_array.get(j)
-                                    if let Some(biome_id) = biomes_array.get(j) // Returns Option<Variant>
-                                                                        .and_then(|v| v.try_to::<i32>().ok()) // Handle Option and Result
-                                    {
-                                        possible_biomes.push(biome_id);
-                                    } else {
-                                         godot_warn!("SectionManager: Failed to parse biome ID at index {} in section {}", j, id);
-                                    }
-                                }
-                           } else {
-                                godot_warn!("SectionManager: 'possible_biomes' key found in section {} but is not a VariantArray", id);
-                           }
-                        } // No warning if 'possible_biomes' key is entirely missing
-
-                        // Create SectionTomlConfig manually
-                        let section_config = SectionTomlConfig {
-                            id,
-                            length,
-                            transition_zone,
-                            boundary_noise_key,
-                            possible_biomes,
-                            point_density,
-                        };
-                        sections_config.push(section_config);
-
+                        } else {
+                             godot_warn!("SectionManager: Item at index {} in sections config is not a Dictionary", i);
+                        }
                     } else {
-                         godot_warn!("SectionManager: Item at index {} in sections config is not a Dictionary (or failed to convert)", i);
+                         godot_warn!("SectionManager: Item at index {} in sections config is Null or invalid Variant", i);
                     }
                 }
             }
@@ -151,89 +147,76 @@ impl SectionManager {
         match biomes_config_var.try_to::<VariantArray>() {
              Ok(biomes_array) => {
                 for i in 0..biomes_array.len() {
-                    let biome_var = biomes_array.get(i); // Returns Option<Variant>
-                     if let Ok(biome_dict) = biome_var.try_to::<Dictionary>() { // Try convert Option<Variant> -> Dictionary
-                        // Extract fields using the and_then().ok().unwrap_or() pattern
-                        let id = biome_dict.get("id")
-                            .and_then(|v| v.try_to::<i32>().ok())
-                             .unwrap_or_else(|| {
-                                godot_warn!("SectionManager: Missing or invalid 'id' in biome config at index {}. Using 0.", i);
-                                0
-                            });
+                    let biome_var_opt = biomes_array.get(i);
+                     if let Some(biome_var) = biome_var_opt {
+                         if let Ok(biome_dict) = biome_var.try_to::<Dictionary>() {
+                            // *** CORRECTED TYPE: Parse id as u8 ***
+                            let id = biome_dict.get("id")
+                                .and_then(|v| v.try_to::<u8>().ok()) // Try convert to u8
+                                 .unwrap_or_else(|| {
+                                    godot_warn!("SectionManager: Missing/invalid 'id' (expected u8) in biome config[{}]. Using 0.", i);
+                                    0 // Default u8
+                                });
 
-                        let name = biome_dict.get("name")
-                            .and_then(|v| v.try_to::<String>().ok())
-                            .unwrap_or_default(); // Use default String ("") if missing/wrong type
+                            let name = biome_dict.get("name")
+                                .and_then(|v| v.try_to::<String>().ok())
+                                .unwrap_or_default();
 
-                         let primary_noise_key = biome_dict.get("primary_noise_key")
-                            .and_then(|v| v.try_to::<String>().ok())
-                            .unwrap_or_else(|| {
-                                // Make this fatal because primary key is essential
-                                godot_error!("SectionManager: Missing or invalid 'primary_noise_key' for biome config at index {}. Cannot proceed.", i);
-                                // Return an empty string temporarily, but the later check will catch this
-                                String::new()
-                            });
-                         // Early exit if primary key is missing (essential)
-                         if primary_noise_key.is_empty() {
-                             return false;
-                         }
+                             let primary_noise_key = biome_dict.get("primary_noise_key")
+                                .and_then(|v| v.try_to::<String>().ok())
+                                .unwrap_or_else(|| {
+                                    godot_error!("SectionManager: Missing/invalid 'primary_noise_key' for biome config[{}]. Cannot proceed.", i);
+                                    String::new()
+                                });
+                             if primary_noise_key.is_empty() { return false; }
 
 
-                        // Extract secondary noise keys array
-                        let mut secondary_noise_keys = Vec::new();
-                        if let Some(keys_var) = biome_dict.get("secondary_noise_keys") {
-                             if let Ok(keys_array) = keys_var.try_to::<VariantArray>() {
-                                for j in 0..keys_array.len() {
-                                    // Apply pattern here too
-                                    if let Some(key) = keys_array.get(j).and_then(|v| v.try_to::<String>().ok()) {
-                                        secondary_noise_keys.push(key);
-                                    } else {
-                                        godot_warn!("SectionManager: Failed to parse secondary noise key at index {} in biome {}", j, id);
+                            let mut secondary_noise_keys = Vec::new();
+                            if let Some(keys_var) = biome_dict.get("secondary_noise_keys") {
+                                 if let Ok(keys_array_inner) = keys_var.try_to::<VariantArray>() {
+                                    for j in 0..keys_array_inner.len() {
+                                        if let Some(key) = keys_array_inner.get(j).and_then(|v| v.try_to::<String>().ok()) {
+                                            secondary_noise_keys.push(key);
+                                        } else {
+                                            godot_warn!("SectionManager: Failed to parse secondary noise key at index {} in biome {}", j, id);
+                                        }
                                     }
-                                }
-                             } else {
-                                 godot_warn!("SectionManager: 'secondary_noise_keys' key found in biome {} but is not a VariantArray", id);
-                             }
-                        }
-
-                        // Extract texture params dictionary
-                        let mut texture_params = HashMap::new();
-                        if let Some(params_var) = biome_dict.get("texture_params") {
-                            if let Ok(params_dict) = params_var.try_to::<Dictionary>() {
-                                // Iterate over keys safely
-                                for key_var in params_dict.keys_array().iter_shared() {
-                                     // Try convert key to String
-                                     if let Ok(key_str) = key_var.try_to::<String>() {
-                                         // *** FIX HERE ***: Apply the pattern to the result of params_dict.get(key_var)
-                                         if let Some(value_f32) = params_dict.get(key_var) // Returns Option<Variant>
-                                                                              .and_then(|v| v.try_to::<f32>().ok()) // Handle Option and Result
-                                         {
-                                            texture_params.insert(key_str, value_f32);
-                                         } else {
-                                             godot_warn!("SectionManager: Failed to parse texture param value for key '{}' in biome {}", key_str, id);
-                                         }
-                                     } else {
-                                         // Use {:?} for debug printing the Variant if it's not a string
-                                         godot_warn!("SectionManager: Failed to parse texture param key {:?} as String in biome {}", key_var, id);
-                                     }
-                                }
-                            } else {
-                                 godot_warn!("SectionManager: 'texture_params' key found in biome {} but is not a Dictionary", id);
+                                 } else {
+                                     godot_warn!("SectionManager: 'secondary_noise_keys' in biome {} is not a VariantArray", id);
+                                 }
                             }
-                        }
 
-                        // Create BiomeTomlConfig manually
-                        let biome_config = BiomeTomlConfig {
-                            id,
-                            name,
-                            primary_noise_key, // Already checked if empty
-                            secondary_noise_keys,
-                            texture_params,
-                        };
-                        biomes_config.push(biome_config);
+                            let mut texture_params = HashMap::new();
+                            if let Some(params_var) = biome_dict.get("texture_params") {
+                                if let Ok(params_dict) = params_var.try_to::<Dictionary>() {
+                                    for key_var in params_dict.keys_array().iter_shared() {
+                                         if let Ok(key_str) = key_var.try_to::<String>() {
+                                             if let Some(value_f32) = params_dict.get(key_var)
+                                                                                  .and_then(|v| v.try_to::<f32>().ok())
+                                             {
+                                                texture_params.insert(key_str, value_f32);
+                                             } else {
+                                                 godot_warn!("SectionManager: Failed to parse texture param value for key '{}' in biome {}", key_str, id);
+                                             }
+                                         } else {
+                                             godot_warn!("SectionManager: Failed to parse texture param key {:?} as String in biome {}", key_var, id);
+                                         }
+                                    }
+                                } else {
+                                     godot_warn!("SectionManager: 'texture_params' in biome {} is not a Dictionary", id);
+                                }
+                            }
 
+                            // Create BiomeTomlConfig (ensure its definition uses u8 for id)
+                            biomes_config.push(BiomeTomlConfig {
+                                id, name, primary_noise_key, secondary_noise_keys, texture_params,
+                            });
+
+                         } else {
+                              godot_warn!("SectionManager: Item at index {} in biomes config is not a Dictionary", i);
+                         }
                      } else {
-                          godot_warn!("SectionManager: Item at index {} in biomes config is not a Dictionary (or failed to convert)", i);
+                          godot_warn!("SectionManager: Item at index {} in biomes config is Null or invalid Variant", i);
                      }
                 }
             }
@@ -247,114 +230,100 @@ impl SectionManager {
         godot_print!("SectionManager: Processed {} sections and {} biomes",
                     sections_config.len(), biomes_config.len());
 
-        // Check for empty configs after parsing
         if sections_config.is_empty() {
-             godot_error!("SectionManager: Cannot initialize: No valid sections were parsed from the config.");
+             godot_error!("SectionManager: Cannot initialize: No valid sections were parsed.");
              return false;
         }
         if biomes_config.is_empty() {
-            godot_error!("SectionManager: Cannot initialize: No valid biomes were parsed from the config.");
+            godot_error!("SectionManager: Cannot initialize: No valid biomes were parsed.");
             return false;
         }
 
+        // --- Initialization ---
         self.world_seed = world_seed;
-
-        // Clear any existing data before populating
         self.sections.clear();
         self.biomes.clear();
-        self.voronoi_points.clear(); // Make sure this field exists on self
+        self.voronoi_points.clear();
+        self.spatial_grid = None;
 
-        // --- Process biome configurations into BiomeDefinitions ---
-        let nm_bind = noise_manager.bind(); // Bind Gd once for efficiency
-        let mut temp_biomes = Vec::with_capacity(biomes_config.len()); // Build into temporary vec first
+        // --- Process Biomes into Definitions ---
+        let nm_bind = noise_manager.bind();
+        let mut temp_biomes = Vec::with_capacity(biomes_config.len());
 
-        for biome_config in biomes_config { // Iterate over the owned Vec<BiomeTomlConfig>
-            // Get primary noise function (convert String to GodotString for the API call)
-            let primary_noise_fn = match nm_bind.get_noise_function(biome_config.primary_noise_key.to_godot()) {
+        for biome_config in biomes_config {
+            // Pass &str to get_noise_function
+            let primary_noise_fn = match nm_bind.get_noise_function(&biome_config.primary_noise_key) {
                 Some(noise_fn) => noise_fn,
                 None => {
-                    // This should ideally have been caught during parsing, but double-check
                     godot_error!("SectionManager: Primary noise function '{}' not found for biome ID: {}. Cannot proceed.",
                                biome_config.primary_noise_key, biome_config.id);
-                    return false; // Fatal error if primary noise is missing
+                    return false;
                 }
             };
 
-             // Get any secondary noise functions
-             let mut secondary_fns = Vec::new(); // Correctly named variable
+             let mut secondary_fns = Vec::new();
              for key in &biome_config.secondary_noise_keys {
-                 // Convert String to GodotString for the API call
-                 if let Some(sec_fn) = nm_bind.get_noise_function(key.to_godot()) {
+                 // Pass &str to get_noise_function
+                 if let Some(sec_fn) = nm_bind.get_noise_function(key) {
                      secondary_fns.push(sec_fn);
                  } else {
-                     // Warning is okay for secondary functions, they might be optional
-                     godot_warn!("SectionManager: Secondary noise function '{}' not found for biome ID: {}",
-                                key, biome_config.id);
+                     godot_warn!("SectionManager: Secondary noise function '{}' not found for biome ID: {}", key, biome_config.id);
                  }
              }
 
-            // Create BiomeDefinition
-            let biome_def = BiomeDefinition {
-                id: biome_config.id,
-                name: biome_config.name, // Already parsed
-                primary_noise_fn, // Fetched successfully above
-                texture_params: biome_config.texture_params, // Already parsed
-                // *** FIX HERE ***: Use the correct variable name
-                secondary_noise_fns: secondary_fns, // Use the variable declared above
-            };
-            temp_biomes.push(biome_def);
+            // Create BiomeDefinition (ensure its definition uses u8 for id)
+            temp_biomes.push(BiomeDefinition {
+                id: biome_config.id, // id is already u8 from parsing
+                name: biome_config.name,
+                primary_noise_fn,
+                texture_params: biome_config.texture_params,
+                secondary_noise_fns: secondary_fns,
+            });
         }
-        // Only assign to self.biomes if all primary noise functions were found and processed
         self.biomes = temp_biomes;
 
 
-        // --- Process section configurations into SectionDefinitions ---
+        // --- Process Sections into Definitions ---
         let mut current_position = 0.0;
         let mut total_length = 0.0;
 
-        for section_config in sections_config { // Iterate over the owned Vec<SectionTomlConfig>
-            // Get boundary noise function if specified
-            let boundary_noise_fn = match &section_config.boundary_noise_key {
-                 Some(key) => {
-                     // Convert String to GodotString for the API call
-                     match nm_bind.get_noise_function(key.to_godot()) {
+        for section_config in sections_config {
+            let boundary_noise_fn = section_config.boundary_noise_key.as_deref()
+                .and_then(|key| {
+                    // Pass &str to get_noise_function
+                    match nm_bind.get_noise_function(key) {
                         Some(func) => Some(func),
                         None => {
                             godot_warn!("SectionManager: Boundary noise function '{}' not found for section ID: {}. Section will have no boundary noise.", key, section_config.id);
-                            None // Non-fatal, proceed without boundary noise
+                            None
                         }
-                     }
-                 },
-                 None => None, // No key specified
-            };
+                    }
+                });
 
-            // Create SectionDefinition
-            // Make sure your SectionDefinition::new function matches these arguments
+            // Create SectionDefinition (ensure its definition uses u8 for id and Vec<u8> for possible_biomes)
             let section_def = SectionDefinition::new(
-                section_config.id,
+                section_config.id, // id is already u8 from parsing
                 current_position,
                 section_config.length,
                 section_config.transition_zone,
-                section_config.possible_biomes, // Already parsed
+                section_config.possible_biomes, // possible_biomes is already Vec<u8> from parsing
                 section_config.point_density,
-                boundary_noise_fn, // Fetched above (Option<YourNoiseFnType>)
+                boundary_noise_fn,
             );
             self.sections.push(section_def);
 
-            // Update position for the next section
             current_position += section_config.length;
             total_length += section_config.length;
         }
 
         self.world_length = total_length;
 
-        // Generate Voronoi points for all sections (make sure this function exists and is called appropriately)
-        // self.generate_voronoi_points(); // Uncomment and implement if you have this method
+        self.generate_voronoi_points();
 
         self.initialized = true;
         godot_print!("SectionManager: Initialization complete. World length: {}", self.world_length);
 
-        true // Indicate successful initialization
+        true
     }
     
     /// Build a thread-safe data structure that can be used by worker threads.
