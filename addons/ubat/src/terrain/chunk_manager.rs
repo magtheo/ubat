@@ -387,7 +387,7 @@ impl ChunkManager {
             }
             ChunkResult::LogMessage(msg) => {
                 // Log messages received from worker threads
-                eprintln!("Log from Worker: {}", msg); // Or godot_print!
+                // godot_print!("Log from Worker: {}", msg); // Or godot_print!
                 // No state change needed for log messages
             }
         }
@@ -398,44 +398,28 @@ impl ChunkManager {
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
         section_data: Arc<ThreadSafeSectionData>,
-        // Accept function cache handle
         noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
         chunk_size: u32,
         sender: Sender<ChunkResult>,
         amplification: f64,
     ) {
-        // Use println! as this is likely a standard Rust thread.
-        // Add this block right after receiving/unwrapping section_data.
+        // --- Worker Debug Logging (using println! for basic info) ---
         println!(
             "DEBUG WORKER [Chunk {}, {}]: Starting generation using ThreadSafeSectionData:",
             pos.x, pos.z
         );
-        // Access fields assuming ThreadSafeSectionData mirrors SectionManager relevant data
-        // You might need to adjust these field names based on your actual struct definition
         println!("DEBUG WORKER:   Data World Length: {}", section_data.world_length);
-
-        if section_data.sections.is_empty() {
-            println!("DEBUG WORKER:   Data contains NO sections!");
-        } else {
-            println!("DEBUG WORKER:   Data Sections (Count: {}):", section_data.sections.len());
-            for (i, section) in section_data.sections.iter().enumerate() {
-                println!(
-                    "DEBUG WORKER:     Section {}: ID={}, Start={:.2}, End={:.2}, Length={:.2}, Transition={:.2}-{:.2}",
-                    i, section.id, section.start_position, section.end_position,
-                    section.end_position - section.start_position,
-                    section.transition_start, section.transition_end
-                );
-            }
-        }
+        // ... potentially log other section_data fields if needed ...
         println!("--- End ThreadSafeSectionData Debug ---");
+        // ---
 
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
-        let mut biome_ids_primary = vec![0u8; chunk_area]; // Store the *primary* section for potential later use/debugging
+        // Initialize new data structures for biome indices and weights
+        let mut biome_indices = vec![[0u8; 3]; chunk_area];      // Top 3 biome IDs
+        let mut biome_blend_weights = vec![[0.0f32; 3]; chunk_area]; // Weights for top 3
 
         let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
-        // Pre-fetch blend noise function Arc
-        let blend_noise_fn_arc = noise_funcs_reader.get("biome_blend").cloned();
 
         for z in 0..chunk_size {
             for x in 0..chunk_size {
@@ -443,69 +427,110 @@ impl ChunkManager {
                 let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
 
-                // Get section influences
+                // Get potentially many weighted biome influences using the falloff logic
                 let influences = section_data.get_biome_id_and_weights(world_x, world_z, &sender);
 
-                if influences.is_empty() {
-                    heightmap[idx] = 0.0; // Should not happen if get_biome_id_and_weights handles defaults
-                    biome_ids_primary[idx] = 0;
-                    continue;
-                }
-    
-                // Store primary section (highest weight)
-                biome_ids_primary[idx] = influences.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)).map_or(0, |(id, _)| *id);
-    
+                // --- Height Calculation (uses ALL calculated influences) ---
                 let mut final_height = 0.0;
-                let mut total_weight = 0.0;
-    
+                let mut total_weight_for_height = 0.0; // Use a separate total for height calculation robustness
+
                 for &(biome_id, weight) in &influences {
-                    if weight < 1e-3 { continue; } // Skip negligible influence
-   
-                    let biome_key = format!("{}", biome_id);
-                    if let Some(noise_fn_arc) = noise_funcs_reader.get(&biome_key) {
+                    if weight < 1e-4 { continue; } // Skip negligible influence for height calc
+
+                    let noise_key = format!("{}", biome_id); // Assuming noise keyed by biome ID
+                    if let Some(noise_fn_arc) = noise_funcs_reader.get(&noise_key) {
                         let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
-                        // Apply amplification *per section noise source* before interpolation
                         final_height += (height_val * amplification) as f32 * weight;
-                        total_weight += weight;
+                        total_weight_for_height += weight;
                     } else {
-                        println!("Warning: Noise function for section key '{}' not found during generation.", biome_key);
-                        // How to handle missing noise? Add 0 height? Skip weight?
-                        // Adding 0 height might be okay if weights don't sum to 1.
-                        // If weights *should* sum to 1, this needs careful handling.
-                        // Let's assume for now it contributes 0 height but keep its weight.
-                        total_weight += weight;
+                         let log_msg = format!("Warning: Noise function for key '{}' not found during height generation at {:?}.", noise_key, pos);
+                         let _ = sender.send(ChunkResult::LogMessage(log_msg));
+                         // Decide how to handle missing noise for height - add 0 contribution
+                         total_weight_for_height += weight; // Still count weight
                     }
                }
-   
-   
-                // Normalize height if weights summed correctly, otherwise use as is
-                if total_weight > 1e-3 {
-                    // If weights were designed to sum to 1, normalization might not be needed,
-                    // but it adds robustness if they don't perfectly sum due to float issues or missing noise.
-                    heightmap[idx] = final_height / total_weight;
-                } else if influences.len() == 1 && influences[0].0 == 0 {
-                    // If the only influence is section 0 (Unknown/Fallback)
-                    heightmap[idx] = 0.0; // Explicitly set to 0
+
+                // Normalize height
+                if total_weight_for_height > 1e-6 {
+                    heightmap[idx] = final_height / total_weight_for_height;
+                } else {
+                     // Log if influences were present but total weight was ~0 (shouldn't happen often)
+                    if !influences.is_empty() && influences[0].1 > 0.0 {
+                         let log_msg = format!("Warning: Zero total weight for height calculation at ({:.1}, {:.1}) despite influences: {:?}", world_x, world_z, influences);
+                         let _ = sender.send(ChunkResult::LogMessage(log_msg));
+                    }
+                    heightmap[idx] = 0.0; // Default height
                 }
-                else {
-                    heightmap[idx] = 0.0; // Default fallback if no valid weights/noise found
-                }
-           }
-       }
-       drop(noise_funcs_reader); // Drop read lock
+                // --- End Height Calculation ---
 
 
-        // Create ChunkData (unchanged)
-        let chunk_data = ChunkData { 
-            position: pos, 
-            heightmap, 
-            biome_ids: biome_ids_primary, 
+                // --- Biome Weight Processing for Texturing (Top 3) ---
+                // Influences are already sorted highest weight first by get_section_and_biome_weights
+
+                let num_influences = influences.len();
+                let mut top_weights_sum: f32 = 0.0;
+                let top_n = 3; // Number of biomes to blend textures for
+
+                // Store top N IDs and their original weights, calculate sum
+                for i in 0..top_n {
+                    if i < num_influences {
+                        let (id, weight) = influences[i];
+                        // Ensure weight is non-negative before summing/normalizing
+                        let valid_weight = weight.max(0.0);
+                        biome_indices[idx][i] = id;
+                        biome_blend_weights[idx][i] = valid_weight; // Store valid weight
+                        top_weights_sum += valid_weight;
+                    } else {
+                        // Pad with default/null biome ID and zero weight if fewer than N influences
+                        biome_indices[idx][i] = 0; // Use 0 or a designated "empty" biome ID
+                        biome_blend_weights[idx][i] = 0.0;
+                    }
+                }
+
+                // Normalize the top N weights so they sum to 1.0
+                if top_weights_sum > 1e-6 { // Avoid division by zero
+                    for i in 0..top_n {
+                        biome_blend_weights[idx][i] /= top_weights_sum;
+                    }
+                } else if num_influences > 0 {
+                     // Handle edge case where sum is zero but influences exist (e.g., all weights were <0?)
+                     // Give full weight to the very first influence (highest original weight)
+                     biome_blend_weights[idx][0] = 1.0;
+                     for i in 1..top_n { biome_blend_weights[idx][i] = 0.0; }
+                     // Ensure IDs match the weights
+                     biome_indices[idx][0] = influences[0].0;
+                     for i in 1..top_n { biome_indices[idx][i] = 0; }
+
+                     let log_msg = format!("Warning: Sum of top {} weights is near zero at ({:.1}, {:.1}). Assigning full weight to Biome {}.", top_n, world_x, world_z, biome_indices[idx][0]);
+                     let _ = sender.send(ChunkResult::LogMessage(log_msg));
+                } else {
+                    // No influences found at all by get_biome_id_and_weights
+                    // Handled by the default initialization already (ID 0, weight 0),
+                    // but we can ensure the first weight is 1.0 for safety.
+                     biome_indices[idx][0] = 0;
+                     biome_blend_weights[idx][0] = 1.0;
+                     for i in 1..top_n { biome_indices[idx][i] = 0; biome_blend_weights[idx][i] = 0.0; }
+                }
+                // --- End Biome Weight Processing ---
+            }
+        }
+        drop(noise_funcs_reader);
+
+
+        // --- Create ChunkData with NEW fields ---
+        let chunk_data = ChunkData {
+            position: pos,
+            heightmap,
+            biome_indices,         // Use new field
+            biome_blend_weights, // Use new field
         };
+        // ---
 
         // Save and Send Result (unchanged)
         storage.queue_save_chunk(chunk_data.clone());
         if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
-            eprintln!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e);
+           let log_msg = format!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e);
+           let _ = sender.send(ChunkResult::LogMessage(log_msg));
         }
     }
 
@@ -641,8 +666,10 @@ impl ChunkManager {
         // Use the new direct cache access method in ChunkStorage
         match self.storage.get_data_from_cache(pos) {
             Some(chunk_data) => {
-                let biomes_i32: Vec<i32> = chunk_data.biome_ids.iter().map(|&id| id as i32).collect();
-                PackedInt32Array::from(&biomes_i32[..])
+                let primary_biomes_i32: Vec<i32> = chunk_data.biome_indices.iter()
+                    .map(|ids| ids[0] as i32) // Take the first ID (index 0)
+                    .collect();
+                PackedInt32Array::from(&primary_biomes_i32[..])
             },
             None => {
                 eprintln!("CRITICAL: Chunk {:?} state is Ready, but section data not found in storage cache!", pos);
@@ -696,12 +723,22 @@ impl ChunkManager {
             } else {
                  dict.insert("height", Variant::nil()); // Index out of bounds
             }
-             if idx < data.biome_ids.len() {
-                 dict.insert("primary_biome_id", (data.biome_ids[idx] as i32).to_variant());
-                 // TODO: Get section name from SectionManager if needed
-             } else {
-                 dict.insert("primary_biome_id", Variant::nil());
-             }
+            if idx < data.biome_indices.len() {
+                // Report primary biome ID
+                dict.insert("primary_biome_id", (data.biome_indices[idx][0] as i32).to_variant());
+
+                // Optionally add all top IDs and weights
+                let ids_arr = PackedInt32Array::from(&data.biome_indices[idx].map(|id| id as i32)[..]);
+                let weights_arr = PackedFloat32Array::from(&data.biome_blend_weights[idx][..]);
+                dict.insert("top_biome_ids", ids_arr.to_variant());
+                dict.insert("top_biome_weights", weights_arr.to_variant());
+
+            } else {
+                dict.insert("primary_biome_id", Variant::nil());
+                dict.insert("top_biome_ids", Variant::nil());
+                dict.insert("top_biome_weights", Variant::nil());
+            }
+
              // TODO: Potentially add section weights here if ChunkData stores them
         } else {
             dict.insert("height", Variant::nil());
