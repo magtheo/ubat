@@ -19,7 +19,7 @@ use_parallel_processing = true
 chunk_cache_size = 600
 chunks_per_frame = 4
 render_distance = 4 # Moved from terrain_initializer
-amplification = 8.0
+amplification = 4.0
 mesh_updates_per_frame = 4
 
 [terrain.noise_paths]
@@ -38,24 +38,24 @@ mesh_updates_per_frame = 4
 # Section definitions
 [[sections]]
 id = 1
-length = 500.0
-transition_zone = 200.0
+length = 200.0
+transition_zone = 50.0
 possible_biomes = [1, 2]
 point_density = 0.0002
 boundary_noise_key = "perlin_medium"
 
 [[sections]]
 id = 2
-length = 500.0
-transition_zone = 300.0
+length = 200.0
+transition_zone = 50.0
 possible_biomes = [2, 3, 4]
 point_density = 0.0003
 boundary_noise_key = "perlin_medium"
 
 [[sections]]
 id = 3
-length = 500.0
-transition_zone = 250.0
+length = 200.0
+transition_zone = 50.0
 possible_biomes = [4, 5]
 point_density = 0.0002
 boundary_noise_key = "perlin_rough"
