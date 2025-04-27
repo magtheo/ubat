@@ -362,16 +362,30 @@ impl WorldStateManager {
     
     // Update configuration
     pub fn update_config(&mut self, config: WorldStateConfig) {
-        self.config = config;
-        
+        godot_print!("DEBUG: WorldStateManager::update_config called."); // Add log
+        self.config = config; // Update WSM's internal config
+
         // Notify terrain system if initialized
         if let Some(biome_mgr) = &self.section_manager {
-            let mut sm = biome_mgr.clone();
-            sm.bind_mut().set_seed(self.config.seed as u32);
-            sm.bind_mut().set_world_dimensions(
-                self.config.world_size.0 as f32, 
-                self.config.world_size.1 as f32
-            );
+            godot_print!("DEBUG: WorldStateManager::update_config - SectionManager reference exists."); // Add log
+
+            // --- FIX: Comment out or delete these lines ---
+            // let mut sm = biome_mgr.clone();
+            // godot_print!("DEBUG:   Calling sm.set_seed({})", self.config.seed); // Add log
+            // sm.bind_mut().set_seed(self.config.seed as u32);
+            // godot_print!("DEBUG:   Calling sm.set_world_dimensions({}, {})", self.config.world_size.0, self.config.world_size.1); // Add log
+            // sm.bind_mut().set_world_dimensions(
+            //     self.config.world_size.0 as f32,
+            //     self.config.world_size.1 as f32
+            // );
+            // --- END FIX ---
+
+            // It might still be valid to update the ChunkManager's thread-safe data here
+            // if the SectionManager's config *was* somehow changed externally,
+            // but in this flow, we want to prevent the SectionManager change itself.
+            // Consider if cm.update_thread_safe_section_data() is needed here later.
+        } else {
+             godot_print!("DEBUG: WorldStateManager::update_config - SectionManager reference does NOT exist."); // Add log
         }
     }
 
