@@ -1,8 +1,19 @@
+use chrono::format;
 use godot::prelude::*;
 use godot::global::Error;
-use godot::classes::{MeshInstance3D, Node3D, ArrayMesh, Mesh, Material, ResourceLoader, ShaderMaterial};
+
+use godot::classes::{
+    // REMOVE this or keep commented out: mesh::PrimitiveType,
+    // rendering_seMesrver::PrimitiveType, // TRY THIS PATH for the enum
+    // REMOVE mesh::ArrayFormat, // Don't import the enum itself
+    ArrayMesh, MeshInstance3D, SurfaceTool, Material, ShaderMaterial, RenderingServer, ResourceLoader, Mesh, World3D, Node
+};
+use godot::classes::mesh::{PrimitiveType, ArrayFormat, ArrayCustomFormat, ArrayType};
+
+use godot::builtin::PackedColorArray;
+use std::convert::TryInto;
+
 use std::collections::{HashMap, HashSet};
-use godot::classes::mesh::{PrimitiveType, ArrayType};
 
 // Use ChunkManager and its types
 use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
@@ -436,202 +447,223 @@ impl ChunkController {
         if geometry.vertices.is_empty() {
             godot_warn!("Attempted to apply mesh geometry with empty vertices for chunk {:?}", pos);
             if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                if mesh_instance.is_instance_valid() { mesh_instance.queue_free(); }
-            }
-            return;
-        }
-        // Indices might be empty for non-triangle meshes, allow but check other arrays
-        if geometry.vertices.len() != geometry.normals.len() ||
-           geometry.vertices.len() != geometry.uvs.len() ||
-           geometry.vertices.len() != geometry.colors.len() { // Check against colors now
-             godot_error!("Mismatched array lengths in MeshGeometry for chunk {:?}! V: {}, N: {}, UV: {}, C: {}. Aborting mesh creation.",
-                          pos, geometry.vertices.len(), geometry.normals.len(), geometry.uvs.len(), geometry.colors.len());
-            if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                if mesh_instance.is_instance_valid() { mesh_instance.queue_free(); }
+                if mesh_instance.is_instance_valid() {
+                    mesh_instance.queue_free();
+                }
             }
             return;
         }
 
-        // --- Convert Rust Vecs to Godot Packed Arrays ---
-        // Note: geometry.colors is assumed to be Vec<[f32; 4]> from generate_mesh_geometry
-        let vertices_gd: Vec<Vector3> = geometry.vertices.iter().map(|v| Vector3::new(v[0], v[1], v[2])).collect();
-        let normals_gd: Vec<Vector3> = geometry.normals.iter().map(|n| Vector3::new(n[0], n[1], n[2])).collect();
-        let uvs_gd: Vec<Vector2> = geometry.uvs.iter().map(|u| Vector2::new(u[0], u[1])).collect();
-        let indices_gd: Vec<i32> = geometry.indices.iter().map(|&i| i).collect();
+        // --- 1. Get or Create MeshInstance3D ---
+        let mut is_new_instance = false;
+        let mesh_instance_entry = self.chunk_meshes.entry(pos);
+        let mut mesh_instance = mesh_instance_entry.or_insert_with(|| {
+            godot_print!("ChunkController: Creating new MeshInstance3D for {:?}", pos);
+            is_new_instance = true;
+            let mut inst = MeshInstance3D::new_alloc();
+            let name = GString::from(format!("Chunk_{}_{}", pos.x, pos.z));
+            inst.set_name(&name);
+            inst
+        }).clone();
 
-        let vertices = PackedVector3Array::from(&vertices_gd[..]);
-        let normals = PackedVector3Array::from(&normals_gd[..]);
-        let uvs = PackedVector2Array::from(&uvs_gd[..]);
-        let indices = PackedInt32Array::from(&indices_gd[..]);
+        // --- 2. Create the ArrayMesh ---
+        let mut mesh = ArrayMesh::new_gd();
 
-        // --- Calculate Vertex Colors Based on Debug Mode ---
-        // We'll create a new Vec<Color> based on the mode, using data from geometry.vertices and geometry.colors
-        let mut final_colors_gd: Vec<Color> = Vec::with_capacity(geometry.vertices.len());
-        for i in 0..geometry.vertices.len() {
-            // Safely get required data for this vertex
-            let height = geometry.vertices.get(i).map_or(0.0, |v| v[1]);
-            // Original color data (contains biome_id in alpha if generated correctly)
-            let original_color_data = geometry.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0, 0.0]);
-            // Decode biome_id from original alpha for convenience in BIOME_ID mode
-            let biome_id = (original_color_data[3] * 255.0).round() as u8;
+        // --- 3. Prepare PackedArrays from geometry data ---
+        // Standard vertex attributes
+        let mut vertices = PackedVector3Array::new();
+        let mut normals = PackedVector3Array::new();
+        let mut uvs = PackedVector2Array::new();
+        let mut indices = PackedInt32Array::new();
+        let mut colors = PackedColorArray::new(); // For debug visualization
 
-            let debug_or_final_color = match self.debug_mode {
-                // Mode 1: Heightmap Visualization
+        // Custom vertex attributes as PackedByteArrays
+        let mut custom0_bytes_vec: Vec<u8> = Vec::new(); // For biome IDs
+        let mut custom1_bytes_vec: Vec<u8> = Vec::new(); // For biome weights
+
+        let vertex_count = geometry.vertices.len();
+
+        // --- Reserve Capacity (Now on Vec<u8>, which works) ---
+        custom0_bytes_vec.reserve(vertex_count * 4);
+        custom1_bytes_vec.reserve(vertex_count * 16);
+
+        // --- Populate PackedArrays (Main Loop) ---
+        for i in 0..vertex_count {
+            // Populate standard attributes
+            vertices.push(Vector3::new(geometry.vertices[i][0], geometry.vertices[i][1], geometry.vertices[i][2]));
+            normals.push(Vector3::new(geometry.normals[i][0], geometry.normals[i][1], geometry.normals[i][2]));
+            uvs.push(Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]));
+
+            // --- Custom Attributes (Packed into Bytes) ---
+            let biome_ids = geometry.custom0_biome_ids[i]; // [u8; 3]
+            let biome_weights = geometry.custom1_biome_weights[i]; // [f32; 3]
+
+            // Pack CUSTOM0 (IDs) as bytes
+            custom0_bytes_vec.push(biome_ids[0]);
+            custom0_bytes_vec.push(biome_ids[1]);
+            custom0_bytes_vec.push(biome_ids[2]);
+            custom0_bytes_vec.push(0);
+            // Note: If your shader or Godot expects a 4-byte alignment (like RGBA8),
+            // you might need to add padding: custom0_bytes_vec.push(0);
+
+            // Pack CUSTOM1 (Weights) as bytes (using little-endian byte order)
+            custom1_bytes_vec.extend_from_slice(&biome_weights[0].to_le_bytes());
+            custom1_bytes_vec.extend_from_slice(&biome_weights[1].to_le_bytes());
+            custom1_bytes_vec.extend_from_slice(&biome_weights[2].to_le_bytes());
+            custom1_bytes_vec.extend_from_slice(&0.0f32.to_le_bytes()); // <-- PADDING to make 4 floats
+
+            // --- Calculate Vertex Colors Based on Debug Mode ---
+            let height = geometry.vertices[i][1]; // Use the Y component of the vertex
+            let vertex_color = match self.debug_mode {
                 DEBUG_MODE_HEIGHT => {
-                    let min_h = -50.0_f32; // Specify f32
-                    let max_h = 150.0_f32; // Specify f32
-                    let range = (max_h - min_h).max(1.0_f32); // Use f32 literal and max
-                    let t = ((height - min_h) / range).clamp(0.0, 1.0);
-
-                    // Gradient using lerp - Fix arguments
-                    let blue = Color::from_hsv(0.66, 1.0, 1.0);
-                    let green = Color::from_hsv(0.33, 1.0, 1.0);
-                    let red = Color::from_hsv(0.0, 1.0, 1.0);
-
-                    if t < 0.5 {
-                        // Lerp requires owned Color for 'to' and f64 for weight
-                        blue.lerp(green, (t * 2.0) as f64)
+                    // Logic for height visualization (Blue -> Green -> Red gradient)
+                    let min_h = -50.0f32; // Example range, adjust as needed
+                    let max_h = 150.0f32; // Example range, adjust as needed
+                    let range = (max_h - min_h).max(1.0f32); // Avoid division by zero
+                    let t = ((height - min_h) / range).clamp(0.0f32, 1.0f32);
+                    let blue = Color::BLUE;
+                    let green = Color::GREEN;
+                    let red = Color::RED;
+                    if (t as f64) < 0.5 {
+                        blue.lerp(green, t as f64 * 2.0)
                     } else {
-                        green.lerp(red, ((t - 0.5) * 2.0) as f64)
+                        green.lerp(red, (t as f64 - 0.5) * 2.0)
                     }
                 }
-                // Mode 2: Biome ID Visualization
                 DEBUG_MODE_BIOME_ID => {
-                     // Use the decoded biome_id
-                     match biome_id {
-                         1 => Color::from_rgb(1.0, 0.2, 0.2), // Reddish (Coral?)
-                         2 => Color::from_rgb(0.9, 0.9, 0.2), // Yellowish (Sand?)
-                         3 => Color::from_rgb(0.5, 0.5, 0.5), // Gray (Rock?)
-                         4 => Color::from_rgb(0.2, 0.8, 0.2), // Greenish (Kelp?)
-                         5 => Color::from_rgb(0.8, 0.4, 0.1), // Orange (Lavarock?)
-                         _ => Color::from_rgb(0.2, 0.2, 0.2), // Dark Gray for others/unknown (0)
-                     }
+                    // Visualize primary biome ID using the original geometry data
+                    let primary_id = geometry.custom0_biome_ids[i][0];
+                    match primary_id as u8 % 6 { // Simple color cycle based on ID
+                        0 => Color::RED,
+                        1 => Color::GREEN,
+                        2 => Color::BLUE,
+                        3 => Color::YELLOW,
+                        4 => Color::CYAN,
+                        _ => Color::MAGENTA,
+                    }
                 }
-                // Mode 0 or default: Normal Rendering Preparation
-                DEBUG_MODE_NORMAL | _ => {
-                    // Use the color data directly from MeshGeometry, assuming it was
-                    // generated correctly (e.g., white RGB, biome_id in alpha)
-                    // by generate_mesh_geometry
-                    Color::from_rgba(
-                        original_color_data[0],
-                        original_color_data[1],
-                        original_color_data[2],
-                        original_color_data[3]
-                    )
+                _ => { // DEBUG_MODE_NORMAL (0) and any other values
+                    Color::WHITE // Default color
                 }
-            };
-            final_colors_gd.push(debug_or_final_color);
+            }; // End match
+            colors.push(vertex_color);
+        } // End vertex loop
+
+        // Populate indices array
+        for &idx in &geometry.indices {
+            indices.push(idx);
         }
-        let colors = PackedColorArray::from(&final_colors_gd[..]); // Final colors to use
-        // --- End Color Calculation ---
 
-
-        // --- Create Godot ArrayMesh Resource ---
-        let mut array_mesh = ArrayMesh::new_gd();
+        // --- 4. Create the main Godot Array to hold all vertex data ---
         let mut arrays = VariantArray::new();
+        // Resize the VariantArray to the exact size Godot expects (Mesh::ARRAY_MAX)
         arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
 
+        
+        // --- 5. Place the packed arrays into the main VariantArray at correct indices ---
         arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
         arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
         arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());
-        arrays.set(ArrayType::COLOR.ord() as usize, &colors.to_variant()); // Use the FINAL calculated colors
-
+        arrays.set(ArrayType::COLOR.ord() as usize, &colors.to_variant());
         if !geometry.indices.is_empty() {
             arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
         }
 
-        array_mesh.add_surface_from_arrays(
+        // Convert Vec<u8> to PackedByteArray before setting in VariantArray
+        // Use `from_iter` or `from_slice` - check gdext docs for PackedByteArray constructors
+        // Assuming `from_slice` exists and is efficient:
+        // Convert Vec<u8> to PackedByteArray using FromIterator
+        let packed_custom0_bytes: PackedByteArray = custom0_bytes_vec.into_iter().collect();
+        let packed_custom1_bytes: PackedByteArray = custom1_bytes_vec.into_iter().collect();
+        // If `from_slice` doesn't exist, `from_iter(custom0_bytes_vec)` might work.
+
+        godot_print!(
+            "DEBUG: vertices: {}, custom0_bytes: {}, custom1_bytes: {}",
+            vertices.len(),
+            packed_custom0_bytes.len(),
+            packed_custom1_bytes.len()
+        );
+        
+
+        arrays.set(ArrayType::CUSTOM0.ord() as usize, &packed_custom0_bytes.to_variant());
+        arrays.set(ArrayType::CUSTOM1.ord() as usize, &packed_custom1_bytes.to_variant());
+        
+        // --- 6. Add the surface to the mesh ---
+        // Use the 2-argument version, passing the correctly sized VariantArray
+        mesh.add_surface_from_arrays(
             PrimitiveType::TRIANGLES,
-            &arrays,
+            &arrays
+            // Format flags, blend shapes, LODs are not passed here in Godot 4+ bindings typically
         );
 
-        let mesh_resource: Gd<Mesh> = array_mesh.upcast();
+        // --- 7. Set Mesh on Instance ---
+        let mesh_resource: Gd<Mesh> = mesh.upcast();
+        mesh_instance.set_mesh(&mesh_resource);
 
-        // --- Create or Update MeshInstance3D Node ---
-        let chunk_world_pos = Vector3::new(
+        // --- 8. Apply Material ---
+        // This helper function likely needs no changes, but ensure it handles surface 0 correctly.
+        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
+        Self::apply_material_and_shader_param(
+            &mut mesh_instance,
+            &self.biome_material,
+            is_debug_render,
+        );
+
+        // --- 9. Add to Scene Tree ---
+        if is_new_instance {
+            // Ensure `self` has access to `base_mut()` or equivalent to add child
+            self.base_mut()
+                .add_child(&mesh_instance.clone().upcast::<Node>());
+        }
+
+        // --- 10. Set Position ---
+        let world_pos = Vector3::new(
             pos.x as f32 * self.chunk_size as f32,
-            0.0,
+            0.0, // Set Y position as needed (e.g., based on min height, or keep at 0)
             pos.z as f32 * self.chunk_size as f32,
         );
+        mesh_instance.set_global_position(world_pos);
 
-        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
+        // --- 11. Ensure Visibility ---
+        if !mesh_instance.is_visible() {
+            mesh_instance.show();
+        }
+    }
 
-        // Closure to handle setting shader parameter and material
-        let apply_material_and_shader_param = |mesh_instance: &mut Gd<MeshInstance3D>, base_material: &Option<Gd<Material>>, is_debug: bool| {
-            if let Some(base_mat_gd) = base_material {
-                let mut material_to_set: Option<Gd<Material>> = None; // Use Option for clarity
-
-                // Try to cast the base material to ShaderMaterial
-                if let Ok(base_shader_mat) = base_mat_gd.clone().try_cast::<ShaderMaterial>() {
-                    // Duplicate the material to avoid modifying the shared resource
-                    // This ensures shader parameters are unique per instance
-                    if let Some(duplicated_res) = base_shader_mat.duplicate() {
-                        if let Ok(mut unique_shader_mat) = duplicated_res.try_cast::<ShaderMaterial>() {
-                            unique_shader_mat.set_shader_parameter("u_debug_mode", &is_debug.to_variant());
-                            material_to_set = Some(unique_shader_mat.upcast::<Material>());
-                        } else {
-                            godot_warn!("Failed to cast duplicated material to ShaderMaterial. Applying base material without unique debug param.");
-                            // Fallback: Apply base material, debug param might be wrong if base is shared
-                            material_to_set = Some(base_mat_gd.clone());
-                        }
+    /// Helper function to apply material and potentially set shader parameters.
+    /// Adapted from the older provided code for robustness. Moved inside impl block.
+    fn apply_material_and_shader_param(
+        mesh_instance: &mut Gd<MeshInstance3D>,
+        base_material: &Option<Gd<Material>>,
+        is_debug: bool,
+    ) {
+        let material_to_set: Option<Gd<Material>>;
+        if let Some(base_mat_gd) = base_material {
+            if let Ok(base_shader_mat) = base_mat_gd.clone().try_cast::<ShaderMaterial>() {
+                if let Some(duplicated_res) = base_shader_mat.duplicate() {
+                    if let Ok(mut unique_shader_mat) =
+                        duplicated_res.try_cast::<ShaderMaterial>()
+                    {
+                        unique_shader_mat
+                            .set_shader_parameter("u_debug_mode", &is_debug.to_variant());
+                        material_to_set = Some(unique_shader_mat.upcast::<Material>());
                     } else {
-                        godot_warn!("Failed to duplicate ShaderMaterial. Applying base material without unique debug param.");
-                        // Fallback: Apply base material
+                        godot_warn!(
+                            "Failed to cast duplicated material to ShaderMaterial. Using base."
+                        );
                         material_to_set = Some(base_mat_gd.clone());
                     }
                 } else {
-                    // The base material is not a ShaderMaterial, just apply it directly
-                    godot_warn!("Assigned biome_material is not a ShaderMaterial. Cannot set debug parameter. Applying base material.");
+                    godot_warn!("Failed to duplicate ShaderMaterial. Using base.");
                     material_to_set = Some(base_mat_gd.clone());
                 }
-
-                // Apply the determined material (unique or base)
-                if let Some(mat) = material_to_set {
-                    mesh_instance.set_surface_override_material(0, &mat);
-                } else {
-                    // Should not happen if base_material was Some, but clear just in case
-                    mesh_instance.set_surface_override_material(0, Gd::<Material>::null_arg()); // Use null Gd
-                }
-
             } else {
-                 // No base material assigned, clear any existing override
-                 mesh_instance.set_surface_override_material(0, Gd::<Material>::null_arg()); // Use null Gd
+                material_to_set = Some(base_mat_gd.clone());
             }
-        };
-
-
-        // --- Apply to existing or create new instance ---
-        let instance_exists = self.chunk_meshes.contains_key(&pos);
-
-        if instance_exists {
-             if let Some(mut mesh_instance) = self.chunk_meshes.get_mut(&pos) {
-                 if mesh_instance.is_instance_valid() {
-                     mesh_instance.set_mesh(&mesh_resource);
-                     mesh_instance.set_position(chunk_world_pos);
-                     apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
-                 } else {
-                     godot_error!("MeshInstance for chunk {:?} was invalid. Removing entry.", pos);
-                     self.chunk_meshes.remove(&pos);
-                     // Let creation logic handle it below if needed (or alternatively, recreate here)
-                 }
-             }
+        } else {
+            material_to_set = None;
         }
-
-        // If it wasn't in the map OR the entry was removed because it was invalid
-        if !self.chunk_meshes.contains_key(&pos) {
-             let mut mesh_instance = MeshInstance3D::new_alloc();
-             mesh_instance.set_mesh(&mesh_resource);
-             mesh_instance.set_position(chunk_world_pos);
-             let mesh_name: GString = format!("ChunkMesh_{}_{}", pos.x, pos.z).into();
-             mesh_instance.set_name(&mesh_name);
-
-             apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
-
-             // Add to scene tree and internal tracking map
-             // Use '&' for add_child as it expects a reference-like argument
-             self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
-             self.chunk_meshes.insert(pos, mesh_instance);
-        }
+        mesh_instance.set_surface_override_material(0, material_to_set.as_ref());
     }
 
     fn process_mesh_queues(&mut self) {
@@ -674,22 +706,27 @@ impl ChunkController {
                 };
 
                 if needs_processing {
-                    // Remove from queue *before* potential mutable borrow
                     self.mesh_creation_queue.pop_front();
-
-                    // --- Get data (requires binding again) ---
+    
                     let chunk_data_option = if let Some(manager_gd) = &self.chunk_manager {
+                        // *** NOTE: This line has the ERROR in your log ***
+                        // Original erroneous line might be here or where get_cached_chunk_data is called
+                        // We fix the generate_mesh_geometry call below
                         manager_gd.bind().get_cached_chunk_data(pos.x, pos.z)
                     } else {
                         None
                     };
-
+    
                     if let Some(chunk_data) = chunk_data_option {
+                        // --- FIX: Pass new fields to generate_mesh_geometry ---
+                        // Ensure generate_mesh_geometry function signature is updated too!
                         let geometry = generate_mesh_geometry(
-                            &chunk_data.heightmap, 
-                            self.chunk_size,
-                            &chunk_data.biome_ids, 
+                            &chunk_data.heightmap,
+                            self.chunk_size, // Assuming chunk_size is available here
+                            &chunk_data.biome_indices,     // Pass indices
+                            &chunk_data.biome_blend_weights // Pass weights
                         );
+    
                         if !geometry.vertices.is_empty() {
                             // Now we can call the function requiring &mut self
                             self.apply_mesh_data_to_instance(pos, &geometry);
