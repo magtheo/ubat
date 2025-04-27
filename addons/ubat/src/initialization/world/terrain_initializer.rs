@@ -19,6 +19,7 @@ use crate::terrain::section::{SectionManager, ThreadSafeSectionData};
 
 
 // TerrainSystemContext stores references to initialized terrain components
+#[derive(Clone)]
 pub struct TerrainSystemContext {
     pub section_manager: Option<Gd<SectionManager>>,
     pub chunk_manager: Option<Gd<ChunkManager>>,
@@ -243,25 +244,47 @@ impl TerrainInitializer {
         TerrainSystemContext {
             section_manager: self.section_manager.clone(),
             chunk_manager: self.chunk_manager.clone(),
-            noise_manager: self.noise_manager.clone(), // Pass the Option<Gd<NoiseManager>>
-    
-            // Check both options before creating ThreadSafeBiomeData
+            noise_manager: self.noise_manager.clone(),
+
             thread_safe_section_data: match (&self.section_manager, &self.noise_manager) {
-                (Some(biome_mgr), Some(noise_mgr)) => {
+                (Some(section_mgr_gd), Some(noise_mgr_gd)) => { // Renamed to avoid conflict
+                    // --- DEBUG LOGGING START ---
+                    godot_print!("DEBUG: Creating ThreadSafeSectionData. Current SectionManager state:");
+                    // We need to bind the Gd to access its methods
+                    let sm_bind = section_mgr_gd.bind(); // Bind here
+                    godot_print!("DEBUG:   World Length: {}", sm_bind.get_world_length());
+                    godot_print!("DEBUG:   World Width: {}", sm_bind.get_world_width()); // Access internal field if pub or via getter
+                    godot_print!("DEBUG:   Voronoi Points Count: {}", sm_bind.get_voronoi_points_internal().len());
+
+                    let sections = sm_bind.get_sections_internal(); // Get internal ref
+                    if sections.is_empty() {
+                        godot_print!("DEBUG:   No sections defined in SectionManager yet.");
+                    } else {
+                        for (i, section) in sections.iter().enumerate() {
+                            godot_print!(
+                                "DEBUG:   Section {}: ID={}, Start={:.2}, End={:.2}, Length={:.2}, Transition={:.2}-{:.2}",
+                                i, section.id, section.start_position, section.end_position,
+                                section.end_position - section.start_position,
+                                section.transition_start, section.transition_end
+                            );
+                        }
+                    }
+                    // --- DEBUG LOGGING END ---
+
                     // Both managers are Some, proceed to create the data
                     Some(Arc::new(ThreadSafeSectionData::from_section_manager(
-                        &biome_mgr.bind(),
-                        &noise_mgr.bind() // Correctly use the matched 'noise_mgr'
+                        &sm_bind, // Use the bound reference
+                        &noise_mgr_gd.bind() // Bind noise manager too
                     )))
                 }
                 _ => {
-                    // Either section_manager or noise_manager (or both) are None
                     godot_warn!("get_terrain_context: SectionManager or NoiseManager is None, cannot create ThreadSafeBiomeData.");
-                    None // Cannot create data if dependencies are missing
+                    None
                 }
             },
         }
     }
+
 
     fn get_scene_root() -> Option<Gd<Node>> {
         // Access the root node of the scene tree

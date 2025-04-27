@@ -188,6 +188,11 @@ impl WorldInitializer {
         self.terrain_initializer = Some(terrain_init); // Store TI if needed
 
         println!("WorldInitializer: Terrain systems initialized");
+
+        if let Some(ref section_mgr) = context.section_manager {
+            section_mgr.bind().debug_validate_world();
+        }
+
         Ok(context) // Return the context
     }
     

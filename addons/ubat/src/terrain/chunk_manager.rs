@@ -404,6 +404,31 @@ impl ChunkManager {
         sender: Sender<ChunkResult>,
         amplification: f64,
     ) {
+        // Use println! as this is likely a standard Rust thread.
+        // Add this block right after receiving/unwrapping section_data.
+        println!(
+            "DEBUG WORKER [Chunk {}, {}]: Starting generation using ThreadSafeSectionData:",
+            pos.x, pos.z
+        );
+        // Access fields assuming ThreadSafeSectionData mirrors SectionManager relevant data
+        // You might need to adjust these field names based on your actual struct definition
+        println!("DEBUG WORKER:   Data World Length: {}", section_data.world_length);
+
+        if section_data.sections.is_empty() {
+            println!("DEBUG WORKER:   Data contains NO sections!");
+        } else {
+            println!("DEBUG WORKER:   Data Sections (Count: {}):", section_data.sections.len());
+            for (i, section) in section_data.sections.iter().enumerate() {
+                println!(
+                    "DEBUG WORKER:     Section {}: ID={}, Start={:.2}, End={:.2}, Length={:.2}, Transition={:.2}-{:.2}",
+                    i, section.id, section.start_position, section.end_position,
+                    section.end_position - section.start_position,
+                    section.transition_start, section.transition_end
+                );
+            }
+        }
+        println!("--- End ThreadSafeSectionData Debug ---");
+
         let chunk_area = (chunk_size * chunk_size) as usize;
         let mut heightmap = vec![0.0f32; chunk_area];
         let mut biome_ids_primary = vec![0u8; chunk_area]; // Store the *primary* section for potential later use/debugging

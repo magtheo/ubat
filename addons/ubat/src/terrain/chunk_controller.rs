@@ -128,8 +128,8 @@ impl INode3D for ChunkController {
                         godot_print!("ChunkController: Loaded biome material from {}", path);
                     }
                     Err(_) => {
-                         godot_error!("ChunkController: Failed to cast resource at {} to Material.", path);
-                         self.biome_material = None; // Ensure it's None on error
+                        godot_error!("ChunkController: Failed to cast resource at {} to Material.", path);
+                        self.biome_material = None; // Ensure it's None on error
                     }
                 }
             }

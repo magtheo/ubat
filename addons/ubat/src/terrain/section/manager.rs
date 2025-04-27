@@ -419,6 +419,11 @@ impl SectionManager {
     pub fn get_world_length(&self) -> f32 {
         self.world_length
     }
+
+    #[func]
+    pub fn get_world_width(&self) -> f32 {
+        self.world_width
+    }
     
     /// Set the biome blend distance.
     #[func]
@@ -495,14 +500,25 @@ impl SectionManager {
     /// Set the world dimensions (width and height)
     #[func]
     pub fn set_world_dimensions(&mut self, width: f32, height: f32) {
+
+        godot_print!(
+            "DEBUG: SectionManager::set_world_dimensions called. Input Width: {}, Height: {}",
+            width, height
+        );
+        godot_print!("DEBUG:   Current self.world_length before check: {}", self.world_length);
+        
         self.world_width = width;
         let new_world_length = height;
         
         if self.world_length != new_world_length {
+            godot_print!("DEBUG:   World length changed ({} != {}). Updating...", self.world_length, new_world_length);
+            
             self.world_length = new_world_length;
             
             // Recalculate section positions based on the new world length
             if !self.sections.is_empty() {
+                godot_print!("DEBUG:   Recalculating section boundaries for new length: {}", self.world_length);
+
                 let section_count = self.sections.len();
                 let avg_section_length = self.world_length / section_count as f32;
                 
@@ -514,16 +530,65 @@ impl SectionManager {
                     section.start_position = current_pos;
                     section.end_position = current_pos + section_length;
                     section.transition_start = section.end_position - transition_zone;
+
+                    godot_print!(
+                        "DEBUG:     Updated Section ID {}: Start={}, End={}, TransitionStart={}, TransitionEnd={}",
+                        section.id, section.start_position, section.end_position, section.transition_start, section.transition_end
+                    );
                     
                     current_pos += section_length;
                 }
                 
                 // If initialized, regenerate Voronoi points for the new dimensions
                 if self.initialized {
+                    godot_print!("DEBUG:   Calling generate_voronoi_points() due to dimension change.");
                     self.generate_voronoi_points();
                 }
-            }
+            } else {godot_print!("DEBUG:   World length ({}) did not change. No recalculation needed.", self.world_length);}
         }
+    }
+
+    /// Debugging helper: Validate world structure and section layout.
+    #[func]
+    pub fn debug_validate_world(&self) {
+        godot_print!("====== SectionManager World Debug (Validation Point) ======"); // Added label
+
+        godot_print!("  World width: {}", self.world_width);
+        godot_print!("  World length: {}", self.world_length);
+        godot_print!("  Total sections: {}", self.sections.len());
+        godot_print!("  Total Voronoi points: {}", self.voronoi_points.len()); // Added point count
+
+        if self.sections.is_empty() {
+            godot_warn!("  No sections found!");
+            godot_print!("========================================================"); // Footer
+            return;
+        }
+
+        for (i, section) in self.sections.iter().enumerate() {
+            godot_print!(
+                "  Section {} -> ID: {}, Start: {:.2}, End: {:.2}, Length: {:.2}, Transition: {:.2}-{:.2}", // Added transition info
+                i,
+                section.id,
+                section.start_position,
+                section.end_position,
+                section.end_position - section.start_position,
+                section.transition_start, // Added
+                section.transition_end    // Added
+            );
+        }
+
+        let last_section = self.sections.last().unwrap();
+        if (last_section.end_position - self.world_length).abs() > 1.0 { // Using 1.0 tolerance for f32
+            godot_warn!(
+                "  WARNING: Last section ends at {:.2} but world length is {:.2}!",
+                last_section.end_position,
+                self.world_length
+            );
+        } else {
+            godot_print!("  Sections appear to cover the world length correctly.");
+        }
+
+        godot_print!("========================================================"); // Footer
     }
 
     /// Get the biome blend distance
