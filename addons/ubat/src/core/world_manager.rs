@@ -142,14 +142,14 @@ impl WorldStateManager {
         self.chunk_manager = Some(chunk_manager.clone());
         
         // Configure SectionManager with our world settings
-        {
-            let mut sm = section_manager.clone();
-            sm.bind_mut().set_seed(self.config.seed as u32);
-            sm.bind_mut().set_world_dimensions(
-                self.config.world_size.0 as f32, 
-                self.config.world_size.1 as f32
-            );
-        }
+        // {
+        //     let mut sm = section_manager.clone();
+        //     sm.bind_mut().set_seed(self.config.seed as u32);
+        //     sm.bind_mut().set_world_dimensions(
+        //         self.config.world_size.0 as f32, 
+        //         self.config.world_size.1 as f32
+        //     );
+        // }
         
         // Configure ChunkManager 
         {
