@@ -444,7 +444,7 @@ impl ChunkManager {
                 let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
 
                 // Get section influences
-                let influences = section_data.get_biome_id_and_weights(world_x, world_z);
+                let influences = section_data.get_biome_id_and_weights(world_x, world_z, &sender);
 
                 if influences.is_empty() {
                     heightmap[idx] = 0.0; // Should not happen if get_biome_id_and_weights handles defaults

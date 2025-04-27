@@ -6,7 +6,9 @@ use crate::terrain::section::distribution::SpatialGrid;
 use crate::terrain::section::manager::SectionManager;
 use crate::terrain::section::layout::calculate_section_weights;
 use crate::terrain::noise::noise_manager::NoiseManager;
+use crate::terrain::chunk_manager::ChunkResult;
 use noise::NoiseFn;
+use std::sync::mpsc::Sender;
 
 use std::fmt;
 
@@ -56,8 +58,8 @@ impl ThreadSafeSectionData {
     
     /// Get the sections and biomes that influence a position, along with their weights.
     /// Implements REQ-BD-07 for blending across section boundaries and between Voronoi points.
-    pub fn get_section_and_biome_weights(&self, world_x: f32, world_z: f32) -> Vec<(u8, f32)> {
-        // Boundary checks
+    pub fn get_section_and_biome_weights(&self, world_x: f32, world_z: f32, sender: &Sender<ChunkResult>) -> Vec<(u8, f32)> {
+        // Boundary checkssender: &Sender<ChunkResult>
         if world_z < 0.0 && !self.sections.is_empty() {
             // Before world start - use only first section's first biome
             if let Some(first_biome) = self.sections[0].possible_biomes.first() {
@@ -123,6 +125,15 @@ impl ThreadSafeSectionData {
                 );
                 
                 if nearest_points.is_empty() {
+
+                    let log_msg = format!(
+                        "DEBUG FALLBACK at (X:{:.2}, Z:{:.2}): No Voronoi points found within blend_dist ({}) for section_id {}. Using fallback biome.",
+                        world_x, world_z, self.biome_blend_distance, section_id
+                    );
+                    // Send the log message back to the main thread
+                    let _ = sender.send(ChunkResult::LogMessage(log_msg));
+    
+
                     // Fallback: No points found for this section
                     // Use the first biome in the section's possible_biomes list
                     if let Some(section) = self.sections.iter().find(|s| s.id == *section_id) {
@@ -195,8 +206,8 @@ impl ThreadSafeSectionData {
     
     /// Get biome weights at a specific position (used by REQ-TG-01).
     /// This is a convenience wrapper around get_section_and_biome_weights.
-    pub fn get_biome_id_and_weights(&self, world_x: f32, world_z: f32) -> Vec<(u8, f32)> {
-        self.get_section_and_biome_weights(world_x, world_z)
+    pub fn get_biome_id_and_weights(&self, world_x: f32, world_z: f32, sender: &Sender<ChunkResult>) -> Vec<(u8, f32)> {
+        self.get_section_and_biome_weights(world_x, world_z, sender)
     }
     
     /// Get a biome definition by ID.

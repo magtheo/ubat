@@ -48,8 +48,8 @@ impl INode for SectionManager {
             world_seed: 0,
             
             initialized: false,
-            biome_blend_distance: 100.0, // Default blend distance
-            section_blend_distance: 200.0, // Default section blend
+            biome_blend_distance: 300.0, // Default blend distance
+            section_blend_distance: 300.0, // Default section blend
         }
     }
 
