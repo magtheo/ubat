@@ -136,6 +136,59 @@ impl SpatialGrid {
         
         result
     }
+
+    pub fn find_points_within_radius(
+        &self,
+        x: f32,
+        z: f32,
+        points: &[VoronoiPoint], // Slice of all points
+        radius: f32,
+        section_filter: Option<u8>
+    ) -> Vec<(usize, f32)> {
+        let mut results = Vec::new();
+        let radius_sq = radius * radius; // Calculate squared radius once
+    
+        // Get candidate indices from nearby grid cells
+        let nearby_indices = self.get_nearby_point_indices(x, z);
+    
+        // --- Optional: Add simple log to see candidates ---
+        // println!("DEBUG find_within_radius at ({:.1},{:.1}): Candidates={}", x, z, nearby_indices.len());
+        // ---
+    
+        for &idx in &nearby_indices {
+            // Bounds check for safety, although nearby_indices should be valid
+            if idx >= points.len() { continue; }
+    
+            let point = &points[idx];
+    
+            // Apply section filter if provided
+            if let Some(filter_id) = section_filter {
+                if point.section_id != filter_id {
+                    continue; // Skip point if it doesn't match the required section
+                }
+            }
+    
+            // Calculate squared distance
+            let (px, pz) = point.position;
+            let dx = px - x;
+            let dz = pz - z;
+            let dist_sq = dx * dx + dz * dz;
+    
+            // Check if within squared radius
+            if dist_sq <= radius_sq {
+                // If within radius, add index and actual distance to results
+                results.push((idx, dist_sq.sqrt()));
+            }
+        }
+    
+        // --- Optional: Add simple log to see final count ---
+        // println!("DEBUG find_within_radius at ({:.1},{:.1}): Found {} points within radius.", x, z, results.len());
+        // ---
+    
+        results
+    }
+    
+    
     
     /// Find the closest points to the specified coordinates, optionally filtered by section.
     /// Returns up to k closest points.
