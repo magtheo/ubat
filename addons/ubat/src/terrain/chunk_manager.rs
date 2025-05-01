@@ -397,75 +397,88 @@ impl ChunkManager {
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        section_data: Arc<ThreadSafeSectionData>,
+        section_data: Arc<ThreadSafeSectionData>, // Now receives Arc<ThreadSafeSectionData>
         noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
-        chunk_size: u32,
+        chunk_size: u32, // Number of QUADS per side
         sender: Sender<ChunkResult>,
         amplification: f64,
     ) {
-        // --- Worker Debug Logging (using println! for basic info) ---
+        // --- Worker Debug Logging --- (Optional: Keep or remove)
+        /*
         println!(
             "DEBUG WORKER [Chunk {}, {}]: Starting generation using ThreadSafeSectionData:",
             pos.x, pos.z
         );
         println!("DEBUG WORKER:   Data World Length: {}", section_data.world_length);
-        // ... potentially log other section_data fields if needed ...
         println!("--- End ThreadSafeSectionData Debug ---");
-        // ---
+        */
 
-        let chunk_area = (chunk_size * chunk_size) as usize;
-        let mut heightmap = vec![0.0f32; chunk_area];
-        // Initialize new data structures for biome indices and weights
-        let mut biome_indices = vec![[0u8; 3]; chunk_area];      // Top 3 biome IDs
-        let mut biome_blend_weights = vec![[0.0f32; 3]; chunk_area]; // Weights for top 3
+        // --- FIX: Calculate correct grid dimensions and vertex count ---
+        let grid_width = chunk_size + 1; // Number of vertices along one side (e.g., 33 for chunk_size 32)
+        let vertex_count = (grid_width * grid_width) as usize; // Total vertices (e.g., 1089)
 
+        // --- FIX: Initialize vectors with the correct vertex_count ---
+        let mut heightmap = vec![0.0f32; vertex_count];
+        let mut biome_indices = vec![[0u8; 3]; vertex_count];      // Top 3 biome IDs
+        let mut biome_blend_weights = vec![[0.0f32; 3]; vertex_count]; // Weights for top 3
+
+        // Lock the noise function cache for reading
         let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
 
-        for z in 0..chunk_size {
-            for x in 0..chunk_size {
-                let idx = (z * chunk_size + x) as usize;
-                let world_x = pos.x as f32 * chunk_size as f32 + x as f32;
-                let world_z = pos.z as f32 * chunk_size as f32 + z as f32;
+        // --- FIX: Iterate over VERTEX grid coordinates (0 to grid_width-1) ---
+        for iz in 0..grid_width { // Loop from 0 to chunk_size (inclusive)
+            for ix in 0..grid_width { // Loop from 0 to chunk_size (inclusive)
 
-                // Get potentially many weighted biome influences using the falloff logic
+                // --- FIX: Calculate index using grid_width ---
+                let idx = (iz * grid_width + ix) as usize;
+
+                // --- FIX: Calculate world coordinates based on vertex index (ix, iz) ---
+                let world_x = pos.x as f32 * chunk_size as f32 + ix as f32;
+                let world_z = pos.z as f32 * chunk_size as f32 + iz as f32;
+
+                // Get potentially many weighted biome influences at this specific vertex location
                 let influences = section_data.get_biome_id_and_weights(world_x, world_z, &sender);
 
-                // --- Height Calculation (uses ALL calculated influences) ---
+                // --- Height Calculation ---
                 let mut final_height = 0.0;
-                let mut total_weight_for_height = 0.0; // Use a separate total for height calculation robustness
+                let mut total_weight_for_height = 0.0;
 
                 for &(biome_id, weight) in &influences {
                     if weight < 1e-4 { continue; } // Skip negligible influence for height calc
 
-                    let noise_key = format!("{}", biome_id); // Assuming noise keyed by biome ID
+                    let noise_key = format!("{}", biome_id); // Assuming noise keyed by biome ID string
                     if let Some(noise_fn_arc) = noise_funcs_reader.get(&noise_key) {
+                        // Use f64 for noise input as NoiseFn trait often expects it
                         let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
+                        // Apply amplification and accumulate weighted height
                         final_height += (height_val * amplification) as f32 * weight;
                         total_weight_for_height += weight;
                     } else {
-                         let log_msg = format!("Warning: Noise function for key '{}' not found during height generation at {:?}.", noise_key, pos);
+                         // Log warning if noise function not found for a biome with influence
+                         let log_msg = format!("Warning: Noise function for key '{}' not found during height generation at chunk {:?} (world pos {:.1}, {:.1}).", noise_key, pos, world_x, world_z);
                          let _ = sender.send(ChunkResult::LogMessage(log_msg));
-                         // Decide how to handle missing noise for height - add 0 contribution
-                         total_weight_for_height += weight; // Still count weight
+                         // Decide how to handle missing noise for height - adding 0 contribution here
+                         total_weight_for_height += weight; // Still count weight towards normalization total
                     }
                }
 
-                // Normalize height
-                if total_weight_for_height > 1e-6 {
+                // Normalize height based on accumulated weights
+                if total_weight_for_height > 1e-6 { // Avoid division by zero/small numbers
                     heightmap[idx] = final_height / total_weight_for_height;
                 } else {
-                     // Log if influences were present but total weight was ~0 (shouldn't happen often)
-                    if !influences.is_empty() && influences[0].1 > 0.0 {
-                         let log_msg = format!("Warning: Zero total weight for height calculation at ({:.1}, {:.1}) despite influences: {:?}", world_x, world_z, influences);
+                     // Handle case where total weight is negligible or zero
+                    if !influences.is_empty() && influences.iter().any(|&(_, w)| w > 0.0) {
+                         // Only log if there were actually positive influences expected
+                         let log_msg = format!("Warning: Zero total weight for height calculation at ({:.1}, {:.1}) in chunk {:?} despite influences: {:?}", world_x, world_z, pos, influences);
                          let _ = sender.send(ChunkResult::LogMessage(log_msg));
                     }
-                    heightmap[idx] = 0.0; // Default height
+                    heightmap[idx] = 0.0; // Default height if no influence or zero weight sum
                 }
                 // --- End Height Calculation ---
 
 
                 // --- Biome Weight Processing for Texturing (Top 3) ---
-                // Influences are already sorted highest weight first by get_section_and_biome_weights
+                // Influences vector is assumed to be sorted descending by weight
 
                 let num_influences = influences.len();
                 let mut top_weights_sum: f32 = 0.0;
@@ -477,9 +490,9 @@ impl ChunkManager {
                         let (id, weight) = influences[i];
                         // Ensure weight is non-negative before summing/normalizing
                         let valid_weight = weight.max(0.0);
-                        biome_indices[idx][i] = id;
-                        biome_blend_weights[idx][i] = valid_weight; // Store valid weight
-                        top_weights_sum += valid_weight;
+                        biome_indices[idx][i] = id; // Store biome ID
+                        biome_blend_weights[idx][i] = valid_weight; // Store the potentially clamped weight
+                        top_weights_sum += valid_weight; // Sum weights for normalization
                     } else {
                         // Pad with default/null biome ID and zero weight if fewer than N influences
                         biome_indices[idx][i] = 0; // Use 0 or a designated "empty" biome ID
@@ -487,53 +500,59 @@ impl ChunkManager {
                     }
                 }
 
-                // Normalize the top N weights so they sum to 1.0
+                // Normalize the top N weights so they sum to 1.0 (important for shader blending)
                 if top_weights_sum > 1e-6 { // Avoid division by zero
                     for i in 0..top_n {
                         biome_blend_weights[idx][i] /= top_weights_sum;
                     }
                 } else if num_influences > 0 {
-                     // Handle edge case where sum is zero but influences exist (e.g., all weights were <0?)
+                     // Handle edge case: influences exist but sum is zero (e.g., all weights <= 0?)
                      // Give full weight to the very first influence (highest original weight)
                      biome_blend_weights[idx][0] = 1.0;
                      for i in 1..top_n { biome_blend_weights[idx][i] = 0.0; }
-                     // Ensure IDs match the weights
-                     biome_indices[idx][0] = influences[0].0;
-                     for i in 1..top_n { biome_indices[idx][i] = 0; }
+                     // Ensure IDs match the assigned weights
+                     biome_indices[idx][0] = influences[0].0; // Assign ID of the first influence
+                     for i in 1..top_n { biome_indices[idx][i] = 0; } // Assign default ID to others
 
-                     let log_msg = format!("Warning: Sum of top {} weights is near zero at ({:.1}, {:.1}). Assigning full weight to Biome {}.", top_n, world_x, world_z, biome_indices[idx][0]);
+                     // Log this edge case
+                     let log_msg = format!("Warning: Sum of top {} weights is near zero at ({:.1}, {:.1}) in chunk {:?}. Assigning full weight to Biome {}.", top_n, world_x, world_z, pos, biome_indices[idx][0]);
                      let _ = sender.send(ChunkResult::LogMessage(log_msg));
                 } else {
                     // No influences found at all by get_biome_id_and_weights
-                    // Handled by the default initialization already (ID 0, weight 0),
-                    // but we can ensure the first weight is 1.0 for safety.
-                     biome_indices[idx][0] = 0;
-                     biome_blend_weights[idx][0] = 1.0;
-                     for i in 1..top_n { biome_indices[idx][i] = 0; biome_blend_weights[idx][i] = 0.0; }
+                    // Ensure a default state (e.g., biome 0 with full weight)
+                     biome_indices[idx][0] = 0; // Default biome ID
+                     biome_blend_weights[idx][0] = 1.0; // Full weight to default
+                     // Zero out others explicitly
+                     for i in 1..top_n {
+                        biome_indices[idx][i] = 0;
+                        biome_blend_weights[idx][i] = 0.0;
+                    }
                 }
                 // --- End Biome Weight Processing ---
-            }
-        }
+            } // End ix loop
+        } // End iz loop
+
+        // Drop the read lock on the noise functions cache
         drop(noise_funcs_reader);
 
-
-        // --- Create ChunkData with NEW fields ---
+        // --- Create ChunkData with correctly sized vectors ---
         let chunk_data = ChunkData {
             position: pos,
-            heightmap,
-            biome_indices,         // Use new field
-            biome_blend_weights, // Use new field
+            heightmap,             // Now size vertex_count (e.g., 1089)
+            biome_indices,         // Now size vertex_count
+            biome_blend_weights, // Now size vertex_count
         };
-        // ---
 
-        // Save and Send Result (unchanged)
-        storage.queue_save_chunk(chunk_data.clone());
+        // --- Save ChunkData to storage and Send Result back to main thread ---
+        storage.queue_save_chunk(chunk_data.clone()); // Queue for saving
+        // Send generated data back
         if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
+           // Log if sending failed (main thread might have shut down)
            let log_msg = format!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e);
+           // Attempt to send log message, ignore error if that fails too
            let _ = sender.send(ChunkResult::LogMessage(log_msg));
         }
     }
-
 
     #[func]
     pub fn get_chunk(&mut self, x: i32, z: i32) -> bool {
