@@ -439,7 +439,7 @@ impl ChunkController {
         )
     }
 
-    /// Creates or updates the visual MeshInstance3D using pre-calculated geometry data.
+    /// Creates or updates the visual MeshInstance3D using SurfaceTool.
     /// Also applies debug visualization coloring based on self.debug_mode.
     /// This function performs only Godot API calls and MUST run on the main thread.
     fn apply_mesh_data_to_instance(&mut self, pos: ChunkPosition, geometry: &MeshGeometry) {
@@ -453,180 +453,121 @@ impl ChunkController {
             }
             return;
         }
-
-        // --- 1. Get or Create MeshInstance3D ---
-        let mut is_new_instance = false;
-        let mesh_instance_entry = self.chunk_meshes.entry(pos);
-        let mut mesh_instance = mesh_instance_entry.or_insert_with(|| {
-            godot_print!("ChunkController: Creating new MeshInstance3D for {:?}", pos);
-            is_new_instance = true;
-            let mut inst = MeshInstance3D::new_alloc();
-            let name = GString::from(format!("Chunk_{}_{}", pos.x, pos.z));
-            inst.set_name(&name);
-            inst
-        }).clone();
-
-        // --- 2. Create the ArrayMesh ---
-        let mut mesh = ArrayMesh::new_gd();
-
-        // --- 3. Prepare PackedArrays from geometry data ---
-        // Standard vertex attributes
-        let mut vertices = PackedVector3Array::new();
-        let mut normals = PackedVector3Array::new();
-        let mut uvs = PackedVector2Array::new();
-        let mut indices = PackedInt32Array::new();
-        let mut colors = PackedColorArray::new(); // For debug visualization
-
-        // Custom vertex attributes as PackedByteArrays
-        let mut custom0_bytes_vec: Vec<u8> = Vec::new(); // For biome IDs
-        let mut custom1_bytes_vec: Vec<u8> = Vec::new(); // For biome weights
-
+    
+        // --- 1. Create and configure SurfaceTool ---
+        let mut st = SurfaceTool::new_gd();
+        st.begin(PrimitiveType::TRIANGLES); // Use triangles
+    
+        // --- 2. Iterate through vertices and add attributes one by one ---
         let vertex_count = geometry.vertices.len();
-
-        // --- Reserve Capacity (Now on Vec<u8>, which works) ---
-        custom0_bytes_vec.reserve(vertex_count * 4);
-        custom1_bytes_vec.reserve(vertex_count * 16);
-
-        // --- Populate PackedArrays (Main Loop) ---
         for i in 0..vertex_count {
-            // Populate standard attributes
-            vertices.push(Vector3::new(geometry.vertices[i][0], geometry.vertices[i][1], geometry.vertices[i][2]));
-            normals.push(Vector3::new(geometry.normals[i][0], geometry.normals[i][1], geometry.normals[i][2]));
-            uvs.push(Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]));
-
-            // --- Custom Attributes (Packed into Bytes) ---
-            let biome_ids = geometry.custom0_biome_ids[i]; // [u8; 3]
-            let biome_weights = geometry.custom1_biome_weights[i]; // [f32; 3]
-
-            // Pack CUSTOM0 (IDs) as bytes
-            custom0_bytes_vec.push(biome_ids[0]);
-            custom0_bytes_vec.push(biome_ids[1]);
-            custom0_bytes_vec.push(biome_ids[2]);
-            custom0_bytes_vec.push(0);
-            // Note: If your shader or Godot expects a 4-byte alignment (like RGBA8),
-            // you might need to add padding: custom0_bytes_vec.push(0);
-
-            // Pack CUSTOM1 (Weights) as bytes (using little-endian byte order)
-            custom1_bytes_vec.extend_from_slice(&biome_weights[0].to_le_bytes());
-            custom1_bytes_vec.extend_from_slice(&biome_weights[1].to_le_bytes());
-            custom1_bytes_vec.extend_from_slice(&biome_weights[2].to_le_bytes());
-            custom1_bytes_vec.extend_from_slice(&0.0f32.to_le_bytes()); // <-- PADDING to make 4 floats
-
-            // --- Calculate Vertex Colors Based on Debug Mode ---
-            let height = geometry.vertices[i][1]; // Use the Y component of the vertex
+            // Set Color (for debug viz) - Calculate based on mode
+            let height = geometry.vertices[i][1]; // Use the Y component
             let vertex_color = match self.debug_mode {
                 DEBUG_MODE_HEIGHT => {
-                    // Logic for height visualization (Blue -> Green -> Red gradient)
-                    let min_h = -50.0f32; // Example range, adjust as needed
-                    let max_h = 150.0f32; // Example range, adjust as needed
-                    let range = (max_h - min_h).max(1.0f32); // Avoid division by zero
+                    let min_h = -50.0f32; let max_h = 150.0f32;
+                    let range = (max_h - min_h).max(1.0f32);
                     let t = ((height - min_h) / range).clamp(0.0f32, 1.0f32);
-                    let blue = Color::BLUE;
-                    let green = Color::GREEN;
-                    let red = Color::RED;
-                    if (t as f64) < 0.5 {
-                        blue.lerp(green, t as f64 * 2.0)
-                    } else {
-                        green.lerp(red, (t as f64 - 0.5) * 2.0)
-                    }
+                    let blue = Color::BLUE; let green = Color::GREEN; let red = Color::RED;
+                    if (t as f64) < 0.5 { blue.lerp(green, t as f64 * 2.0) }
+                    else { green.lerp(red, (t as f64 - 0.5) * 2.0) }
                 }
                 DEBUG_MODE_BIOME_ID => {
-                    // Visualize primary biome ID using the original geometry data
                     let primary_id = geometry.custom0_biome_ids[i][0];
-                    match primary_id as u8 % 6 { // Simple color cycle based on ID
-                        0 => Color::RED,
-                        1 => Color::GREEN,
-                        2 => Color::BLUE,
-                        3 => Color::YELLOW,
-                        4 => Color::CYAN,
-                        _ => Color::MAGENTA,
+                    match primary_id % 6 { // Simple color cycle
+                        0 => Color::RED, 1 => Color::GREEN, 2 => Color::BLUE,
+                        3 => Color::YELLOW, 4 => Color::CYAN, _ => Color::MAGENTA,
                     }
                 }
-                _ => { // DEBUG_MODE_NORMAL (0) and any other values
-                    Color::WHITE // Default color
-                }
-            }; // End match
-            colors.push(vertex_color);
+                _ => Color::WHITE, // Default (DEBUG_MODE_NORMAL)
+            };
+            st.set_color(vertex_color);
+    
+            // Set UV
+            st.set_uv(Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]));
+    
+            // Set Normal
+            st.set_normal(Vector3::new(geometry.normals[i][0], geometry.normals[i][1], geometry.normals[i][2]));
+    
+            // --- Add Vertex Position (MUST be last call for this vertex) ---
+            st.add_vertex(Vector3::new(geometry.vertices[i][0], geometry.vertices[i][1], geometry.vertices[i][2]));
         } // End vertex loop
-
-        // Populate indices array
+    
+        // --- 3. Add Indices ---
         for &idx in &geometry.indices {
-            indices.push(idx);
+            if let Ok(index_i32) = idx.try_into() {
+                st.add_index(index_i32);
+            } else {
+                godot_error!("Failed to convert index {} to i32 for SurfaceTool", idx);
+            }
         }
-
-        // --- 4. Create the main Godot Array to hold all vertex data ---
-        let mut arrays = VariantArray::new();
-        // Resize the VariantArray to the exact size Godot expects (Mesh::ARRAY_MAX)
-        arrays.resize(ArrayType::MAX.ord() as usize, &Variant::nil());
-
-        
-        // --- 5. Place the packed arrays into the main VariantArray at correct indices ---
-        arrays.set(ArrayType::VERTEX.ord() as usize, &vertices.to_variant());
-        arrays.set(ArrayType::NORMAL.ord() as usize, &normals.to_variant());
-        arrays.set(ArrayType::TEX_UV.ord() as usize, &uvs.to_variant());
-        arrays.set(ArrayType::COLOR.ord() as usize, &colors.to_variant());
-        if !geometry.indices.is_empty() {
-            arrays.set(ArrayType::INDEX.ord() as usize, &indices.to_variant());
+    
+        // --- 4. Commit the SurfaceTool to generate the ArrayMesh ---
+        let mesh_option: Option<Gd<ArrayMesh>> = st.commit(); // This creates the ArrayMesh
+    
+        // --- 5. Get or Create MeshInstance3D ---
+        let mut mesh_instance: Gd<MeshInstance3D>;
+        let mut is_new_instance = false;
+        if let Some(existing_instance) = self.chunk_meshes.get(&pos) {
+            if existing_instance.is_instance_valid() {
+                mesh_instance = existing_instance.clone();
+            } else {
+                godot_print!("ChunkController: Recreating MeshInstance3D for {:?}", pos);
+                mesh_instance = MeshInstance3D::new_alloc();
+                is_new_instance = true;
+                self.chunk_meshes.insert(pos, mesh_instance.clone()); // Update map
+            }
+        } else {
+            godot_print!("ChunkController: Creating new MeshInstance3D for {:?}", pos);
+            mesh_instance = MeshInstance3D::new_alloc();
+            is_new_instance = true;
+            self.chunk_meshes.insert(pos, mesh_instance.clone()); // Add to map
         }
-
-        // Convert Vec<u8> to PackedByteArray before setting in VariantArray
-        // Use `from_iter` or `from_slice` - check gdext docs for PackedByteArray constructors
-        // Assuming `from_slice` exists and is efficient:
-        // Convert Vec<u8> to PackedByteArray using FromIterator
-        let packed_custom0_bytes: PackedByteArray = custom0_bytes_vec.into_iter().collect();
-        let packed_custom1_bytes: PackedByteArray = custom1_bytes_vec.into_iter().collect();
-        // If `from_slice` doesn't exist, `from_iter(custom0_bytes_vec)` might work.
-
-        godot_print!(
-            "DEBUG: vertices: {}, custom0_bytes: {}, custom1_bytes: {}",
-            vertices.len(),
-            packed_custom0_bytes.len(),
-            packed_custom1_bytes.len()
-        );
-        
-
-        arrays.set(ArrayType::CUSTOM0.ord() as usize, &packed_custom0_bytes.to_variant());
-        arrays.set(ArrayType::CUSTOM1.ord() as usize, &packed_custom1_bytes.to_variant());
-        
-        // --- 6. Add the surface to the mesh ---
-        // Use the 2-argument version, passing the correctly sized VariantArray
-        mesh.add_surface_from_arrays(
-            PrimitiveType::TRIANGLES,
-            &arrays
-            // Format flags, blend shapes, LODs are not passed here in Godot 4+ bindings typically
-        );
-
-        // --- 7. Set Mesh on Instance ---
-        let mesh_resource: Gd<Mesh> = mesh.upcast();
-        mesh_instance.set_mesh(&mesh_resource);
-
-        // --- 8. Apply Material ---
-        // This helper function likely needs no changes, but ensure it handles surface 0 correctly.
-        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
-        Self::apply_material_and_shader_param(
-            &mut mesh_instance,
-            &self.biome_material,
-            is_debug_render,
-        );
-
-        // --- 9. Add to Scene Tree ---
+    
+        // Set name if new
         if is_new_instance {
-            // Ensure `self` has access to `base_mut()` or equivalent to add child
-            self.base_mut()
-                .add_child(&mesh_instance.clone().upcast::<Node>());
+            let name = GString::from(format!("Chunk_{}_{}", pos.x, pos.z));
+            mesh_instance.set_name(&name);
         }
-
-        // --- 10. Set Position ---
-        let world_pos = Vector3::new(
-            pos.x as f32 * self.chunk_size as f32,
-            0.0, // Set Y position as needed (e.g., based on min height, or keep at 0)
-            pos.z as f32 * self.chunk_size as f32,
-        );
-        mesh_instance.set_global_position(world_pos);
-
-        // --- 11. Ensure Visibility ---
-        if !mesh_instance.is_visible() {
-            mesh_instance.show();
+    
+        // --- 6. Assign Mesh and Material ---
+        if let Some(mesh) = mesh_option {
+            let mesh_resource: Gd<Mesh> = mesh.upcast(); // Cast ArrayMesh to Mesh
+            mesh_instance.set_mesh(&mesh_resource);
+    
+            // Apply material (same logic as before)
+            let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
+            Self::apply_material_and_shader_param(
+                &mut mesh_instance, // Pass as mutable reference
+                &self.biome_material,
+                is_debug_render,
+            );
+    
+            // --- 7. Add to Scene Tree & Set Transform ---
+            if is_new_instance {
+                // Add to scene tree if it's brand new
+                self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+            }
+            
+            // Always ensure correct position and visibility
+            let world_pos = Vector3::new(
+                pos.x as f32 * self.chunk_size as f32,
+                0.0, // Set Y position as needed
+                pos.z as f32 * self.chunk_size as f32,
+            );
+            mesh_instance.set_global_position(world_pos);
+    
+            if !mesh_instance.is_visible() {
+                mesh_instance.show();
+            }
+        } else {
+            godot_error!("SurfaceTool::commit() failed to generate mesh for chunk {:?}", pos);
+            // If commit fails, remove the potentially invalid mesh instance
+            if let Some(mut instance_to_remove) = self.chunk_meshes.remove(&pos) {
+                if instance_to_remove.is_instance_valid() {
+                    instance_to_remove.queue_free();
+                }
+            }
         }
     }
 
@@ -718,6 +659,16 @@ impl ChunkController {
                     };
     
                     if let Some(chunk_data) = chunk_data_option {
+                        let expected_size = ((self.chunk_size + 1) * (self.chunk_size + 1)) as usize;
+                        godot_print!(
+                            "DEBUG ChunkData Check for {:?}: Expected Size: {}, Heightmap: {}, Biomes: {}, Weights: {}",
+                            pos,
+                            expected_size,
+                            chunk_data.heightmap.len(),
+                            chunk_data.biome_indices.len(),
+                            chunk_data.biome_blend_weights.len()
+                        );
+
                         // --- FIX: Pass new fields to generate_mesh_geometry ---
                         // Ensure generate_mesh_geometry function signature is updated too!
                         let geometry = generate_mesh_geometry(
