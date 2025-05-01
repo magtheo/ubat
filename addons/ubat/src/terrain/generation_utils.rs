@@ -15,129 +15,133 @@ pub fn get_clamped_height(x: i32, z: i32, heightmap: &[f32], chunk_size: u32) ->
 }
 
 pub fn generate_mesh_geometry(
-    heightmap: &[f32],
-    chunk_size: u32,
-    // UPDATED parameters: accept indices and weights
-    biome_indices: &[[u8; 3]],
-    biome_weights: &[[f32; 3]],
+    heightmap: &Vec<f32>,
+    chunk_size: u32, // Number of quads per side
+    biome_indices_data: &Vec<[u8; 3]>,
+    biome_weights_data: &Vec<[f32; 3]>,
 ) -> MeshGeometry {
-
-    if chunk_size == 0 || heightmap.is_empty() {
-        eprintln!("generate_mesh_geometry: Called with zero chunk_size or empty heightmap.");
-        return MeshGeometry::default(); // Return default empty geometry
+    if chunk_size == 0 {
+        return MeshGeometry::default(); // Cannot generate mesh for size 0
     }
 
-    let expected_len = (chunk_size * chunk_size) as usize;
-    // --- FIX: Update length check ---
-    if heightmap.len() != expected_len
-        || biome_indices.len() != expected_len
-        || biome_weights.len() != expected_len
+    let grid_width = chunk_size + 1; // Number of vertices per side
+    let vertex_count = (grid_width * grid_width) as usize;
+    let quad_count = (chunk_size * chunk_size) as usize;
+    let expected_map_size = vertex_count;
+
+    // Basic validation of input data sizes
+    if heightmap.len() != expected_map_size
+        || biome_indices_data.len() != expected_map_size
+        || biome_weights_data.len() != expected_map_size
     {
+        // Use godot_error! or eprintln! if this runs outside main thread context reliably
         eprintln!(
-            "generate_mesh_geometry: Mismatched lengths! H: {}, BI: {}, BW: {}, Expected: {}. Returning empty.",
+            "Error generating mesh: Input data size mismatch! Expected {}, Heightmap: {}, Biomes: {}, Weights: {}",
+            expected_map_size,
             heightmap.len(),
-            biome_indices.len(), // Check new array length
-            biome_weights.len(), // Check new array length
-            expected_len
+            biome_indices_data.len(),
+            biome_weights_data.len()
         );
-        return MeshGeometry::default(); // Return default empty geometry
+        return MeshGeometry::default(); // Return empty geometry on error
     }
-    // --- END FIX ---
 
+    let mut geometry = MeshGeometry {
+        vertices: Vec::with_capacity(vertex_count),
+        normals: Vec::with_capacity(vertex_count),
+        uvs: Vec::with_capacity(vertex_count),
+        // 6 indices per quad (2 triangles * 3 vertices)
+        indices: Vec::with_capacity(quad_count * 6),
+        custom0_biome_ids: Vec::with_capacity(vertex_count),
+        custom1_biome_weights: Vec::with_capacity(vertex_count),
+    };
 
-    // Initialize vectors
-    let mut vertices_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
-    let mut uvs_vec: Vec<[f32; 2]> = Vec::with_capacity(expected_len);
-    let mut normals_vec: Vec<[f32; 3]> = vec![[0.0, 1.0, 0.0]; expected_len]; // Default normal up
-    // Initialize NEW vectors for custom attributes
-    let mut custom0_ids_vec: Vec<[u8; 3]> = Vec::with_capacity(expected_len);
-    let mut custom1_weights_vec: Vec<[f32; 3]> = Vec::with_capacity(expected_len);
+    let chunk_size_f = chunk_size as f32;
 
+    // --- First Pass: Generate Vertex Data (Position, UV, Custom, Normals) ---
+    for iz in 0..grid_width {
+        for ix in 0..grid_width {
+            let current_index = (iz * grid_width + ix) as usize;
 
-    // --- Generate Vertex Data ---
-    for z in 0..chunk_size {
-        for x in 0..chunk_size {
-            let idx = (z * chunk_size + x) as usize;
-            let h = heightmap[idx];
-            vertices_vec.push([x as f32, h, z as f32]);
+            // 1. Vertex Position
+            let x_pos = ix as f32; // Local X within the chunk
+            let y_pos = heightmap[current_index];
+            let z_pos = iz as f32; // Local Z within the chunk
+            geometry.vertices.push([x_pos, y_pos, z_pos]);
 
-            // Calculate UVs (ensure no division by zero if chunk_size is 1)
-            let u_coord = if chunk_size > 1 { x as f32 / (chunk_size - 1) as f32 } else { 0.0 };
-            let v_coord = if chunk_size > 1 { z as f32 / (chunk_size - 1) as f32 } else { 0.0 };
-            uvs_vec.push([u_coord, v_coord]);
+            // 2. UV Coordinates (Normalized 0-1 across the chunk)
+            let u = ix as f32 / chunk_size_f;
+            let v = iz as f32 / chunk_size_f;
+            geometry.uvs.push([u, v]);
 
-            // --- FIX: Populate Custom Attributes ---
-            let ids = biome_indices[idx];   // Get the [u8; 3] array of IDs
-            let wghts = biome_weights[idx]; // Get the [f32; 3] array of weights
+            // 3. Custom Data (Biome IDs and Weights)
+            geometry
+                .custom0_biome_ids
+                .push(biome_indices_data[current_index]);
+            geometry
+                .custom1_biome_weights
+                .push(biome_weights_data[current_index]);
 
-            // Convert IDs to f32 and store
-            custom0_ids_vec.push([ids[0] as u8, ids[1] as u8, ids[2] as u8]);
-            // Store weights directly
-            custom1_weights_vec.push([wghts[0], wghts[1], wghts[2]]);
-            // --- END FIX ---
+            // 4. Calculate Normals (using central difference)
+            // Helper function to get height safely, handling boundaries
+            let get_height = |x: i32, z: i32| -> f32 {
+                // Clamp coordinates to grid boundaries
+                let clamped_x = x.clamp(0, chunk_size as i32) as u32;
+                let clamped_z = z.clamp(0, chunk_size as i32) as u32;
+                heightmap[(clamped_z * grid_width + clamped_x) as usize]
+            };
 
-            // NOTE: The old color calculation based on single biome_id is removed.
+            // Get heights of neighbours (central difference method)
+            // Use integer coords (ix, iz) relative to the grid_width
+            let h_l = get_height(ix as i32 - 1, iz as i32); // Height Left
+            let h_r = get_height(ix as i32 + 1, iz as i32); // Height Right
+            let h_d = get_height(ix as i32, iz as i32 - 1); // Height Down (towards -Z)
+            let h_u = get_height(ix as i32, iz as i32 + 1); // Height Up (towards +Z)
+
+            // Calculate the normal vector components
+            // The '2.0' comes from the distance between neighbours (e.g., (x+1) - (x-1) = 2)
+            // Adjust scale if your grid units aren't 1.0
+            let normal_x = h_l - h_r;
+            let normal_y = 2.0; // Adjust vertical scale if needed
+            let normal_z = h_d - h_u;
+
+            // Normalize the vector
+            let len = (normal_x * normal_x + normal_y * normal_y + normal_z * normal_z).sqrt();
+            let norm = if len > 0.0 {
+                [normal_x / len, normal_y / len, normal_z / len]
+            } else {
+                [0.0, 1.0, 0.0] // Default to pointing straight up if length is zero
+            };
+            geometry.normals.push(norm);
         }
     }
 
+    // --- Second Pass: Generate Indices for Triangles ---
+    for iz in 0..chunk_size {
+        for ix in 0..chunk_size {
+            // Calculate indices of the 4 corners of the current quad
+            // Using u32 for indices before casting to i32 needed by Godot
+            let idx00 = iz * grid_width + ix;           // Bottom-left
+            let idx10 = iz * grid_width + (ix + 1);     // Bottom-right
+            let idx01 = (iz + 1) * grid_width + ix;     // Top-left
+            let idx11 = (iz + 1) * grid_width + (ix + 1); // Top-right
 
-    // --- Calculate Normals (Your existing logic) ---
-    // This happens *after* all vertex positions are calculated.
-    for z in 0..chunk_size {
-        for x in 0..chunk_size {
-            let idx = (z * chunk_size + x) as usize;
-            let h_l = get_clamped_height(x as i32 - 1, z as i32, heightmap, chunk_size);
-            let h_r = get_clamped_height(x as i32 + 1, z as i32, heightmap, chunk_size);
-            let h_d = get_clamped_height(x as i32, z as i32 - 1, heightmap, chunk_size);
-            let h_u = get_clamped_height(x as i32, z as i32 + 1, heightmap, chunk_size);
+            // Ensure indices are i32 for Godot
+            let i00 = idx00 as i32;
+            let i10 = idx10 as i32;
+            let i01 = idx01 as i32;
+            let i11 = idx11 as i32;
 
-            let dx = h_l - h_r;
-            let dz = h_d - h_u;
-            let dy = 2.0; // Adjust this based on horizontal scale if needed
+            // First triangle (bottom-left, bottom-right, top-left) - CCW order
+            geometry.indices.push(i00);
+            geometry.indices.push(i10);
+            geometry.indices.push(i01);
 
-            let mag_sq = dx*dx + dy*dy + dz*dz;
-            let mag = if mag_sq > 1e-6 { mag_sq.sqrt() } else { 1.0 };
-            normals_vec[idx] = [dx / mag, dy / mag, dz / mag];
+            // Second triangle (bottom-right, top-right, top-left) - CCW order
+            geometry.indices.push(i10);
+            geometry.indices.push(i11);
+            geometry.indices.push(i01);
         }
     }
 
-
-    // --- Generate Indices (Triangle definitions) ---
-    // Ensure sufficient capacity to avoid reallocations
-    let index_count = (chunk_size as usize - 1) * (chunk_size as usize - 1) * 6;
-    let mut indices_vec: Vec<i32> = Vec::with_capacity(index_count); // Use i32
-
-    if chunk_size > 1 { // Only generate indices if there's more than one vertex along edges
-        for z in 0..chunk_size - 1 {
-            for x in 0..chunk_size - 1 {
-                // Calculate indices based on current quad
-                let idx00 = (z * chunk_size + x) as i32; // Top-left
-                let idx10 = idx00 + 1;                   // Top-right
-                let idx01 = idx00 + chunk_size as i32;   // Bottom-left
-                let idx11 = idx01 + 1;                   // Bottom-right
-
-                // Triangle 1 (Top-left -> Top-right -> Bottom-left)
-                indices_vec.push(idx00);
-                indices_vec.push(idx10);
-                indices_vec.push(idx01);
-
-                // Triangle 2 (Top-right -> Bottom-right -> Bottom-left)
-                indices_vec.push(idx10);
-                indices_vec.push(idx11);
-                indices_vec.push(idx01);
-            }
-        }
-    }
-
-
-    // Return the populated MeshGeometry struct
-    MeshGeometry {
-        vertices: vertices_vec,
-        normals: normals_vec,
-        uvs: uvs_vec,
-        indices: indices_vec,
-        // colors field removed
-        custom0_biome_ids: custom0_ids_vec,       // Add new field
-        custom1_biome_weights: custom1_weights_vec, // Add new field
-    }
+    geometry // Return the populated struct
 }
