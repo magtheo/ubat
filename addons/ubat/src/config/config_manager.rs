@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::io; // For io::Error
 
-use crate::terrain::generation_rules::{GenerationRules}; // Ensure this path is correct and derives traits
+use crate::terrain::section::sectionConfig::{SectionTomlConfig, BiomeTomlConfig};
 
 // Default values
 pub fn default_server_address() -> String { "127.0.0.1:7878".to_string() }
@@ -24,8 +24,10 @@ pub struct TerrainInitialConfigData { // Represents the data loaded from TOML [t
     pub chunk_cache_size: usize,
     pub chunks_per_frame: usize,
     pub render_distance: i32,
+    pub amplification: f64,
     #[serde(default)]
     pub noise_paths: HashMap<String, String>,
+    pub mesh_updates_per_frame: usize,
 }
 
 // Default for TerrainInitialConfigData - used if file/section missing
@@ -36,12 +38,14 @@ impl Default for TerrainInitialConfigData {
         TerrainInitialConfigData {
             max_threads: std::cmp::max(1, cpu_count.saturating_sub(1)),
             chunk_size: 32,
-            blend_distance: 200.0,
+            blend_distance: 800.0,
             use_parallel_processing: true,
             chunk_cache_size: 400,
             chunks_per_frame: 4,
-            render_distance: 2,
+            render_distance: 4,
+            amplification: 1.0, 
             noise_paths: HashMap::new(), // Default to empty
+            mesh_updates_per_frame: 4,
         }
     }
 }
@@ -65,13 +69,13 @@ pub struct NetworkInitialConfigData {
     pub connection_timeout_ms: u32,
 }
 impl Default for NetworkInitialConfigData {
-     fn default() -> Self {
-         NetworkInitialConfigData {
-             default_port: 7878,
-             max_players: 64,
-             connection_timeout_ms: 5000,
-         }
-     }
+    fn default() -> Self {
+        NetworkInitialConfigData {
+            default_port: 7878,
+            max_players: 64,
+            connection_timeout_ms: 5000,
+        }
+    }
 }
 
 // Game mode specific configurations (Keep as is)
@@ -123,8 +127,6 @@ pub struct GameConfiguration {
     pub world_seed: u64,
     #[serde(default)]
     pub world_size: WorldSize,
-    #[serde(default)]
-    pub generation_rules: GenerationRules, // Assumes GenerationRules::default() exists
 
     // Initial Network Config from TOML
     #[serde(default)]
@@ -133,6 +135,12 @@ pub struct GameConfiguration {
     // Initial Terrain Config from TOML
     #[serde(default)]
     pub terrain: TerrainInitialConfigData, // Use the new struct
+
+    #[serde(default)]
+    pub sections: Vec<SectionTomlConfig>,
+    
+    #[serde(default)]
+    pub biomes: Vec<BiomeTomlConfig>,
 
     // Custom configuration sections
     #[serde(default)]

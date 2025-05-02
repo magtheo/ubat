@@ -4,8 +4,8 @@ use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use godot::prelude::*;
 
-use crate::terrain::GenerationRules;
-use crate::terrain::{BiomeManager, ChunkManager};
+use crate::terrain::ChunkManager;
+use crate::terrain::section::SectionManager;
 use crate::core::event_bus::EventBus;
 use crate::config::config_manager::{GameConfiguration, GameModeConfig, WorldSize};
 
@@ -25,7 +25,6 @@ trait WorldEntity: Send + Sync {
 pub struct WorldStateConfig {
     pub seed: u64,
     pub world_size: (u32, u32),
-    pub generation_parameters: GenerationRules,
 }
 
 // Comprehensive world state management
@@ -45,7 +44,7 @@ pub struct WorldStateManager {
     pending_size: (u32, u32),
 
     // terrain managers
-    biome_manager: Option<Gd<BiomeManager>>,
+    section_manager: Option<Gd<SectionManager>>,
     chunk_manager: Option<Gd<ChunkManager>>,
 
     
@@ -69,7 +68,7 @@ impl WorldStateManager {
             pending_size: (0, 0),
             event_bus: None,
             chunk_manager: None,
-            biome_manager: None,
+            section_manager: None,
             is_terrain_initialized: false,
             initialized: false,
 
@@ -85,7 +84,7 @@ impl WorldStateManager {
             entities: Arc::new(RwLock::new(HashMap::new())),
             config: config.clone(),
             current_version: 0,
-            biome_manager: None,
+            section_manager: None,
             chunk_manager: None,
             pending_init: false,
             pending_seed: 0,
@@ -120,10 +119,10 @@ impl WorldStateManager {
     }
 
     pub fn set_terrain_managers(&mut self,
-            biome_manager: Gd<BiomeManager>,
+            section_manager: Gd<SectionManager>,
             chunk_manager: Gd<ChunkManager>) {
         godot_print!("WorldStateManager: Receiving terrain manager references.");
-        self.biome_manager = Some(biome_manager);
+        self.section_manager = Some(section_manager);
         self.chunk_manager = Some(chunk_manager);
         // Mark terrain as initialized *logically* from WSM's perspective
         // Note: Actual node initialization already happened in TerrainInitializer
@@ -131,32 +130,32 @@ impl WorldStateManager {
     }
 
        
-    // Initialize terrain with BiomeManager and ChunkManager
+    // Initialize terrain with SectionManager and ChunkManager
     pub fn initialize_terrain(&mut self, 
-        biome_manager: Gd<BiomeManager>, 
+        section_manager: Gd<SectionManager>, 
         chunk_manager: Gd<ChunkManager>) -> Result<(), String> {
         
         println!("WorldStateManager: Initializing terrain with provided components");
         
         // Store the managers directly instead of using TerrainWorldIntegration
-        self.biome_manager = Some(biome_manager.clone());
+        self.section_manager = Some(section_manager.clone());
         self.chunk_manager = Some(chunk_manager.clone());
         
-        // Configure BiomeManager with our world settings
-        {
-            let mut bm = biome_manager.clone();
-            bm.bind_mut().set_seed(self.config.seed as u32);
-            bm.bind_mut().set_world_dimensions(
-                self.config.world_size.0 as f32, 
-                self.config.world_size.1 as f32
-            );
-        }
+        // Configure SectionManager with our world settings
+        // {
+        //     let mut sm = section_manager.clone();
+        //     sm.bind_mut().set_seed(self.config.seed as u32);
+        //     sm.bind_mut().set_world_dimensions(
+        //         self.config.world_size.0 as f32, 
+        //         self.config.world_size.1 as f32
+        //     );
+        // }
         
         // Configure ChunkManager 
         {
             let mut cm = chunk_manager.clone();
-            cm.bind_mut().set_biome_manager(biome_manager.clone());
-            cm.bind_mut().update_thread_safe_biome_data();
+            cm.bind_mut().set_section_manager(section_manager.clone());
+            cm.bind_mut().update_thread_safe_section_data();
         }
         
         // Connect to event bus if available
@@ -225,16 +224,16 @@ impl WorldStateManager {
         
         // Check again after attempted initialization
         if self.is_terrain_initialized {
-            // Use direct references to biome_manager and chunk_manager
-            if let (Some(biome_mgr), Some(chunk_mgr)) = (&self.biome_manager, &self.chunk_manager) {
+            // Use direct references to section_manager and chunk_manager
+            if let (Some(section_mgr), Some(chunk_mgr)) = (&self.section_manager, &self.chunk_manager) {
                 // Update terrain based on world state
                 println!("WorldStateManager: Generating world using terrain managers");
                 
-                // First make sure biome data is updated correctly
+                // First make sure section data is updated correctly
                 {
-                    let mut bm = biome_mgr.clone();
-                    bm.bind_mut().set_seed(self.config.seed as u32);
-                    // Other biome configuration...
+                    let mut sm = section_mgr.clone();
+                    sm.bind_mut().set_seed(self.config.seed as u32);
+                    // Other section configuration...
                 }
                 
                 // Then update the chunk manager
@@ -290,7 +289,7 @@ impl WorldStateManager {
         let entities = self.entities.read().unwrap();
         
         // Get terrain data from direct managers if available
-        let terrain_data: Vec<u8> = if let (Some(biome_mgr), Some(chunk_mgr)) = (&self.biome_manager, &self.chunk_manager) {
+        let terrain_data: Vec<u8> = if let (Some(biome_mgr), Some(chunk_mgr)) = (&self.section_manager, &self.chunk_manager) {
             // Serialize terrain data - implementation depends on your needs
             Vec::new() // Placeholder
         } else {
@@ -333,7 +332,7 @@ impl WorldStateManager {
             
             // Apply terrain data if available
             if !terrain_data.is_empty() {
-                if let (Some(biome_mgr), Some(chunk_mgr)) = (&mut self.biome_manager, &mut self.chunk_manager) {
+                if let (Some(biome_mgr), Some(chunk_mgr)) = (&mut self.section_manager, &mut self.chunk_manager) {
                     // Apply terrain data to the managers directly
                     // This would need to be implemented based on your serialization format
                     // For example:
@@ -363,21 +362,35 @@ impl WorldStateManager {
     
     // Update configuration
     pub fn update_config(&mut self, config: WorldStateConfig) {
-        self.config = config;
-        
+        godot_print!("DEBUG: WorldStateManager::update_config called."); // Add log
+        self.config = config; // Update WSM's internal config
+
         // Notify terrain system if initialized
-        if let Some(biome_mgr) = &self.biome_manager {
-            let mut bm = biome_mgr.clone();
-            bm.bind_mut().set_seed(self.config.seed as u32);
-            bm.bind_mut().set_world_dimensions(
-                self.config.world_size.0 as f32, 
-                self.config.world_size.1 as f32
-            );
+        if let Some(biome_mgr) = &self.section_manager {
+            godot_print!("DEBUG: WorldStateManager::update_config - SectionManager reference exists."); // Add log
+
+            // --- FIX: Comment out or delete these lines ---
+            // let mut sm = biome_mgr.clone();
+            // godot_print!("DEBUG:   Calling sm.set_seed({})", self.config.seed); // Add log
+            // sm.bind_mut().set_seed(self.config.seed as u32);
+            // godot_print!("DEBUG:   Calling sm.set_world_dimensions({}, {})", self.config.world_size.0, self.config.world_size.1); // Add log
+            // sm.bind_mut().set_world_dimensions(
+            //     self.config.world_size.0 as f32,
+            //     self.config.world_size.1 as f32
+            // );
+            // --- END FIX ---
+
+            // It might still be valid to update the ChunkManager's thread-safe data here
+            // if the SectionManager's config *was* somehow changed externally,
+            // but in this flow, we want to prevent the SectionManager change itself.
+            // Consider if cm.update_thread_safe_section_data() is needed here later.
+        } else {
+             godot_print!("DEBUG: WorldStateManager::update_config - SectionManager reference does NOT exist."); // Add log
         }
     }
 
-    pub fn get_biome_manager(&self) -> Option<Gd<BiomeManager>> {
-        self.biome_manager.clone()
+    pub fn get_section_manager(&self) -> Option<Gd<SectionManager>> {
+        self.section_manager.clone()
     }
     
     pub fn get_chunk_manager(&self) -> Option<Gd<ChunkManager>> {
@@ -403,7 +416,7 @@ impl Clone for WorldStateManager {
             pending_init: self.pending_init,
             pending_seed: self.pending_seed,
             pending_size: self.pending_size,
-            biome_manager: self.biome_manager.clone(),  // Clone the Gd pointers
+            section_manager: self.section_manager.clone(),  // Clone the Gd pointers
             chunk_manager: self.chunk_manager.clone(),  // Clone the Gd pointers
             event_bus: self.event_bus.clone(),
             is_terrain_initialized: self.is_terrain_initialized,

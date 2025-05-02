@@ -1,11 +1,10 @@
-[gd_resource type="ShaderMaterial" load_steps=2 format=3 uid="uid://bq8x7u8njovf8"]
+[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://bq8x7u8njovf8"]
 
-[ext_resource type="Shader" path="res://project/terrain/shader/chunkShader.gdshader" id="1_iun8u"]
+[ext_resource type="Shader" uid="uid://cqscg48jgt3q" path="res://project/terrain/shader/terrain_shader.gdshader" id="1_hpg18"]
+[ext_resource type="Texture2DArray" uid="uid://dqxxfsbdwwxrx" path="res://project/terrain/textures/biome/biome_texture_array.tres" id="2_ud1i0"]
 
 [resource]
 render_priority = 0
-shader = ExtResource("1_iun8u")
-shader_parameter/color_ground = Color(0.3, 0.7, 0.3, 1)
-shader_parameter/color_water = Color(0.1, 0.3, 0.6, 0.8)
-shader_parameter/color_mountain = Color(0.6, 0.5, 0.4, 1)
-shader_parameter/height_scale = 1.0
+shader = ExtResource("1_hpg18")
+shader_parameter/biome_textures = ExtResource("2_ud1i0")
+shader_parameter/uv_scale = Vector2(1, 1)

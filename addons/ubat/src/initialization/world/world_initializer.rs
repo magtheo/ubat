@@ -5,6 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::collections::HashMap;
 
+use crate::config::global_config;
 use crate::core::event_bus::EventBus;
 use crate::config::config_manager::{ConfigurationManager, GameConfiguration};
 use crate::core::world_manager::{WorldStateManager, WorldStateConfig};
@@ -86,15 +87,15 @@ impl WorldInitializer {
         let terrain_context = self.initialize_terrain_systems()?; // Modify this to return context
 
         // Phase 3: Connect WorldStateManager to Terrain Managers (NEW STEP)
-        if let (Some(world_manager_arc), Some(biome_mgr_gd), Some(chunk_mgr_gd)) =
-            (&self.world_manager, terrain_context.biome_manager, terrain_context.chunk_manager)
+        if let (Some(world_manager_arc), Some(section_mgr_gd), Some(chunk_mgr_gd)) =
+            (&self.world_manager, terrain_context.section_manager, terrain_context.chunk_manager)
         {
              println!("WorldInitializer: Connecting WorldStateManager to terrain managers...");
              let mut world_mgr_locked = world_manager_arc.lock()
                 .map_err(|_| WorldInitError::WorldStateError("Failed to lock world manager for setting terrain refs".to_string()))?;
 
              // Call the new setter method
-             world_mgr_locked.set_terrain_managers(biome_mgr_gd, chunk_mgr_gd);
+             world_mgr_locked.set_terrain_managers(section_mgr_gd, chunk_mgr_gd);
 
              println!("WorldInitializer: WorldStateManager connected.");
         } else {
@@ -126,7 +127,6 @@ impl WorldInitializer {
             WorldStateConfig {
                 seed: game_config.world_seed,
                 world_size: (game_config.world_size.width, game_config.world_size.height),
-                generation_parameters: game_config.generation_rules.clone(), // Clone rules
             }
         };
         
@@ -159,24 +159,33 @@ impl WorldInitializer {
         println!("WorldInitializer: Initializing terrain systems");
         
         // Get seed, world size, and noise paths from the global config
-        let (seed, world_size, noise_paths) = {
-            let config_manager_guard = self.config_manager.read()
-                .map_err(|_| WorldInitError::ConfigError("Failed to lock global config manager for reading terrain data".to_string()))?;
-            let game_config = config_manager_guard.get_config();
+        let (final_seed, final_world_size, final_noise_paths) = {
+            // Use the global config getter function
+            let config_manager_lock = global_config::get_config_manager(); // Get the Arc<RwLock<...>>
+            let config_manager_guard = config_manager_lock.read()
+                .map_err(|_| WorldInitError::ConfigError("Failed to lock global config manager for reading FINAL terrain data".to_string()))?;
+            // Access the GameConfiguration
+            let game_config = config_manager_guard.get_config(); // Should now contain overridden values
+
+            // Log the values being read HERE
+            println!("DEBUG WorldInitializer: Reading final config for terrain init:");
+            println!("DEBUG   Seed: {}", game_config.world_seed);
+            println!("DEBUG   Width: {}, Height: {}", game_config.world_size.width, game_config.world_size.height);
+
             (
                 game_config.world_seed,
                 (game_config.world_size.width, game_config.world_size.height),
-                game_config.terrain.noise_paths.clone() // Clone the noise paths map
+                game_config.terrain.noise_paths.clone()
             )
-       };
+        };
 
         // Create TerrainInitializer
         let mut terrain_init = TerrainInitializer::new();
 
         // Set up terrain initializer
-        terrain_init.set_seed(seed as u32);
-        terrain_init.set_world_dimensions(world_size.0 as f32, world_size.1 as f32);
-        terrain_init.set_noise_paths(noise_paths); // <-- Pass the noise paths // TODO: Noise paths should not be stored in the config toml file.
+        terrain_init.set_seed(final_seed as u32);
+        terrain_init.set_world_dimensions(final_world_size.0 as f32, final_world_size.1 as f32);
+        terrain_init.set_noise_paths(final_noise_paths); // <-- Pass the noise paths // TODO: Noise paths should not be stored in the config toml file.
         
         // Initialize terrain systems
         terrain_init.initialize_terrain_system()
@@ -189,6 +198,11 @@ impl WorldInitializer {
         self.terrain_initializer = Some(terrain_init); // Store TI if needed
 
         println!("WorldInitializer: Terrain systems initialized");
+
+        if let Some(ref section_mgr) = context.section_manager {
+            section_mgr.bind().debug_validate_world();
+        }
+
         Ok(context) // Return the context
     }
     

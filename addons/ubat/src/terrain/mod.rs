@@ -2,34 +2,22 @@
 
 pub mod chunk_manager;
 pub mod chunk_controller;
-pub mod biome_manager;
+pub mod generation_utils;
 
-pub mod generation_rules;
 pub mod terrain_config;
 
+pub mod section;
 pub mod noise;
 
 
 // Re-export main types for easier access
 pub use chunk_manager::ChunkManager;
 pub use chunk_controller::ChunkController;
-pub use biome_manager::BiomeManager;
 
 pub use terrain_config::TerrainConfig;
-pub use generation_rules::GenerationRules;
+// pub use generation_rules::GenerationRules;
 
 // Component descriptions:
-
-// BiomeManager
-
-// Primary Role: Determine which biome exists at any world coordinate
-// Functionality:
-// Reads section information from a color-based biome mask image
-// Maps colors to section IDs
-// Maintains Voronoi points for each section with their associated biomes
-// Handles biome blending at boundaries using noise and distance fields
-// Provides a fast cache system for performance optimization
-
 
 // ChunkManager
 

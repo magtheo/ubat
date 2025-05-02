@@ -3,9 +3,11 @@ use godot::prelude::*;
 use godot::classes::{Node, ResourceLoader, FastNoiseLite, NoiseTexture2D, Resource}; // Added Resource
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use noise::NoiseFn;
 
 // Corrected import path using super:: since it's likely in the same noise/ module
 use super::noise_parameters::{NoiseParameters, map_godot_noise_type, map_godot_fractal_type};
+use crate::terrain::noise::noise_utils::create_noise_function_from_params;
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -16,6 +18,8 @@ pub struct NoiseManager {
     noise_resource_paths: Dictionary,
 
     noise_parameters_cache: Arc<RwLock<HashMap<String, NoiseParameters>>>,
+
+    noise_functions_cache: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
 }
 
 #[godot_api]
@@ -25,14 +29,19 @@ impl INode for NoiseManager {
             base,
             noise_resource_paths: Dictionary::new(),
             noise_parameters_cache: Arc::new(RwLock::new(HashMap::new())),
+            noise_functions_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     fn ready(&mut self) {
         godot_print!("NoiseManager: Initializing...");
         self.load_and_extract_all_parameters();
-        godot_print!("NoiseManager: Initialization complete. Loaded {} noise configurations.",
-            self.noise_parameters_cache.read().unwrap().len());
+        let param_count = self.noise_parameters_cache.read().unwrap().len();
+        let func_count = self.noise_functions_cache.read().unwrap().len();
+        godot_print!(
+            "NoiseManager: Initialization complete. Loaded {} param configs, created {} function objects.",
+            param_count, func_count
+        );
     }
 }
 
@@ -44,50 +53,52 @@ impl NoiseManager {
 
 
     pub fn set_noise_resource_paths(&mut self, paths: Dictionary) {
-        // Check if already initialized? Optional, might want to allow reloading.
-        // if self.noise_parameters_cache.read().unwrap().is_empty() {
-             godot_print!("NoiseManager: Setting noise resource paths programmatically.");
-             self.noise_resource_paths = paths;
-             // Optionally, immediately load/reload parameters here,
-             // or rely on _ready() to load them after the node is added to scene.
-             // self.load_and_extract_all_parameters(); // Call here if needed before _ready
-        // } else {
-        //      godot_warn!("NoiseManager: Attempted to set paths after initialization.");
-        // }
+        godot_print!("NoiseManager: Setting noise resource paths programmatically.");
+        self.noise_resource_paths = paths;
+        // Reload parameters and functions if paths are set after ready()
+        if self.base().is_node_ready() { // Call base() first
+            self.load_and_extract_all_parameters();
+        }
     }
 
-    fn load_and_extract_all_parameters(&mut self) {
-        // **FIXED:** Declare loader as mutable
-        let mut loader = ResourceLoader::singleton();
-        let mut cache_writer = self.noise_parameters_cache.write().unwrap();
-        cache_writer.clear();
 
-        if self.noise_resource_paths.is_empty() {
-            godot_warn!("NoiseManager: noise_resource_paths dictionary is empty. No noise will be loaded.");
+   fn load_and_extract_all_parameters(&mut self) {
+        let mut loader = ResourceLoader::singleton();
+        // Lock both caches for writing
+        let Ok(mut params_writer) = self.noise_parameters_cache.write() else {
+            godot_error!("NoiseManager: Failed to lock parameters cache for writing.");
             return;
-        }
+        };
+        let Ok(mut funcs_writer) = self.noise_functions_cache.write() else {
+            godot_error!("NoiseManager: Failed to lock functions cache for writing.");
+            return; // Release params_writer lock implicitly on return
+        };
+
+        params_writer.clear();
+        funcs_writer.clear(); // Clear function cache too
+
+        if self.noise_resource_paths.is_empty() { /* ... warning ... */ return; }
 
         for (key_variant, path_variant) in self.noise_resource_paths.iter_shared() {
             let key = key_variant.to::<GString>().to_string();
             let path = path_variant.to::<GString>();
-
-            if key.is_empty() || path.to_string().is_empty() {
-                godot_warn!("NoiseManager: Skipping empty key or path in noise_resource_paths.");
-                continue;
-            }
-
+            if key.is_empty() || path.to_string().is_empty() { /* ... warning ... */ continue; }
             godot_print!("NoiseManager: Loading noise for key '{}' from path: {}", key, path);
 
-            match loader.load(&path) { // Pass reference
+            match loader.load(&path) {
                 Some(resource) => {
-                    // Pass path by reference if needed later
                     if let Some(params) = self.try_extract_parameters_from_resource(resource, &path) {
-                         cache_writer.insert(key, params);
+                        // --- ADDED: Create and cache the function object ---
+                        let noise_fn_boxed = create_noise_function_from_params(&params);
+                        let noise_fn_arc = Arc::from(noise_fn_boxed); // Convert Box to Arc
+                        funcs_writer.insert(key.clone(), noise_fn_arc); // Store function Arc
+                        // --- END ADDED ---
+
+                        // Store parameters (original logic)
+                        params_writer.insert(key, params);
                     }
                 }
-                None => { // This is the None pattern lint was likely complaining about
-                    godot_error!("NoiseManager: Failed to load resource at path: {}", path);
-                }
+                None => { godot_error!("NoiseManager: Failed to load resource at path: {}", path); }
             }
         }
     }
@@ -102,6 +113,17 @@ impl NoiseManager {
             }
         }
     }
+
+    pub fn get_function_cache_handle(&self) -> Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>> {
+        Arc::clone(&self.noise_functions_cache)
+    }
+
+    pub fn get_noise_function(&self, key: &str) -> Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>> {
+        match self.noise_functions_cache.read() {
+             Ok(cache) => cache.get(key).cloned(), // Clones the Arc, not the function
+             Err(e) => { godot_error!("NoiseManager::get_noise_function - Failed to lock cache: {}", e); None }
+        }
+   }
 
     fn try_extract_parameters_from_resource(&self, resource: Gd<Resource>, path: &GString) -> Option<NoiseParameters> {
         let noise_gd: Option<Gd<FastNoiseLite>> = if resource.is_class("NoiseTexture2D") {

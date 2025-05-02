@@ -14,11 +14,13 @@ connection_timeout_ms = 5000
 [terrain]
 max_threads = 7 # Example: Default based on detection or a sensible value
 chunk_size = 32
-blend_distance = 400.0
+blend_distance = 800.0
 use_parallel_processing = true
 chunk_cache_size = 600
 chunks_per_frame = 4
-render_distance = 2 # Moved from terrain_initializer
+render_distance = 4 # Moved from terrain_initializer
+amplification = 4.0
+mesh_updates_per_frame = 4
 
 [terrain.noise_paths]
 "1" = "res://project/terrain/noise/corralNoise.tres"
@@ -32,3 +34,61 @@ render_distance = 2 # Moved from terrain_initializer
 
 # [custom_settings] # If needed
 # my_custom_value = "example"
+
+# Section definitions
+[[sections]]
+id = 1
+length = 200.0
+transition_zone = 50.0
+possible_biomes = [1, 2]
+point_density = 0.0002
+boundary_noise_key = "perlin_medium"
+
+[[sections]]
+id = 2
+length = 200.0
+transition_zone = 50.0
+possible_biomes = [2, 3, 4]
+point_density = 0.0003
+boundary_noise_key = "perlin_medium"
+
+[[sections]]
+id = 3
+length = 200.0
+transition_zone = 50.0
+possible_biomes = [4, 5]
+point_density = 0.0002
+boundary_noise_key = "perlin_rough"
+
+# Biome definitions
+[[biomes]]
+id = 1
+name = "Coral Reef"
+primary_noise_key = "1"
+texture_params = { roughness = 0.7, metallic = 0.1 }
+
+[[biomes]]
+id = 2
+name = "Sandy Beach"
+primary_noise_key = "2"
+texture_params = { roughness = 0.9, metallic = 0.0 }
+
+[[biomes]]
+id = 3
+name = "Rocky Outcrop"
+primary_noise_key = "3"
+texture_params = { roughness = 0.6, metallic = 0.2 }
+
+[[biomes]]
+id = 4
+name = "Kelp Forest"
+primary_noise_key = "4"
+texture_params = { roughness = 0.5, metallic = 0.1 }
+secondary_noise_keys = ["kelp_detail_noise"]
+
+[[biomes]]
+id = 5
+name = "Volcanic Vents"
+primary_noise_key = "5"
+texture_params = { roughness = 0.6, metallic = 0.3 }
+secondary_noise_keys = ["heat_noise"]

@@ -14,6 +14,7 @@ use crate::bridge::network::NetworkManagerBridge;
 use crate::bridge::event::EventBridge;
 
 
+use crate::bridge::TerrainBridge;
 // Import your managers as Rust modules
 use crate::config::config_manager;
 use crate::core::event_bus;
@@ -64,6 +65,7 @@ pub struct SystemInitializer {
     // config_bridge: Option<Gd<ConfigBridge>>,
     network_bridge: Option<Gd<NetworkManagerBridge>>,
     event_bridge: Option<Gd<EventBridge>>,
+    terrain_bridge: Option<Gd<TerrainBridge>>,
 
     // Core managers with Arc<Mutex> for thread safety
     game_manager: Option<Arc<Mutex<game_manager::GameManager>>>,
@@ -86,6 +88,7 @@ impl SystemInitializer {
             // config_bridge: None,
             network_bridge: None,
             event_bridge: None,
+            terrain_bridge: None,
 
             game_manager: None,
             network_manager: None,
@@ -343,6 +346,10 @@ impl SystemInitializer {
         self.game_bridge.clone()
     }
 
+    pub fn get_terrain_bridge(&self) -> Option<Gd<TerrainBridge>> {
+        self.terrain_bridge.clone()
+    }
+
     /// Get the config bridge
     // pub fn get_config_bridge(&self) -> Option<Gd<ConfigBridge>> {
     //     self.config_bridge.clone()
@@ -389,10 +396,15 @@ impl SystemInitializer {
                 *manager = WorldStateManager::new(WorldStateConfig {
                     seed: 0,
                     world_size: (0, 0),
-                    generation_parameters: Default::default(),
                 });
             }
         }
+
+        if let Some(bridge) = self.terrain_bridge.take() { // Use take() to consume
+            bridge.free();
+        }
+        self.terrain_bridge = None; // Ensure it's None
+
         
         // --- Save Global Configuration ---
         godot_print!("Attempting to save global configuration...");

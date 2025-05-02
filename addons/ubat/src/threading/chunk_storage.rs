@@ -35,25 +35,31 @@ struct IORequest {
 pub struct ChunkData {
     pub position: ChunkPosition,
     pub heightmap: Vec<f32>,
-    pub biome_ids: Vec<u8>,
-    pub mesh_geometry: Option<MeshGeometry>,
+    pub biome_indices: Vec<[u8; 3]>, // Store top 3 biome IDs
+    pub biome_blend_weights: Vec<[f32; 3]>, // Store weights for top 3 (summing to 1.0)
+
+    // pub biome_ids: Vec<u8>, // not used
+    // pub mesh_geometry: Option<MeshGeometry>,
     // Add other data as needed
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct MeshGeometry {
     // Store as plain arrays for easy serialization
     pub vertices: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<i32>,
+    // pub colors: Vec<[f32; 4]>,
+    pub custom0_biome_ids: Vec<[u8; 3]>,     // Top 3 Biome IDs (packed as float x,y,z)
+    pub custom1_biome_weights: Vec<[f32; 3]>, // Top 3 Biome Weights (w1,w2,w3 packed as x,y,z)
 
 }
 
 // ChunkStorage handles saving and loading chunks from disk
 pub struct ChunkStorage {
     save_dir: String,
-    cache: Arc<RwLock<LruCache<ChunkPosition, ChunkData>>>,
+    pub(crate) cache: Arc<RwLock<LruCache<ChunkPosition, ChunkData>>>,
    
     result_sender: Sender<ChunkResult>, // Store a clone of the sender from ChunkManager
     io_request_sender: Option<Sender<IORequest>>, // To send requests TO IO thread
