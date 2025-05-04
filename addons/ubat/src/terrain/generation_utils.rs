@@ -74,9 +74,18 @@ pub fn generate_mesh_geometry(
             geometry.uvs.push([u, v]);
 
             // 3. Custom Data (Biome IDs and Weights)
-            geometry
-                .custom0_biome_ids
-                .push(biome_indices_data[current_index]);
+            
+            // --- Get original 3 IDs ---
+            let biome_ids_3 = biome_indices_data[current_index];
+
+            // --- Create the 4-byte array, padding the 4th component (Alpha channel) ---
+            // You can use 0 or 255 for padding; 0 is common if unused.
+            let biome_ids_4 = [biome_ids_3[0], biome_ids_3[1], biome_ids_3[2], 0u8]; // Padding with 0
+
+            // --- Push the new 4-byte array ---
+            geometry.custom0_biome_ids.push(biome_ids_4); // <-- Pushes [u8; 4]
+
+            // Weights remain the same
             geometry
                 .custom1_biome_weights
                 .push(biome_weights_data[current_index]);
