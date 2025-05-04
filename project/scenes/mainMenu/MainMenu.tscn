@@ -57,6 +57,7 @@ offset_bottom = 55.0
 text = "Ubat"
 
 [node name="StandaloneOptions" type="Panel" parent="."]
+visible = false
 layout_mode = 0
 offset_right = 1200.0
 offset_bottom = 712.0
@@ -124,23 +125,22 @@ value = 1000.0
 
 [node name="Start" type="Button" parent="StandaloneOptions"]
 layout_mode = 0
-offset_left = 976.0
-offset_top = 544.0
+offset_left = 946.0
+offset_top = 514.0
 offset_right = 1048.0
 offset_bottom = 575.0
 text = "Start"
 
 [node name="Back" type="Button" parent="StandaloneOptions"]
 layout_mode = 0
-offset_left = 912.0
-offset_top = 544.0
-offset_right = 957.0
+offset_left = 826.0
+offset_top = 510.0
+offset_right = 913.0
 offset_bottom = 575.0
 text = "Back
 "
 
 [node name="HostOptions" type="Panel" parent="."]
-visible = false
 layout_mode = 0
 offset_right = 1152.0
 offset_bottom = 712.0
@@ -233,21 +233,22 @@ layout_mode = 2
 
 [node name="StartServer" type="Button" parent="HostOptions"]
 layout_mode = 0
-offset_left = 920.0
-offset_top = 544.0
+offset_left = 908.0
+offset_top = 518.0
 offset_right = 1020.0
 offset_bottom = 575.0
 text = "Start Server"
 
 [node name="Back" type="Button" parent="HostOptions"]
 layout_mode = 0
-offset_left = 848.0
-offset_top = 544.0
+offset_left = 814.0
+offset_top = 517.0
 offset_right = 893.0
 offset_bottom = 575.0
 text = "Back"
 
 [node name="ClientOptions" type="Panel" parent="."]
+visible = false
 layout_mode = 0
 offset_right = 1184.0
 offset_bottom = 664.0
@@ -262,8 +263,8 @@ text = "Client"
 
 [node name="Connect" type="Button" parent="ClientOptions"]
 layout_mode = 0
-offset_left = 976.0
-offset_top = 544.0
+offset_left = 944.0
+offset_top = 511.0
 offset_right = 1048.0
 offset_bottom = 575.0
 text = "Connect
@@ -271,9 +272,9 @@ text = "Connect
 
 [node name="Back" type="Button" parent="ClientOptions"]
 layout_mode = 0
-offset_left = 912.0
-offset_top = 544.0
-offset_right = 957.0
+offset_left = 827.0
+offset_top = 509.0
+offset_right = 912.0
 offset_bottom = 575.0
 text = "Back
 "
