@@ -10,6 +10,7 @@ use crate::terrain::section::layout::calculate_section_weights;
 use crate::terrain::noise::noise_manager::NoiseManager;
 use crate::terrain::chunk_manager::ChunkResult;
 use noise::NoiseFn;
+use crate::terrain::terrain_config::TerrainConfigManager; // To get runtimeconfig
 
 use std::fmt;
 
@@ -28,6 +29,7 @@ pub struct ThreadSafeSectionData {
     pub biome_blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
     pub biome_blend_distance: f32,
     pub section_blend_distance: f32,
+    pub blend_noise_strength: f32,
 }
 
 impl ThreadSafeSectionData {
@@ -40,6 +42,12 @@ impl ThreadSafeSectionData {
             Some(Arc::new(grid.clone()))
         } else {
             None
+        };
+        let blend_noise_strength = if let Ok(guard) = TerrainConfigManager::get_config().read() {
+            guard.blend_noise_strength
+        } else {
+            eprint!("Failed to read terrain config for blend_noise_strength. Using default 0.25");
+            0.25f32 // Default value if lock fails
         };
         
         Self {
@@ -54,6 +62,7 @@ impl ThreadSafeSectionData {
             biome_blend_noise_fn: biome_blend_noise,
             biome_blend_distance: manager.get_biome_blend_distance(),
             section_blend_distance: manager.get_section_blend_distance(),
+            blend_noise_strength,
         }
     }    
     
@@ -90,16 +99,16 @@ impl ThreadSafeSectionData {
             let log_no_grid = format!("  WARNING: No grid or points available, using section fallback.");
             let _ = sender.send(ChunkResult::LogMessage(log_no_grid));
             // ... (existing fallback logic using first biome of section) ...
-             for (section_id, section_weight) in &section_weights {
-                 if let Some(section) = self.sections.iter().find(|s| s.id == *section_id) {
-                     if let Some(&biome_id) = section.possible_biomes.first() {
-                         *final_biome_weights.entry(biome_id).or_insert(0.0) += section_weight;
-                     }
-                 }
-             }
-             let mut result: Vec<(u8, f32)> = final_biome_weights.into_iter().collect();
-             result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-             return result;
+            for (section_id, section_weight) in &section_weights {
+                if let Some(section) = self.sections.iter().find(|s| s.id == *section_id) {
+                    if let Some(&biome_id) = section.possible_biomes.first() {
+                        *final_biome_weights.entry(biome_id).or_insert(0.0) += section_weight;
+                    }
+                }
+            }
+            let mut result: Vec<(u8, f32)> = final_biome_weights.into_iter().collect();
+            result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            return result;
         }
 
         // Step 4: For each weighted section, find *all* points within radius and calculate falloff weights
@@ -259,6 +268,7 @@ impl fmt::Debug for ThreadSafeSectionData {
             .field("has_biome_blend_noise", &self.biome_blend_noise_fn.is_some())
             .field("biome_blend_distance", &self.biome_blend_distance)
             .field("section_blend_distance", &self.section_blend_distance)
+            .field("blend_noise_strength", &self.blend_noise_strength)
             .finish()
     }
 }
