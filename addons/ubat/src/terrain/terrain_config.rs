@@ -28,6 +28,7 @@ pub struct TerrainConfig {
     pub render_distance: i32,
     pub amplification: f64,
     pub mesh_updates_per_frame: usize, 
+    pub blend_noise_strength: f32,
 }
 
 // Default implementation for TerrainConfig (RUNTIME defaults, used if init fails)
@@ -46,6 +47,7 @@ impl Default for TerrainConfig {
             render_distance: 4,
             amplification: 1.0,
             mesh_updates_per_frame: 4, 
+            blend_noise_strength: 0.25,
         }
     }
 }
@@ -76,6 +78,7 @@ fn internal_init_terrain_config() -> Arc<RwLock<TerrainConfig>> {
         render_distance: initial_data.render_distance,
         amplification: initial_data.amplification,
         mesh_updates_per_frame: initial_data.mesh_updates_per_frame,
+        blend_noise_strength: initial_data.blend_noise_strength,
     };
     godot_print!("Created runtime TerrainConfig: {:?}", runtime_config);
 
