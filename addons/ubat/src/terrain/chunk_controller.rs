@@ -6,9 +6,10 @@ use godot::classes::{
     // REMOVE this or keep commented out: mesh::PrimitiveType,
     // rendering_seMesrver::PrimitiveType, // TRY THIS PATH for the enum
     // REMOVE mesh::ArrayFormat, // Don't import the enum itself
-    ArrayMesh, MeshInstance3D, SurfaceTool, Material, ShaderMaterial, RenderingServer, ResourceLoader, Mesh, World3D, Node
+    ArrayMesh, MeshInstance3D, SurfaceTool, Material, ShaderMaterial, StandardMaterial3D, RenderingServer, ResourceLoader, Mesh, World3D, Node
 };
 use godot::classes::mesh::{PrimitiveType, ArrayFormat, ArrayCustomFormat, ArrayType};
+use godot::classes::surface_tool::CustomFormat;
 
 use godot::classes::rendering_server::ArrayFormat as RSArrayFormat;
 
@@ -503,38 +504,55 @@ impl ChunkController {
         }).clone();
 
         // --- 2. Prepare Interleaved Vertex Data Buffer ---
-        let mut vertex_byte_vec: Vec<u8> = Vec::new(); // Capacity calculation is complex, let it grow
-        let mut min_point = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-        let mut max_point = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
-
+        let mut mesh_resource = ArrayMesh::new_gd();
+        let mut surface_tool = SurfaceTool::new_gd();
+        
+        surface_tool.begin(PrimitiveType::TRIANGLES);
+        
+        // Set custom format attributes
+        surface_tool.set_custom_format(0, CustomFormat::RGBA8_UNORM);  // For biome IDs
+        surface_tool.set_custom_format(1, CustomFormat::RGBA_FLOAT);   // For biome weights
+        
+        // Add vertex data one by one
         for i in 0..vertex_count {
-            let start_len = vertex_byte_vec.len();
 
-            // Position (Vector3 = 12 bytes)
-            let v = Vector3::new(geometry.vertices[i][0], geometry.vertices[i][1], geometry.vertices[i][2]);
-            vertex_byte_vec.extend_from_slice(&v.x.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&v.y.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&v.z.to_le_bytes());
+            // Inside your vertex loop, add this near the beginning:
+            if i < 5 || i % 500 == 0 {  // Only log a few samples
+                godot_print!(
+                    "Vertex {}: Position: [{:.1}, {:.1}, {:.1}], Biome IDs: [{}, {}, {}], Weights: [{:.2}, {:.2}, {:.2}]",
+                    i,
+                    geometry.vertices[i][0], 
+                    geometry.vertices[i][1], 
+                    geometry.vertices[i][2],
+                    geometry.custom0_biome_ids[i][0],
+                    geometry.custom0_biome_ids[i][1], 
+                    geometry.custom0_biome_ids[i][2],
+                    geometry.custom1_biome_weights[i][0],
+                    geometry.custom1_biome_weights[i][1],
+                    geometry.custom1_biome_weights[i][2]
+                );
+            }
 
-            // Update AABB
-            min_point.x = min_point.x.min(v.x);
-            min_point.y = min_point.y.min(v.y);
-            min_point.z = min_point.z.min(v.z);
-            max_point.x = max_point.x.max(v.x);
-            max_point.y = max_point.y.max(v.y);
-            max_point.z = max_point.z.max(v.z);
-
-            // Normal (Vector3 = 12 bytes)
-            let n = Vector3::new(geometry.normals[i][0], geometry.normals[i][1], geometry.normals[i][2]);
-            vertex_byte_vec.extend_from_slice(&n.x.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&n.y.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&n.z.to_le_bytes());
-
-            // Color (Color = 4x f32 = 16 bytes)
+            // Position
+            let position = Vector3::new(
+                geometry.vertices[i][0], 
+                geometry.vertices[i][1], 
+                geometry.vertices[i][2]
+            );
+            
+            // Normal
+            let normal = Vector3::new(
+                geometry.normals[i][0], 
+                geometry.normals[i][1], 
+                geometry.normals[i][2]
+            );
+            surface_tool.set_normal(normal);
+            
+            // Color (for debug mode)
             let height = geometry.vertices[i][1];
             let vertex_color = match self.debug_mode {
                 DEBUG_MODE_HEIGHT => {
-                    let normalized_height = (height / 100.0).clamp(0.0, 1.0); // Use f32
+                    let normalized_height = (height / 100.0).clamp(0.0, 1.0);
                     Color::from_hsv(
                         (0.6 - (normalized_height * 0.6)) as f64,
                         0.8,
@@ -542,61 +560,78 @@ impl ChunkController {
                     )
                 },
                 DEBUG_MODE_BIOME_ID => {
-                    let biome_id = geometry.custom0_biome_ids[i][0] as f32; // Assuming first byte is main ID
+                    let biome_id = geometry.custom0_biome_ids[i][0] as f32;
                     let hue = (biome_id / 20.0) % 1.0;
                     Color::from_hsv(hue as f64, 0.8, 0.8)
                 },
                 _ => Color::WHITE
             };
-            vertex_byte_vec.extend_from_slice(&vertex_color.r.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&vertex_color.g.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&vertex_color.b.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&vertex_color.a.to_le_bytes());
-
-            // UV (Vector2 = 8 bytes)
-            let uv = Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]);
-            vertex_byte_vec.extend_from_slice(&uv.x.to_le_bytes());
-            vertex_byte_vec.extend_from_slice(&uv.y.to_le_bytes());
-
-            // Custom0 (Assuming [u8; 4] matching ARRAY_CUSTOM_FORMAT_RGBA8_UNORM = 4 bytes)
-            vertex_byte_vec.extend_from_slice(&geometry.custom0_biome_ids[i]);
-
-            // Custom1 (Assuming [f32; 3] + padding, matching ARRAY_CUSTOM_FORMAT_RGBA32F = 16 bytes)
-            let biome_weights = geometry.custom1_biome_weights[i];
-            vertex_byte_vec.extend_from_slice(&biome_weights[0].to_le_bytes()); // Weight 0
-            vertex_byte_vec.extend_from_slice(&biome_weights[1].to_le_bytes()); // Weight 1
-            vertex_byte_vec.extend_from_slice(&biome_weights[2].to_le_bytes()); // Weight 2
-            vertex_byte_vec.extend_from_slice(&0.0f32.to_le_bytes());          // Padding (4th float)
+            surface_tool.set_color(vertex_color);
             
-            let end_len = vertex_byte_vec.len();
-            if end_len - start_len != 68 {
-                godot_error!("Stride mismatch at index {}: Added {} bytes, expected 68", i, end_len - start_len);
-                // Optional: Print sizes of individual components added in this iteration
-                // godot_print!("  custom0 size: {}", geometry.custom0_biome_ids[i].len());
-            }
+            // UV
+            let uv = Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]);
+            surface_tool.set_uv(uv);
+            
+            // Custom0 - Biome IDs
+            let custom0 = Color::from_rgba8(
+                geometry.custom0_biome_ids[i][0],
+                geometry.custom0_biome_ids[i][1],
+                geometry.custom0_biome_ids[i][2],
+                geometry.custom0_biome_ids[i][3]
+            );
+            surface_tool.set_custom(0, custom0);
+            
+            // Custom1 - Biome weights
+            let custom1 = Color::from_rgba(
+                geometry.custom1_biome_weights[i][0],
+                geometry.custom1_biome_weights[i][1], 
+                geometry.custom1_biome_weights[i][2],
+                0.0 // Padding
+            );
+            surface_tool.set_custom(1, custom1);
+            
+            // Add this vertex
+            surface_tool.add_vertex(position);
         }
         
-        // Handle case with no vertices for AABB
-        if vertex_count == 0 {
-            min_point = Vector3::ZERO;
-            max_point = Vector3::ZERO;
+        // Add indices (triangles)
+        for idx in &geometry.indices {
+            surface_tool.add_index(*idx);
         }
-        let surface_aabb = Aabb::from_corners(min_point, max_point);
         
-        let vertex_byte_array: PackedByteArray = vertex_byte_vec.into();
-
-        if vertex_byte_array.len() != vertex_count as usize * 68 {
-            godot_error!("Final buffer size incorrect! Size: {}, Expected: {}", vertex_byte_array.len(), vertex_count as usize * 68);
-        }       
+        // Commit to mesh
+        let committed_mesh = surface_tool.commit().expect("Failed to commit mesh");
 
         // --- 3. Prepare Index Buffer ---
-        let mut index_byte_vec: Vec<u8> = Vec::with_capacity(index_count * 4); // Indices are usually u32
-        for &idx in &geometry.indices {
-            // Godot typically uses 32-bit indices
-            index_byte_vec.extend_from_slice(&(idx as u32).to_le_bytes());
-        }
-        let index_byte_array: PackedByteArray = index_byte_vec.into();
+        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
 
+        // Use the committed mesh from surface_tool
+        mesh_instance.set_mesh(&committed_mesh.upcast::<Mesh>());
+
+        // TEMPORARY DEBUGGING: Use a basic material to test mesh geometry
+        // let mut simple_material = StandardMaterial3D::new_gd();
+        // simple_material.set_albedo(Color::from_rgb(0.2, 0.8, 0.3)); // Green
+        // mesh_instance.set_surface_override_material(0, &simple_material.upcast::<Material>());
+
+        // Apply material and shader parameters  
+        Self::apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
+
+        let world_pos = Vector3::new(
+            pos.x as f32 * self.chunk_size as f32,
+            0.0,
+            pos.z as f32 * self.chunk_size as f32,
+        );
+        mesh_instance.set_position(world_pos);
+
+        if !mesh_instance.is_visible() {
+            mesh_instance.show();
+        }
+
+        // Add to scene if new
+        if is_new_instance {
+            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+        }
+    
         // --- 4. Define Correct Vertex Format Bitmask ---
         godot_print!("Vertex Ord: {}", RSArrayFormat::VERTEX.ord());
         godot_print!("Normal Ord: {}", RSArrayFormat::NORMAL.ord());
@@ -640,90 +675,6 @@ impl ChunkController {
         format |= ARRAY_CUSTOM_FORMAT_RGBA32F << ARRAY_FORMAT_CUSTOM1_SHIFT;
 
         godot_print!("Final format mask: {}", format); // Debug print
-
-        // ---> GET THE SIZE **BEFORE** MOVING THE ARRAY <--- used for debugging
-        let actual_byte_array_size = vertex_byte_array.len();
-
-        // --- 5. Create Parameter Dictionary ---
-        let mut surface_params = Dictionary::new();
-        surface_params.insert("primitive", PrimitiveType::TRIANGLES.ord() as i32); // Use i32
-        surface_params.insert("format", format as i32); // The calculated bitmask
-        surface_params.insert("vertex_data", vertex_byte_array); // Single interleaved buffer
-        surface_params.insert("vertex_count", vertex_count as i64);
-        surface_params.insert("index_data", index_byte_array);   // Separate index buffer
-        surface_params.insert("index_count", index_count as i64);
-        surface_params.insert("aabb", surface_aabb);
-        // Optional: Add default empty arrays/dictionaries if strictly needed by API
-        // surface_params.insert("blend_shapes", VariantArray::new());
-        // surface_params.insert("lods", Dictionary::new());
-        // surface_params.insert("flags", 0u32); // Use 0 for flags unless specific ones are needed
-
-        // --- 6. Use RenderingServer to Add Surface ---
-        let mut rs = RenderingServer::singleton();
-        // Ensure mesh_resource is created or retrieved correctly
-        // If updating, get existing RID. If new, create ArrayMesh and get RID.
-        let mut mesh_resource: Gd<ArrayMesh>;
-        if let Some(existing_mesh) = mesh_instance.get_mesh() {
-             // Attempt to cast to ArrayMesh, clone if successful
-             if let Ok(am) = existing_mesh.try_cast::<ArrayMesh>() {
-                mesh_resource = am; // Use existing
-                // Clear previous surfaces before adding new one
-                rs.mesh_clear(mesh_resource.get_rid());
-             } else {
-                // If it's not an ArrayMesh or cast fails, create a new one
-                godot_warn!("Existing mesh was not an ArrayMesh, creating new one.");
-                mesh_resource = ArrayMesh::new_gd();
-                mesh_instance.set_mesh(&mesh_resource.clone().upcast::<Mesh>()); // Assign new mesh
-                // No need to clear, it's new
-             }
-        } else {
-            // No mesh existed, create a new one
-            mesh_resource = ArrayMesh::new_gd();
-            mesh_instance.set_mesh(&mesh_resource.clone().upcast::<Mesh>()); // Assign new mesh
-            // No need to clear, it's new
-        }
-
-        let mesh_rid = mesh_resource.get_rid();
-
-        let actual_vertex_count = geometry.vertices.len();
-        let vertex_count_passed = vertex_count as i64; // Assuming vertex_count IS geometry.vertices.len()
-
-        godot_print!("Passing to mesh_add_surface:");
-        godot_print!("  vertex_count key: {}", vertex_count_passed);
-        godot_print!("  actual geometry.vertices.len(): {}", actual_vertex_count);
-        // ---> USE THE PRE-CALCULATED SIZE HERE <---
-        godot_print!("  vertex_byte_array size: {}", actual_byte_array_size);
-        godot_print!("  Expected byte array size (if stride=68): {}", actual_vertex_count as i64 * 68);
-        godot_print!("  Format mask value: {}", surface_params.get("format").unwrap_or_default().try_to::<i64>().unwrap_or(-1));
-
-
-        // Call mesh_add_surface with RID and Dictionary
-        rs.mesh_add_surface(
-            mesh_rid,
-            &surface_params // Pass the dictionary
-        );
-        // Check RenderingServer errors in the Godot output/debugger after this call
-
-        // --- 7. Set Material, Position, etc. ---
-        // This should now work as surface 0 exists (assuming rs.mesh_add_surface succeeded)
-        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
-        Self::apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
-
-        if is_new_instance {
-            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
-        }
-
-        let world_pos = Vector3::new(
-            pos.x as f32 * self.chunk_size as f32,
-            0.0,
-            pos.z as f32 * self.chunk_size as f32,
-        );
-        mesh_instance.set_position(world_pos);
-
-        if !mesh_instance.is_visible() {
-            mesh_instance.show();
-        }
-        // Mesh is now stored in self.chunk_meshes via the entry API earlier
     }
     
 
@@ -793,13 +744,13 @@ impl ChunkController {
             if let Some(pos) = self.mesh_creation_queue.front().cloned() { // Clone position to check
                 // --- Get ChunkManager Gd and Bind *inside* loop iteration ---
                 let needs_processing: bool = if let Some(manager_gd) = &self.chunk_manager {
-                    let chunk_manager_bind = manager_gd.bind(); // Borrow manager shortly
-                    chunk_manager_bind.is_chunk_ready(pos.x, pos.z)
-                        && !self.chunk_meshes.contains_key(&pos) // Check self immutably
-                        && !self.mesh_removal_queue.contains(&pos) // Check self immutably
-                    // chunk_manager_bind borrow ends here
+                    // Use bind() more efficiently by collecting all needed data at once
+                    let is_chunk_ready = manager_gd.bind().is_chunk_ready(pos.x, pos.z);
+                    is_chunk_ready
+                        && !self.chunk_meshes.contains_key(&pos)
+                        && !self.mesh_removal_queue.contains(&pos)
                 } else {
-                    false // No manager, cannot process
+                    false
                 };
 
                 if needs_processing {
