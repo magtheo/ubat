@@ -10,6 +10,7 @@ use crate::terrain::section::distribution::{generate_voronoi_points_for_section,
 use crate::terrain::section::sectionConfig;
 use crate::terrain::section::thread_safe_data::ThreadSafeSectionData;
 use crate::terrain::noise::noise_manager::NoiseManager;
+use crate::terrain::terrain_config::TerrainConfigManager;
 
 /// SectionManager is a Godot node responsible for managing sections and biomes.
 /// It replaces the previous image-based BiomeManager with a procedural system.
@@ -43,12 +44,13 @@ impl INode for SectionManager {
             voronoi_points: Vec::new(),
             spatial_grid: None,
             
-            world_length: 0.0,
-            world_width: 10000.0, // Default width
+            world_length: 1000.0, // Placeholder/Default - Set by set_world_dimensions
+
+            world_width: 10000.0, // Placeholder/Default - Set by set_world_dimensions
             world_seed: 0,
             
             initialized: false,
-            biome_blend_distance: 300.0, // Default blend distance
+            biome_blend_distance: 300.0, // Default, overwritten later
             section_blend_distance: 300.0, // Default section blend
         }
     }
@@ -74,6 +76,20 @@ impl SectionManager {
         // Use types directly, assuming they are imported via `use` statements
         let mut sections_config: Vec<SectionTomlConfig> = Vec::new();
         let mut biomes_config: Vec<BiomeTomlConfig> = Vec::new();
+
+        godot_print!("SectionManager::initialize - About to generate Voronoi points.");
+        godot_print!("  Effective self.world_width = {}", self.world_width);
+        godot_print!("  Effective self.world_length = {}", self.world_length); // This should be sum of TOML section lengths
+        godot_print!("  Effective self.world_seed = {}", self.world_seed);
+        godot_print!("  Effective self.biome_blend_distance = {}", self.biome_blend_distance);
+
+        // <<< ADDED >>> Reset state at the beginning
+        self.sections.clear();
+        self.biomes.clear();
+        self.voronoi_points.clear();
+        self.spatial_grid = None;
+        self.initialized = false;
+        self.world_seed = world_seed;
 
         // --- Process sections config ---
         match sections_config_var.try_to::<VariantArray>() {
@@ -286,43 +302,68 @@ impl SectionManager {
         // --- Process Sections into Definitions ---
         let mut current_position = 0.0;
         let mut total_length = 0.0;
+        let mut total_length_from_toml = 0.0;
 
-        for section_config in sections_config {
-            let boundary_noise_fn = section_config.boundary_noise_key.as_deref()
-                .and_then(|key| {
-                    // Pass &str to get_noise_function
-                    match nm_bind.get_noise_function(key) {
-                        Some(func) => Some(func),
-                        None => {
-                            godot_warn!("SectionManager: Boundary noise function '{}' not found for section ID: {}. Section will have no boundary noise.", key, section_config.id);
-                            None
-                        }
-                    }
-                });
-
-            // Create SectionDefinition (ensure its definition uses u8 for id and Vec<u8> for possible_biomes)
-            let section_def = SectionDefinition::new(
-                section_config.id, // id is already u8 from parsing
-                current_position,
-                section_config.length,
-                section_config.transition_zone,
-                section_config.possible_biomes, // possible_biomes is already Vec<u8> from parsing
-                section_config.point_density,
-                boundary_noise_fn,
-            );
-            self.sections.push(section_def);
-
-            current_position += section_config.length;
-            total_length += section_config.length;
+        for section_config in &sections_config { // Iterate over ref first to get total length
+            total_length_from_toml += section_config.length;
         }
 
-        self.world_length = total_length;
+        // <<< MODIFIED >>> Determine scaling factor based on pre-set self.world_length vs TOML sum
+        let length_scale_factor = if total_length_from_toml > 1e-5 && (self.world_length - total_length_from_toml).abs() > 1.0 {
+            godot_warn!(
+                "SectionManager::initialize - World length from config ({}) differs from sum of section lengths ({}). Rescaling sections.",
+                self.world_length, total_length_from_toml
+            );
+            self.world_length / total_length_from_toml // Rescale to fit global config height
+        } else {
+            // If lengths match or TOML sum is zero, don't scale. If lengths didn't match, world_length might be adjusted below.
+            if total_length_from_toml > 1e-5 && self.world_length < 1.0 {
+                 // If world_length wasn't set properly beforehand, use the TOML sum
+                 godot_warn!("SectionManager::initialize - Pre-set world_length ({}) seems invalid. Using sum of TOML section lengths ({}) instead.", self.world_length, total_length_from_toml);
+                 self.world_length = total_length_from_toml;
+            } else if total_length_from_toml < 1e-5 {
+                 godot_warn!("SectionManager::initialize - Sum of TOML section lengths is zero. Cannot determine scale factor.");
+            }
+            1.0 // Default to no scaling
+        };
+        godot_print!("SectionManager::initialize - Using length scale factor: {}", length_scale_factor);
+
+        for section_config_item in &sections_config { // Iterate over ref
+            let boundary_noise_fn = section_config_item.boundary_noise_key.as_deref()
+                .and_then(|key| nm_bind.get_noise_function(key));
+
+            let scaled_length = section_config_item.length * length_scale_factor;
+            let scaled_transition = (section_config_item.transition_zone * length_scale_factor).min(scaled_length * 0.99).max(0.0);
+
+            let section_def = SectionDefinition::new(
+                section_config_item.id, current_position, scaled_length, scaled_transition,
+                section_config_item.possible_biomes.clone(), section_config_item.point_density, boundary_noise_fn,
+            );
+            self.sections.push(section_def);
+            current_position += scaled_length;
+        }
+        // If scaling occurred, current_position should now closely match self.world_length
+        godot_print!("  Created {} SectionDefinitions. Final calculated end position of last section: {}", self.sections.len(), current_position);
+
+
+        // --- Set Blend Distance and Generate Points ---
+        if let Ok(tc_guard) = TerrainConfigManager::get_config().read() {
+            self.biome_blend_distance = tc_guard.blend_distance;
+            godot_print!("  Set Biome Blend Distance from config: {}", self.biome_blend_distance);
+        } else {
+            godot_error!("  Failed to read TerrainConfig for blend_distance! Using default: {}", self.biome_blend_distance);
+        }
+
+        godot_print!("SectionManager::initialize - FINAL CHECK Before Generating Voronoi Points:");
+        godot_print!("  World Width = {}", self.world_width);
+        godot_print!("  World Length = {}", self.world_length); // This is now the definitive length
+        godot_print!("  World Seed = {}", self.world_seed);
+        godot_print!("  Biome Blend Distance = {}", self.biome_blend_distance);
 
         self.generate_voronoi_points();
 
         self.initialized = true;
-        godot_print!("SectionManager: Initialization complete. World length: {}", self.world_length);
-
+        godot_print!("SectionManager: Initialization complete.");
         true
     }
     
