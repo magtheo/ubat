@@ -6,9 +6,10 @@ use godot::classes::{
     // REMOVE this or keep commented out: mesh::PrimitiveType,
     // rendering_seMesrver::PrimitiveType, // TRY THIS PATH for the enum
     // REMOVE mesh::ArrayFormat, // Don't import the enum itself
-    ArrayMesh, MeshInstance3D, SurfaceTool, Material, ShaderMaterial, RenderingServer, ResourceLoader, Mesh, World3D, Node
+    ArrayMesh, MeshInstance3D, SurfaceTool, Material, ShaderMaterial, StandardMaterial3D, RenderingServer, ResourceLoader, Mesh, World3D, Node
 };
 use godot::classes::mesh::{PrimitiveType, ArrayFormat, ArrayCustomFormat, ArrayType};
+use godot::classes::surface_tool::CustomFormat;
 
 use godot::classes::rendering_server::ArrayFormat as RSArrayFormat;
 
@@ -33,10 +34,19 @@ const DEBUG_MODE_HEIGHT: i32 = 1;
 const DEBUG_MODE_BIOME_ID: i32 = 2;
 // Add more constants if you add more modes
 
-const ARRAY_CUSTOM_FORMAT_RGBA8_UNORM: i64 = 0; // Placeholder - Find actual value
-const ARRAY_CUSTOM_FORMAT_RGBA32F: i64 = 7; // Placeholder - Find actual value
-const ARRAY_FORMAT_CUSTOM0_SHIFT: i64 = 13;   // Placeholder - Find actual value (RS::ARRAY_FORMAT_CUSTOM_BASE_SHIFT + 0)
-const ARRAY_FORMAT_CUSTOM1_SHIFT: i64 = 16;   // Placeholder - Find actual value (RS::ARRAY_FORMAT_CUSTOM_BASE_SHIFT + 1)
+const ARRAY_CUSTOM_FORMAT_RGBA8_UNORM: i64 = 1; // WAS: ArrayCustomFormat::RGBA8_UNORM.ord() as i64;
+const ARRAY_CUSTOM_FORMAT_RGBA32F: i64 = 6;   // WAS: ArrayCustomFormat::RGBA_FLOAT.ord() as i64;
+
+const ARRAY_FORMAT_CUSTOM_BASE_SHIFT: i64 = 16;
+const ARRAY_FORMAT_CUSTOM_BITS: i64 = 3;
+
+const ARRAY_FORMAT_CUSTOM0_SHIFT: i64 = ARRAY_FORMAT_CUSTOM_BASE_SHIFT + ARRAY_FORMAT_CUSTOM_BITS * 0; // 16
+const ARRAY_FORMAT_CUSTOM1_SHIFT: i64 = ARRAY_FORMAT_CUSTOM_BASE_SHIFT + ARRAY_FORMAT_CUSTOM_BITS * 1; // 19
+
+// const ARRAY_CUSTOM_FORMAT_RGBA8_UNORM: i64 = 0; // Placeholder - Find actual value
+// const ARRAY_CUSTOM_FORMAT_RGBA32F: i64 = 7; // Placeholder - Find actual value
+// const ARRAY_FORMAT_CUSTOM0_SHIFT: i64 = 13;   // Placeholder - Find actual value (RS::ARRAY_FORMAT_CUSTOM_BASE_SHIFT + 0)
+// const ARRAY_FORMAT_CUSTOM1_SHIFT: i64 = 16;   // Placeholder - Find actual value (RS::ARRAY_FORMAT_CUSTOM_BASE_SHIFT + 1)
 
 
 
@@ -454,245 +464,157 @@ impl ChunkController {
     /// This function performs only Godot API calls and MUST run on the main thread.
     fn apply_mesh_data_to_instance(&mut self, pos: ChunkPosition, geometry: &MeshGeometry) {
         // --- Basic Geometry Validation ---
-        if geometry.vertices.is_empty() {
-            godot_warn!("Apply Mesh: Empty vertices for chunk {:?}, skipping mesh creation.", pos);
-            // If an old mesh existed, remove it
+        if geometry.vertices.is_empty() || geometry.indices.is_empty() {
+            godot_warn!("Apply Mesh: Empty vertices or indices for chunk {:?}, skipping.", pos);
             if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                if mesh_instance.is_instance_valid() {
-                    mesh_instance.queue_free();
-                }
+                if mesh_instance.is_instance_valid() { mesh_instance.queue_free(); }
             }
             return;
         }
-         // --- Extended Validation (Check all required arrays) ---
+
         let vertex_count = geometry.vertices.len();
-        if geometry.indices.is_empty() || geometry.normals.len() != vertex_count ||
-           geometry.uvs.len() != vertex_count || geometry.custom0_biome_ids.len() != vertex_count ||
-           geometry.custom1_biome_weights.len() != vertex_count {
+        let index_count = geometry.indices.len();
+
+        // --- Extended Validation ---
+        if geometry.normals.len() != vertex_count ||
+            geometry.uvs.len() != vertex_count ||
+            geometry.custom0_biome_ids.len() != vertex_count || // Expects [u8; 4] per vertex
+            geometry.custom1_biome_weights.len() != vertex_count // Expects [f32; 3] or similar per vertex
+        {
             godot_error!(
-                "Apply Mesh: Direct Array - Geometry data missing or attribute length mismatch for chunk {:?}. Vertices: {}, Indices: {}, Normals: {}, UVs: {}, Custom0: {}, Custom1: {}",
-                pos, vertex_count, geometry.indices.len(), geometry.normals.len(), geometry.uvs.len(), geometry.custom0_biome_ids.len(), geometry.custom1_biome_weights.len()
+                "Apply Mesh: Attribute length mismatch for chunk {:?}. Vertices: {}, Indices: {}, Normals: {}, UVs: {}, Custom0: {}, Custom1: {}",
+                pos, vertex_count, index_count, geometry.normals.len(), geometry.uvs.len(), geometry.custom0_biome_ids.len(), geometry.custom1_biome_weights.len()
             );
-             // Optionally remove existing mesh if data is invalid
-             if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                 if mesh_instance.is_instance_valid() {
-                     mesh_instance.queue_free();
-                 }
-             }
+            if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
+                if mesh_instance.is_instance_valid() { mesh_instance.queue_free(); }
+            }
             return;
         }
         // --- End Validation ---
 
         // --- 1. Get or Create MeshInstance3D ---
+        // (Keep your existing logic for getting/creating MeshInstance3D)
         let mut is_new_instance = false;
         let mesh_instance_entry = self.chunk_meshes.entry(pos);
         let mut mesh_instance = mesh_instance_entry.or_insert_with(|| {
             is_new_instance = true;
             let mut inst = MeshInstance3D::new_alloc();
-            let gstring_name = GString::from(format!("ChunkMesh_{},{}", pos.x, pos.z));
-            inst.set_name(&gstring_name); // Pass reference
+            inst.set_name(&GString::from(format!("ChunkMesh_{},{}", pos.x, pos.z)));
             inst
-        }).clone(); // Clone Gd after retrieving/inserting via entry API
+        }).clone();
 
-
-        // --- 2. Prepare PackedArrays using ::new() ---
-        let mut vertices = PackedVector3Array::new();
-        let mut normals = PackedVector3Array::new();
-        let mut uvs = PackedVector2Array::new();
-        let mut colors = PackedColorArray::new();
-        let mut indices = PackedInt32Array::new(); // Initialize indices array here
-        let mut custom0_bytes_vec: Vec<u8> = Vec::with_capacity(vertex_count * 4);
-        let mut custom1_bytes_vec: Vec<u8> = Vec::with_capacity(vertex_count * 16);
-
-        // --- 3. Populate PackedArrays (Main Loop) ---
+        // --- 2. Prepare Interleaved Vertex Data Buffer ---
+        let mut mesh_resource = ArrayMesh::new_gd();
+        let mut surface_tool = SurfaceTool::new_gd();
+        
+        surface_tool.begin(PrimitiveType::TRIANGLES);
+        
+        // Set custom format attributes
+        surface_tool.set_custom_format(0, CustomFormat::RGBA8_UNORM);  // For biome IDs
+        surface_tool.set_custom_format(1, CustomFormat::RGBA_FLOAT);   // For biome weights
+        
+        // Add vertex data one by one
         for i in 0..vertex_count {
-            vertices.push(Vector3::new(geometry.vertices[i][0], geometry.vertices[i][1], geometry.vertices[i][2]));
-            normals.push(Vector3::new(geometry.normals[i][0], geometry.normals[i][1], geometry.normals[i][2]));
-            uvs.push(Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]));
 
-            // Pack CUSTOM0 bytes
-            // Pack CUSTOM0 bytes (Assuming [u8; 4])
-            custom0_bytes_vec.extend_from_slice(&geometry.custom0_biome_ids[i]);
-            // let biome_ids = geometry.custom0_biome_ids[i];
-            // custom0_bytes_vec.extend_from_slice(&biome_ids); // Assuming biome_ids is [u8; 3]
-            // custom0_bytes_vec.push(0); // Padding byte
+            // Inside your vertex loop, add this near the beginning:
+            if i < 5 || i % 500 == 0 {  // Only log a few samples
+                godot_print!(
+                    "Vertex {}: Position: [{:.1}, {:.1}, {:.1}], Biome IDs: [{}, {}, {}], Weights: [{:.2}, {:.2}, {:.2}]",
+                    i,
+                    geometry.vertices[i][0], 
+                    geometry.vertices[i][1], 
+                    geometry.vertices[i][2],
+                    geometry.custom0_biome_ids[i][0],
+                    geometry.custom0_biome_ids[i][1], 
+                    geometry.custom0_biome_ids[i][2],
+                    geometry.custom1_biome_weights[i][0],
+                    geometry.custom1_biome_weights[i][1],
+                    geometry.custom1_biome_weights[i][2]
+                );
+            }
 
-            // Pack CUSTOM1 bytes
-            let biome_weights = geometry.custom1_biome_weights[i];
-            custom1_bytes_vec.extend_from_slice(&biome_weights[0].to_le_bytes()); // Bytes 0-3
-            custom1_bytes_vec.extend_from_slice(&biome_weights[1].to_le_bytes()); // Bytes 4-7
-            custom1_bytes_vec.extend_from_slice(&biome_weights[2].to_le_bytes()); // Bytes 8-11
+            // Position
+            let position = Vector3::new(
+                geometry.vertices[i][0], 
+                geometry.vertices[i][1], 
+                geometry.vertices[i][2]
+            );
             
-            // Manually add 4 bytes of padding (as 0.0 float) to make it 16 bytes total
-            custom1_bytes_vec.extend_from_slice(&0.0f32.to_le_bytes());          // 12-16
-
-            // Calculate Vertex Colors
+            // Normal
+            let normal = Vector3::new(
+                geometry.normals[i][0], 
+                geometry.normals[i][1], 
+                geometry.normals[i][2]
+            );
+            surface_tool.set_normal(normal);
+            
+            // Color (for debug mode)
             let height = geometry.vertices[i][1];
             let vertex_color = match self.debug_mode {
                 DEBUG_MODE_HEIGHT => {
-                    // Heights-based visualization (implement with proper return value)
-                    let normalized_height = (height / 100.0).clamp(0.0, 1.0) as f64;
+                    let normalized_height = (height / 100.0).clamp(0.0, 1.0);
                     Color::from_hsv(
-                        0.6 - (normalized_height * 0.6) as f64, // Blue to red
+                        (0.6 - (normalized_height * 0.6)) as f64,
                         0.8,
-                        0.5 + (normalized_height * 0.5) as f64
+                        (0.5 + (normalized_height * 0.5)) as f64,
                     )
                 },
                 DEBUG_MODE_BIOME_ID => {
-                    // Biome-based coloring (implement with proper return value)
                     let biome_id = geometry.custom0_biome_ids[i][0] as f32;
-                    let hue = (biome_id / 20.0) % 1.0; // Cycle hues based on biome ID
+                    let hue = (biome_id / 20.0) % 1.0;
                     Color::from_hsv(hue as f64, 0.8, 0.8)
                 },
                 _ => Color::WHITE
             };
-            colors.push(vertex_color);
-        } // End vertex loop
-
-        // --- Convert byte vectors to PackedByteArray ---
-        let packed_custom0_bytes: PackedByteArray = custom0_bytes_vec.into();
-        let packed_custom1_bytes: PackedByteArray = custom1_bytes_vec.into();
-
-
-        // --- Populate Indices Array ---
-        for &idx in &geometry.indices {
-            indices.push(idx as i32);
+            surface_tool.set_color(vertex_color);
+            
+            // UV
+            let uv = Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]);
+            surface_tool.set_uv(uv);
+            
+            // Custom0 - Biome IDs
+            let custom0 = Color::from_rgba8(
+                geometry.custom0_biome_ids[i][0],
+                geometry.custom0_biome_ids[i][1],
+                geometry.custom0_biome_ids[i][2],
+                geometry.custom0_biome_ids[i][3]
+            );
+            surface_tool.set_custom(0, custom0);
+            
+            // Custom1 - Biome weights
+            let custom1 = Color::from_rgba(
+                geometry.custom1_biome_weights[i][0],
+                geometry.custom1_biome_weights[i][1], 
+                geometry.custom1_biome_weights[i][2],
+                0.0 // Padding
+            );
+            surface_tool.set_custom(1, custom1);
+            
+            // Add this vertex
+            surface_tool.add_vertex(position);
         }
-
-        // Calculate AABB *after* vertices array is fully populated     //
-        let mut min_point = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-        let mut max_point = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
-
-        // Re-check vertex_count based on the actual populated array
-        let actual_vertex_count = vertices.len();
-        if actual_vertex_count > 0 {
-            for i in 0..actual_vertex_count {
-                let v = vertices.get(i); // Use .get() which returns Option<Vector3> if needed, or direct index
-                min_point.x = min_point.x.min(v.unwrap().x);
-                min_point.y = min_point.y.min(v.unwrap().y);
-                min_point.z = min_point.z.min(v.unwrap().z);
-                max_point.x = max_point.x.max(v.unwrap().x);
-                max_point.y = max_point.y.max(v.unwrap().y);
-                max_point.z = max_point.z.max(v.unwrap().z);
-            }
-        } else {
-            // Handle case with no vertices - create a zero AABB
-            min_point = Vector3::ZERO;
-            max_point = Vector3::ZERO;
-        }
-        // Create the Aabb struct
-        let surface_aabb = Aabb::from_corners(min_point, max_point);
         
-        // --- DEBUGGING FORMAT FLAGS ---
-        // godot_print!("--- DEBUGGING FORMAT FLAGS ---");
-
-        // let vertex_flag_bit = RSArrayFormat::VERTEX.ord();        // Expect 0
-        // let normal_flag_bit = RSArrayFormat::NORMAL.ord();        // Expect 1
-        // let color_flag_bit = RSArrayFormat::COLOR.ord();          // Expect 3
-        // let tex_uv_flag_bit = RSArrayFormat::TEX_UV.ord();        // Expect 4
-        // let custom0_flag_bit = RSArrayFormat::CUSTOM0.ord();      // Expect 6
-        // let custom1_flag_bit = RSArrayFormat::CUSTOM1.ord();      // Expect 7
-        // let index_flag_bit = RSArrayFormat::INDEX.ord();          // Expect 12
-
-        // godot_print!("Flag Bits (Enum Ordinals): Vtx={}, Nml={}, Col={}, UV={}, C0={}, C1={}, Idx={}",
-        //     vertex_flag_bit, normal_flag_bit, color_flag_bit, tex_uv_flag_bit,
-        //     custom0_flag_bit, custom1_flag_bit, index_flag_bit);
-
-        // let custom_fmt0_val = ARRAY_CUSTOM_FORMAT_RGBA8_UNORM; // Expect 0i64
-        // let custom0_shift_val = ARRAY_FORMAT_CUSTOM0_SHIFT;   // Expect 13i64
-
-        // let custom_fmt1_val = ARRAY_CUSTOM_FORMAT_RGBA32F;     // Expect 7i64 (used RGBA_FLOAT)
-        // let custom1_shift_val = ARRAY_FORMAT_CUSTOM1_SHIFT;   // Expect 16i64
-
-        // godot_print!("Custom0: FormatVal={}, ShiftVal={}", custom_fmt0_val, custom0_shift_val);
-        // godot_print!("Custom1: FormatVal={}, ShiftVal={}", custom_fmt1_val, custom1_shift_val);
-
-        // // Explicit check for large shift values
-        // if custom0_shift_val >= 64 || custom1_shift_val >= 64 {
-        //     godot_error!("FATAL: Shift amount >= 64 detected! C0_Shift={}, C1_Shift={}", custom0_shift_val, custom1_shift_val);
-        // }
-        // // Check if any enum ordinal used for presence flags is too large
-        // if vertex_flag_bit >= 64 || normal_flag_bit >= 64 || color_flag_bit >= 64 ||
-        // tex_uv_flag_bit >= 64 || custom0_flag_bit >= 64 || custom1_flag_bit >= 64 ||
-        // index_flag_bit >= 64 {
-        // godot_error!("FATAL: Enum Ordinal >= 64 detected! Vtx={}, Nml={}, Col={}, UV={}, C0={}, C1={}, Idx={}",
-        //     vertex_flag_bit, normal_flag_bit, color_flag_bit, tex_uv_flag_bit,
-        //     custom0_flag_bit, custom1_flag_bit, index_flag_bit);
-        // }
-        // godot_print!("--- END DEBUGGING FORMAT FLAGS ---");
-
-        // --- 3. Define Explicit Vertex Format ---
-        // **VERIFY THESE CONSTANTS AND SHIFT VALUES FOR YOUR GDEXT VERSION**
-        let mut format = 0i64;
-        format |= RSArrayFormat::VERTEX.ord() as i64; // 0
-        format |= RSArrayFormat::NORMAL.ord() as i64; // 1
-        // No Tangent
-        format |= RSArrayFormat::COLOR.ord() as i64;  // 3
-        format |= RSArrayFormat::TEX_UV.ord() as i64; // 4
-        // No UV2
-        format |= RSArrayFormat::CUSTOM0.ord() as i64; // 9
-        format |= RSArrayFormat::CUSTOM1.ord() as i64; // 10
-        // No Bones/Weights
-        format |= RSArrayFormat::INDEX.ord()as i64; // 14
-
-        format |= (ARRAY_CUSTOM_FORMAT_RGBA8_UNORM << ARRAY_FORMAT_CUSTOM0_SHIFT); // (0 << 13)
-        format |= (ARRAY_CUSTOM_FORMAT_RGBA32F << ARRAY_FORMAT_CUSTOM1_SHIFT);  // (7 << 16)
-
-        godot_print!("Final format mask: {}", format);
-        godot_print!("--- END DEBUGGING FORMAT FLAGS ---");
-
-        // --- 4. Create the Data Array (VariantArray) ---
-        // **FIXED ORDER TO MATCH ENUM VALUES**
-        let mut data_arrays = VariantArray::new();
-        data_arrays.push(&vertices.to_variant());        // Enum 0: VERTEX
-        data_arrays.push(&normals.to_variant());         // Enum 1: NORMAL
-        // Skip Tangent (not in format)
-        data_arrays.push(&colors.to_variant());          // Enum 3: COLOR  <-- Moved up
-        data_arrays.push(&uvs.to_variant());             // Enum 4: TEX_UV <-- Moved down
-        // Skip UV2 etc.
-        data_arrays.push(&packed_custom0_bytes.to_variant()); // Enum 9: CUSTOM0
-        data_arrays.push(&packed_custom1_bytes.to_variant()); // Enum 10: CUSTOM1
-        // Skip Bones/Weights
-        data_arrays.push(&indices.to_variant());         // Enum 14: INDEX
-
-
-        // --- Build Parameter Dictionary ---
-        // Keys are typically strings matching the C++ parameter names or common keys.
-        // **VERIFY THESE KEYS** if possible by looking at gdext source/examples.
-        let mut surface_params = Dictionary::new();
-        surface_params.insert("format", format); // Pass the i64 format mask
-        surface_params.insert("primitive", PrimitiveType::TRIANGLES.ord() as i32); // Pass primitive type as i32
-        surface_params.insert("vertex_data", data_arrays); // Pass the VariantArray containing vertex data
-        surface_params.insert("vertex_count", vertex_count as i64); 
-        surface_params.insert("aabb", surface_aabb);
-        surface_params.insert("blend_shapes", VariantArray::new()); // Use ::new() for empty array
-        surface_params.insert("lods", Dictionary::new());           // Use ::new() for empty dictionary
-        surface_params.insert("flags", 0u32); // Use 0 for flags unless specific ones are needed
-
-
-        // --- Use RenderingServer to Add Surface ---
-        let mut rs = RenderingServer::singleton();
-        let mut mesh_resource = ArrayMesh::new_gd(); // Create the ArrayMesh resource
-        let mesh_rid = mesh_resource.get_rid();     // Get its RID
-        rs.mesh_clear(mesh_rid);                    // Clear default surface
-
-        // Call mesh_add_surface with RID and Dictionary
-        // Assuming this specific binding does not return a Result/Error directly,
-        // monitor Godot console for errors instead.
-        rs.mesh_add_surface(
-            mesh_rid,
-            &surface_params // Pass the dictionary containing all parameters
-        );
-
-        // --- Set Mesh, Material, Position, etc. --- (Keep remaining steps)
-        mesh_instance.set_mesh(&mesh_resource.upcast::<Mesh>());
-
-        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
-        Self::apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
-
-        if is_new_instance {
-            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+        // Add indices (triangles)
+        for idx in &geometry.indices {
+            surface_tool.add_index(*idx);
         }
+        
+        // Commit to mesh
+        let committed_mesh = surface_tool.commit().expect("Failed to commit mesh");
+
+        // --- 3. Prepare Index Buffer ---
+        let is_debug_render = self.debug_mode > DEBUG_MODE_NORMAL;
+
+        // Use the committed mesh from surface_tool
+        mesh_instance.set_mesh(&committed_mesh.upcast::<Mesh>());
+
+        // TEMPORARY DEBUGGING: Use a basic material to test mesh geometry
+        // let mut simple_material = StandardMaterial3D::new_gd();
+        // simple_material.set_albedo(Color::from_rgb(0.2, 0.8, 0.3)); // Green
+        // mesh_instance.set_surface_override_material(0, &simple_material.upcast::<Material>());
+
+        // Apply material and shader parameters  
+        Self::apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
 
         let world_pos = Vector3::new(
             pos.x as f32 * self.chunk_size as f32,
@@ -704,7 +626,57 @@ impl ChunkController {
         if !mesh_instance.is_visible() {
             mesh_instance.show();
         }
-    }    
+
+        // Add to scene if new
+        if is_new_instance {
+            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+        }
+    
+        // --- 4. Define Correct Vertex Format Bitmask ---
+        godot_print!("Vertex Ord: {}", RSArrayFormat::VERTEX.ord());
+        godot_print!("Normal Ord: {}", RSArrayFormat::NORMAL.ord());
+        godot_print!("Color Ord: {}", RSArrayFormat::COLOR.ord());
+        godot_print!("TexUV Ord: {}", RSArrayFormat::TEX_UV.ord());
+        godot_print!("Custom0 Ord: {}", RSArrayFormat::CUSTOM0.ord());
+        godot_print!("Custom1 Ord: {}", RSArrayFormat::CUSTOM1.ord());
+        // Print any other ordinals you use
+
+        godot_print!("Custom Format RGBA8_UNORM: {}", ARRAY_CUSTOM_FORMAT_RGBA8_UNORM);
+        godot_print!("Custom Shift 0: {}", ARRAY_FORMAT_CUSTOM0_SHIFT);
+        godot_print!("Custom Format RGBA32F: {}", ARRAY_CUSTOM_FORMAT_RGBA32F);
+        godot_print!("Custom Shift 1: {}", ARRAY_FORMAT_CUSTOM1_SHIFT);
+        godot_print!("--- End Debugging Shift Values ---");
+        
+        let mut format: i64 = 0;
+        // Use bit shifts (1 << enum_value) - Make sure RSArrayFormat enum values are correct (0, 1, 2, ...)
+        // format |= RSArrayFormat::VERTEX.ord() as i64;
+        // format |= RSArrayFormat::NORMAL.ord() as i64;
+        // // format |= RSArrayFormat::TANGENT.ord() as i64; // If you add tangents
+        // format |= RSArrayFormat::COLOR.ord() as i64;
+        // format |= RSArrayFormat::TEX_UV.ord() as i64;
+        // // format |= RSArrayFormat::TEX_UV2.ord() as i64; // If you add second UV
+        // format |= RSArrayFormat::CUSTOM0.ord() as i64; // Use the value (64) directly
+        // format |= RSArrayFormat::CUSTOM1.ord() as i64; // Use the value (128) directly
+        // format |= 1 << RSArrayFormat::BONES.ord();   // Bit 10 (If using skeletal anim)
+        // format |= 1 << RSArrayFormat::WEIGHTS.ord(); // Bit 11 (If using skeletal anim)
+        // --- DO NOT ADD INDEX FLAG HERE --- format |= 1 << RSArrayFormat::INDEX.ord(); // Bit 12
+
+        // --- "CORRECT" new ---
+        format |=  RSArrayFormat::VERTEX.ord() as i64;    // Bit 0 -> Flag 1
+        format |= RSArrayFormat::NORMAL.ord() as i64;    // Bit 1 -> Flag 2
+        format |= RSArrayFormat::COLOR.ord() as i64;     // Bit 3 -> Flag 8
+        format |= RSArrayFormat::TEX_UV.ord() as i64;    // Bit 4 -> Flag 16
+        format |= RSArrayFormat::CUSTOM0.ord() as i64;   // Bit 6 -> Flag 64
+        format |= RSArrayFormat::CUSTOM1.ord() as i64;   // Bit 7 -> Flag 128
+        // Add other flags like TANGENT, UV2 if needed using the same pattern
+
+        // --- Custom format specifiers (These shifts look correct) ---
+        format |= ARRAY_CUSTOM_FORMAT_RGBA8_UNORM << ARRAY_FORMAT_CUSTOM0_SHIFT;
+        format |= ARRAY_CUSTOM_FORMAT_RGBA32F << ARRAY_FORMAT_CUSTOM1_SHIFT;
+
+        godot_print!("Final format mask: {}", format); // Debug print
+    }
+    
 
     /// Helper function to apply material and potentially set shader parameters.
     /// Adapted from the older provided code for robustness. Moved inside impl block.
@@ -772,13 +744,13 @@ impl ChunkController {
             if let Some(pos) = self.mesh_creation_queue.front().cloned() { // Clone position to check
                 // --- Get ChunkManager Gd and Bind *inside* loop iteration ---
                 let needs_processing: bool = if let Some(manager_gd) = &self.chunk_manager {
-                    let chunk_manager_bind = manager_gd.bind(); // Borrow manager shortly
-                    chunk_manager_bind.is_chunk_ready(pos.x, pos.z)
-                        && !self.chunk_meshes.contains_key(&pos) // Check self immutably
-                        && !self.mesh_removal_queue.contains(&pos) // Check self immutably
-                    // chunk_manager_bind borrow ends here
+                    // Use bind() more efficiently by collecting all needed data at once
+                    let is_chunk_ready = manager_gd.bind().is_chunk_ready(pos.x, pos.z);
+                    is_chunk_ready
+                        && !self.chunk_meshes.contains_key(&pos)
+                        && !self.mesh_removal_queue.contains(&pos)
                 } else {
-                    false // No manager, cannot process
+                    false
                 };
 
                 if needs_processing {

@@ -51,9 +51,8 @@ pub struct MeshGeometry {
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<i32>,
     // pub colors: Vec<[f32; 4]>,
-    pub custom0_biome_ids: Vec<[u8; 3]>,     // Top 3 Biome IDs (packed as float x,y,z)
+    pub custom0_biome_ids: Vec<[u8; 4]>,     // Top 3 Biome IDs (packed as float x,y,z)
     pub custom1_biome_weights: Vec<[f32; 3]>, // Top 3 Biome Weights (w1,w2,w3 packed as x,y,z)
-
 }
 
 // ChunkStorage handles saving and loading chunks from disk

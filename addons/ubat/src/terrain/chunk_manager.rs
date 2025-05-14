@@ -397,160 +397,165 @@ impl ChunkManager {
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        section_data: Arc<ThreadSafeSectionData>, // Now receives Arc<ThreadSafeSectionData>
+        section_data: Arc<ThreadSafeSectionData>, // Receives Arc<ThreadSafeSectionData>
         noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
-        chunk_size: u32, // Number of QUADS per side
+        chunk_size: u32,
         sender: Sender<ChunkResult>,
-        amplification: f64,
+        amplification: f64, // Passed from caller (queue_generation)
     ) {
-        // --- Worker Debug Logging --- (Optional: Keep or remove)
-        /*
-        println!(
-            "DEBUG WORKER [Chunk {}, {}]: Starting generation using ThreadSafeSectionData:",
-            pos.x, pos.z
-        );
-        println!("DEBUG WORKER:   Data World Length: {}", section_data.world_length);
-        println!("--- End ThreadSafeSectionData Debug ---");
-        */
+        let grid_width = chunk_size + 1;
+        let vertex_count = (grid_width * grid_width) as usize;
 
-        // --- FIX: Calculate correct grid dimensions and vertex count ---
-        let grid_width = chunk_size + 1; // Number of vertices along one side (e.g., 33 for chunk_size 32)
-        let vertex_count = (grid_width * grid_width) as usize; // Total vertices (e.g., 1089)
-
-        // --- FIX: Initialize vectors with the correct vertex_count ---
         let mut heightmap = vec![0.0f32; vertex_count];
-        let mut biome_indices = vec![[0u8; 3]; vertex_count];      // Top 3 biome IDs
-        let mut biome_blend_weights = vec![[0.0f32; 3]; vertex_count]; // Weights for top 3
+        let mut biome_indices_data = vec![[0u8; 3]; vertex_count]; // Top 3 biome IDs for texturing
+        let mut biome_weights_data = vec![[0.0f32; 3]; vertex_count]; // Blend weights for top 3
 
-        // Lock the noise function cache for reading
         let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
+        
+        // Get blend_noise_strength from section_data (it now holds it)
+        let blend_noise_strength = section_data.blend_noise_strength;
 
-        // --- FIX: Iterate over VERTEX grid coordinates (0 to grid_width-1) ---
-        for iz in 0..grid_width { // Loop from 0 to chunk_size (inclusive)
-            for ix in 0..grid_width { // Loop from 0 to chunk_size (inclusive)
-
-                // --- FIX: Calculate index using grid_width ---
-                let idx = (iz * grid_width + ix) as usize;
-
-                // --- FIX: Calculate world coordinates based on vertex index (ix, iz) ---
+        for iz in 0..grid_width {
+            for ix in 0..grid_width {
+                let current_vertex_idx = (iz * grid_width + ix) as usize;
                 let world_x = pos.x as f32 * chunk_size as f32 + ix as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + iz as f32;
 
-                // Get potentially many weighted biome influences at this specific vertex location
-                let influences = section_data.get_biome_id_and_weights(world_x, world_z, &sender);
+                // 1. Get initial biome influences (already considers sections and Voronoi falloff)
+                // These influences are effectively [(biome_id, pre_noise_modulated_weight)]
+                let initial_influences = section_data.get_biome_id_and_weights(world_x, world_z, &sender);
 
-                // --- Height Calculation ---
-                let mut final_height = 0.0;
-                let mut total_weight_for_height = 0.0;
+                if initial_influences.is_empty() {
+                    let _ = sender.send(ChunkResult::LogMessage(format!("generate_and_save_chunk: No initial influences at ({:.1}, {:.1}), chunk {:?}. Defaulting.", world_x, world_z, pos)));
+                    heightmap[current_vertex_idx] = 0.0;
+                    biome_indices_data[current_vertex_idx] = [0, 0, 0]; // Default biome 0
+                    biome_weights_data[current_vertex_idx] = [1.0, 0.0, 0.0];
+                    continue;
+                }
 
-                for &(biome_id, weight) in &influences {
-                    if weight < 1e-4 { continue; } // Skip negligible influence for height calc
+                // 2. Create `effective_influences` by modulating with biome_blend_noise
+                let mut effective_influences = Vec::with_capacity(initial_influences.len());
+                let mut total_effective_weight_for_modulation = 0.0;
 
-                    let noise_key = format!("{}", biome_id); // Assuming noise keyed by biome ID string
-                    if let Some(noise_fn_arc) = noise_funcs_reader.get(&noise_key) {
-                        // Use f64 for noise input as NoiseFn trait often expects it
+                for (biome_id, original_weight) in &initial_influences {
+                    if *original_weight < 1e-5 { continue; } // Skip truly negligible original weights
+
+                    let mut current_effective_weight = *original_weight;
+
+                    if let Some(blend_noise_fn) = &section_data.biome_blend_noise_fn {
+                        if blend_noise_strength > 1e-5 { // Only apply if strength is meaningful
+                            let noise_val = blend_noise_fn.get([world_x as f64, world_z as f64]) as f32; // -1 to 1
+                            // Modulate: increase or decrease weight based on noise
+                            // The (1.0 + noise_val * strength) factor can push weight > original_weight or < original_weight
+                            // It's important original_weights sum to 1 (or are normalized later)
+                            current_effective_weight *= (1.0 + noise_val * blend_noise_strength);
+                            current_effective_weight = current_effective_weight.max(0.0); // Ensure non-negative
+                        }
+                    }
+                    if current_effective_weight > 1e-5 { // Check after modulation
+                        effective_influences.push((*biome_id, current_effective_weight));
+                        total_effective_weight_for_modulation += current_effective_weight;
+                    }
+                }
+                
+                // Normalize these `effective_influences` so their weights sum to 1.0
+                if total_effective_weight_for_modulation > 1e-5 {
+                    for (_, weight) in effective_influences.iter_mut() {
+                        *weight /= total_effective_weight_for_modulation;
+                    }
+                } else if !initial_influences.is_empty() {
+                    // Fallback: if noise made all effective weights zero, use the strongest initial influence
+                    effective_influences.clear();
+                    // Sort initial_influences to get the strongest if not already sorted
+                    // Assuming get_biome_id_and_weights already returns sorted or we sort it.
+                    // For safety, let's just pick the first one if initial_influences was already sorted.
+                    // If not, this might not be the "strongest". A proper sort would be needed here.
+                    // Let's assume initial_influences[0] is the strongest for now.
+                    if let Some(strongest_initial) = initial_influences.get(0) {
+                        effective_influences.push(*strongest_initial);
+                         // if total_effective_weight_for_modulation is 0, and we have a strongest_initial,
+                         // its effective_weight must be 1.0 for that single entry.
+                        if let Some(entry) = effective_influences.get_mut(0) {
+                            entry.1 = 1.0;
+                        }
+                    } else {
+                        // Ultra fallback if initial_influences became empty after filter
+                        effective_influences.push((0, 1.0)); // Default to biome 0
+                    }
+                } else { // initial_influences was empty, so effective_influences is also empty
+                    effective_influences.push((0, 1.0)); // Default to biome 0
+                }
+
+
+                // 3. Height Calculation using `effective_influences`
+                let mut final_height_accumulator = 0.0;
+                // let mut summed_weights_for_height = 0.0; // Not strictly needed if effective_influences sum to 1
+
+                for (biome_id, effective_weight) in &effective_influences {
+                    if *effective_weight < 1e-5 { continue; }
+                    
+                    // Fetch biome-specific noise for height
+                    if let Some(noise_fn_arc) = noise_funcs_reader.get(&format!("{}", biome_id)) {
                         let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
-                        // Apply amplification and accumulate weighted height
-                        final_height += (height_val * amplification) as f32 * weight;
-                        total_weight_for_height += weight;
+                        final_height_accumulator += (height_val * amplification) as f32 * effective_weight;
+                        // summed_weights_for_height += effective_weight; // if not pre-normalized
                     } else {
-                         // Log warning if noise function not found for a biome with influence
-                         let log_msg = format!("Warning: Noise function for key '{}' not found during height generation at chunk {:?} (world pos {:.1}, {:.1}).", noise_key, pos, world_x, world_z);
-                         let _ = sender.send(ChunkResult::LogMessage(log_msg));
-                         // Decide how to handle missing noise for height - adding 0 contribution here
-                         total_weight_for_height += weight; // Still count weight towards normalization total
+                         // Log if noise not found but biome has weight
+                         let _ = sender.send(ChunkResult::LogMessage(format!("generate_and_save_chunk: Height noise for biome {} not found at ({:.1}, {:.1}). Skipping its height contribution.", biome_id, world_x, world_z)));
                     }
-               }
-
-                // Normalize height based on accumulated weights
-                if total_weight_for_height > 1e-6 { // Avoid division by zero/small numbers
-                    heightmap[idx] = final_height / total_weight_for_height;
-                } else {
-                     // Handle case where total weight is negligible or zero
-                    if !influences.is_empty() && influences.iter().any(|&(_, w)| w > 0.0) {
-                         // Only log if there were actually positive influences expected
-                         let log_msg = format!("Warning: Zero total weight for height calculation at ({:.1}, {:.1}) in chunk {:?} despite influences: {:?}", world_x, world_z, pos, influences);
-                         let _ = sender.send(ChunkResult::LogMessage(log_msg));
-                    }
-                    heightmap[idx] = 0.0; // Default height if no influence or zero weight sum
                 }
-                // --- End Height Calculation ---
+                heightmap[current_vertex_idx] = final_height_accumulator; // Directly assign as effective_weights sum to 1
 
 
-                // --- Biome Weight Processing for Texturing (Top 3) ---
-                // Influences vector is assumed to be sorted descending by weight
+                // 4. Texture Data Preparation using (sorted) `effective_influences`
+                // Sort `effective_influences` by weight, descending, to pick top N
+                effective_influences.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-                let num_influences = influences.len();
-                let mut top_weights_sum: f32 = 0.0;
-                let top_n = 3; // Number of biomes to blend textures for
+                let top_n = 3;
+                let mut temp_ids_for_shader = [0u8; 3];
+                let mut temp_weights_for_shader = [0.0f32; 3];
+                let mut sum_top_n_weights_for_shader: f32 = 0.0;
 
-                // Store top N IDs and their original weights, calculate sum
                 for i in 0..top_n {
-                    if i < num_influences {
-                        let (id, weight) = influences[i];
-                        // Ensure weight is non-negative before summing/normalizing
-                        let valid_weight = weight.max(0.0);
-                        biome_indices[idx][i] = id; // Store biome ID
-                        biome_blend_weights[idx][i] = valid_weight; // Store the potentially clamped weight
-                        top_weights_sum += valid_weight; // Sum weights for normalization
+                    if i < effective_influences.len() && effective_influences[i].1 > 1e-5 {
+                        temp_ids_for_shader[i] = effective_influences[i].0;
+                        temp_weights_for_shader[i] = effective_influences[i].1;
+                        sum_top_n_weights_for_shader += effective_influences[i].1;
                     } else {
-                        // Pad with default/null biome ID and zero weight if fewer than N influences
-                        biome_indices[idx][i] = 0; // Use 0 or a designated "empty" biome ID
-                        biome_blend_weights[idx][i] = 0.0;
+                        temp_ids_for_shader[i] = 0; // Pad with default biome ID
+                        temp_weights_for_shader[i] = 0.0;
                     }
                 }
 
-                // Normalize the top N weights so they sum to 1.0 (important for shader blending)
-                if top_weights_sum > 1e-6 { // Avoid division by zero
+                // Normalize the top N weights specifically for the shader (so these 3 sum to 1)
+                if sum_top_n_weights_for_shader > 1e-5 {
                     for i in 0..top_n {
-                        biome_blend_weights[idx][i] /= top_weights_sum;
+                        biome_weights_data[current_vertex_idx][i] = temp_weights_for_shader[i] / sum_top_n_weights_for_shader;
                     }
-                } else if num_influences > 0 {
-                     // Handle edge case: influences exist but sum is zero (e.g., all weights <= 0?)
-                     // Give full weight to the very first influence (highest original weight)
-                     biome_blend_weights[idx][0] = 1.0;
-                     for i in 1..top_n { biome_blend_weights[idx][i] = 0.0; }
-                     // Ensure IDs match the assigned weights
-                     biome_indices[idx][0] = influences[0].0; // Assign ID of the first influence
-                     for i in 1..top_n { biome_indices[idx][i] = 0; } // Assign default ID to others
-
-                     // Log this edge case
-                     let log_msg = format!("Warning: Sum of top {} weights is near zero at ({:.1}, {:.1}) in chunk {:?}. Assigning full weight to Biome {}.", top_n, world_x, world_z, pos, biome_indices[idx][0]);
-                     let _ = sender.send(ChunkResult::LogMessage(log_msg));
-                } else {
-                    // No influences found at all by get_biome_id_and_weights
-                    // Ensure a default state (e.g., biome 0 with full weight)
-                     biome_indices[idx][0] = 0; // Default biome ID
-                     biome_blend_weights[idx][0] = 1.0; // Full weight to default
-                     // Zero out others explicitly
-                     for i in 1..top_n {
-                        biome_indices[idx][i] = 0;
-                        biome_blend_weights[idx][i] = 0.0;
-                    }
+                } else if !effective_influences.is_empty() && effective_influences[0].1 > 1e-5 {
+                    // Fallback: if sum is tiny but there was a dominant biome, give it full weight
+                    biome_weights_data[current_vertex_idx][0] = 1.0;
+                    for i in 1..top_n { biome_weights_data[current_vertex_idx][i] = 0.0; }
+                } else { // No significant influences at all
+                    biome_weights_data[current_vertex_idx][0] = 1.0; // Default to biome 0
+                    for i in 1..top_n { biome_weights_data[current_vertex_idx][i] = 0.0; }
                 }
-                // --- End Biome Weight Processing ---
-            } // End ix loop
-        } // End iz loop
+                biome_indices_data[current_vertex_idx] = temp_ids_for_shader;
+            }
+        }
 
-        // Drop the read lock on the noise functions cache
         drop(noise_funcs_reader);
 
-        // --- Create ChunkData with correctly sized vectors ---
         let chunk_data = ChunkData {
             position: pos,
-            heightmap,             // Now size vertex_count (e.g., 1089)
-            biome_indices,         // Now size vertex_count
-            biome_blend_weights, // Now size vertex_count
+            heightmap,
+            biome_indices: biome_indices_data,
+            biome_blend_weights: biome_weights_data,
         };
 
-        // --- Save ChunkData to storage and Send Result back to main thread ---
-        storage.queue_save_chunk(chunk_data.clone()); // Queue for saving
-        // Send generated data back
+        storage.queue_save_chunk(chunk_data.clone());
         if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
-           // Log if sending failed (main thread might have shut down)
-           let log_msg = format!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e);
-           // Attempt to send log message, ignore error if that fails too
-           let _ = sender.send(ChunkResult::LogMessage(log_msg));
+           let _ = sender.send(ChunkResult::LogMessage(format!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e)));
         }
     }
 

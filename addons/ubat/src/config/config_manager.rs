@@ -28,7 +28,9 @@ pub struct TerrainInitialConfigData { // Represents the data loaded from TOML [t
     #[serde(default)]
     pub noise_paths: HashMap<String, String>,
     pub mesh_updates_per_frame: usize,
+    pub blend_noise_strength: f32,
 }
+
 
 // Default for TerrainInitialConfigData - used if file/section missing
 impl Default for TerrainInitialConfigData {
@@ -46,6 +48,7 @@ impl Default for TerrainInitialConfigData {
             amplification: 1.0, 
             noise_paths: HashMap::new(), // Default to empty
             mesh_updates_per_frame: 4,
+            blend_noise_strength: 0.25,
         }
     }
 }

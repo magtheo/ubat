@@ -21,6 +21,7 @@ chunks_per_frame = 4
 render_distance = 4 # Moved from terrain_initializer
 amplification = 4.0
 mesh_updates_per_frame = 4
+blend_noise_strength = 0.25 # NEW: Controls intensity of noise for blending (0.0 to ~0.5 is a good range)
 
 [terrain.noise_paths]
 "1" = "res://project/terrain/noise/corralNoise.tres"
@@ -42,7 +43,7 @@ length = 200.0
 transition_zone = 50.0
 possible_biomes = [1, 2]
 point_density = 0.0002
-boundary_noise_key = "perlin_medium"
+# boundary_noise_key = "perlin_medium"
 
 [[sections]]
 id = 2
@@ -50,7 +51,7 @@ length = 200.0
 transition_zone = 50.0
 possible_biomes = [2, 3, 4]
 point_density = 0.0003
-boundary_noise_key = "perlin_medium"
+# boundary_noise_key = "perlin_medium"
 
 [[sections]]
 id = 3
@@ -58,7 +59,7 @@ length = 200.0
 transition_zone = 50.0
 possible_biomes = [4, 5]
 point_density = 0.0002
-boundary_noise_key = "perlin_rough"
+# boundary_noise_key = "perlin_rough"
 
 # Biome definitions
 [[biomes]]
