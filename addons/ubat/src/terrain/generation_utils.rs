@@ -84,56 +84,18 @@ pub fn generate_mesh_geometry(
 
             // 3. Custom Data (Biome IDs and Weights) - completely reworked
             
-            // --- Get original biome IDs and weights ---
             let biome_ids_3 = biome_indices_data[current_index];
-            let original_weights = biome_weights_data[current_index];
+            // These weights are already calculated and normalized for the top 3 biomes in ChunkManager
+            let shader_ready_weights = biome_weights_data[current_index]; 
             
-            // Create a completely new weighting scheme based on distance fields
-            let mut new_weights = [0.0; 3];
-            let mut has_valid_biomes = false;
+            // Pad biome IDs to 4 components for CUSTOM0 (RGBA8)
+            let biome_ids_4 = [biome_ids_3[0], biome_ids_3[1], biome_ids_3[2], 0u8]; // Assuming 4th component is unused or padding
             
-            // First pass - identify valid biomes and calculate total
-            let mut total_influence = 0.0;
-            for i in 0..3 {
-                if biome_ids_3[i] > 0 && original_weights[i] > 0.001 {
-                    has_valid_biomes = true;
-                    
-                    // Create a non-linear curve for smoother transitions
-                    // Apply smooth_falloff for a more organic transition feeling
-                    let weight = smooth_value(original_weights[i]);
-                    new_weights[i] = weight;
-                    total_influence += weight;
-                } else {
-                    new_weights[i] = 0.0;
-                }
-            }
-            
-            // Normalize the new weights
-            if has_valid_biomes && total_influence > 0.001 {
-                for i in 0..3 {
-                    new_weights[i] /= total_influence;
-                }
-            } else if has_valid_biomes {
-                // If we have biomes but total influence is too small, 
-                // give full weight to the first valid biome
-                for i in 0..3 {
-                    if biome_ids_3[i] > 0 && original_weights[i] > 0.0 {
-                        new_weights[i] = 1.0;
-                        break;
-                    }
-                }
-            } else {
-                // No valid biomes, default to first slot with full weight
-                new_weights[0] = 1.0;
-            }
-            
-            // --- Create the 4-byte array, padding the 4th component ---
-            let biome_ids_4 = [biome_ids_3[0], biome_ids_3[1], biome_ids_3[2], 0u8];
-            
-            // --- Push the data to geometry ---
             geometry.custom0_biome_ids.push(biome_ids_4);
-            geometry.custom1_biome_weights.push(new_weights);
+            // Pass the shader-ready weights directly for CUSTOM1 (RGBA_FLOAT)
+            geometry.custom1_biome_weights.push(shader_ready_weights); 
 
+            
             // 4. Calculate Normals (using central difference)
             // [Keep the existing normal calculation code]
             let get_height = |x: i32, z: i32| -> f32 {

@@ -517,21 +517,21 @@ impl ChunkController {
         for i in 0..vertex_count {
 
             // Inside your vertex loop, add this near the beginning:
-            if i < 5 || i % 500 == 0 {  // Only log a few samples
-                godot_print!(
-                    "Vertex {}: Position: [{:.1}, {:.1}, {:.1}], Biome IDs: [{}, {}, {}], Weights: [{:.2}, {:.2}, {:.2}]",
-                    i,
-                    geometry.vertices[i][0], 
-                    geometry.vertices[i][1], 
-                    geometry.vertices[i][2],
-                    geometry.custom0_biome_ids[i][0],
-                    geometry.custom0_biome_ids[i][1], 
-                    geometry.custom0_biome_ids[i][2],
-                    geometry.custom1_biome_weights[i][0],
-                    geometry.custom1_biome_weights[i][1],
-                    geometry.custom1_biome_weights[i][2]
-                );
-            }
+            // if i < 5 || i % 500 == 0 {  // Only log a few samples
+            //     godot_print!(
+            //         "Vertex {}: Position: [{:.1}, {:.1}, {:.1}], Biome IDs: [{}, {}, {}], Weights: [{:.2}, {:.2}, {:.2}]",
+            //         i,
+            //         geometry.vertices[i][0], 
+            //         geometry.vertices[i][1], 
+            //         geometry.vertices[i][2],
+            //         geometry.custom0_biome_ids[i][0],
+            //         geometry.custom0_biome_ids[i][1], 
+            //         geometry.custom0_biome_ids[i][2],
+            //         geometry.custom1_biome_weights[i][0],
+            //         geometry.custom1_biome_weights[i][1],
+            //         geometry.custom1_biome_weights[i][2]
+            //     );
+            // }
 
             // Position
             let position = Vector3::new(
@@ -633,19 +633,18 @@ impl ChunkController {
         }
     
         // --- 4. Define Correct Vertex Format Bitmask ---
-        godot_print!("Vertex Ord: {}", RSArrayFormat::VERTEX.ord());
-        godot_print!("Normal Ord: {}", RSArrayFormat::NORMAL.ord());
-        godot_print!("Color Ord: {}", RSArrayFormat::COLOR.ord());
-        godot_print!("TexUV Ord: {}", RSArrayFormat::TEX_UV.ord());
-        godot_print!("Custom0 Ord: {}", RSArrayFormat::CUSTOM0.ord());
-        godot_print!("Custom1 Ord: {}", RSArrayFormat::CUSTOM1.ord());
-        // Print any other ordinals you use
+        // godot_print!("Vertex Ord: {}", RSArrayFormat::VERTEX.ord());
+        // godot_print!("Color Ord: {}", RSArrayFormat::COLOR.ord());
+        // godot_print!("TexUV Ord: {}", RSArrayFormat::TEX_UV.ord());
+        // godot_print!("Custom0 Ord: {}", RSArrayFormat::CUSTOM0.ord());
+        // godot_print!("Custom1 Ord: {}", RSArrayFormat::CUSTOM1.ord());
+        // // Print any other ordinals you use
 
-        godot_print!("Custom Format RGBA8_UNORM: {}", ARRAY_CUSTOM_FORMAT_RGBA8_UNORM);
-        godot_print!("Custom Shift 0: {}", ARRAY_FORMAT_CUSTOM0_SHIFT);
-        godot_print!("Custom Format RGBA32F: {}", ARRAY_CUSTOM_FORMAT_RGBA32F);
-        godot_print!("Custom Shift 1: {}", ARRAY_FORMAT_CUSTOM1_SHIFT);
-        godot_print!("--- End Debugging Shift Values ---");
+        // godot_print!("Custom Format RGBA8_UNORM: {}", ARRAY_CUSTOM_FORMAT_RGBA8_UNORM);
+        // godot_print!("Custom Shift 0: {}", ARRAY_FORMAT_CUSTOM0_SHIFT);
+        // godot_print!("Custom Format RGBA32F: {}", ARRAY_CUSTOM_FORMAT_RGBA32F);
+        // godot_print!("Custom Shift 1: {}", ARRAY_FORMAT_CUSTOM1_SHIFT);
+        // godot_print!("--- End Debugging Shift Values ---");
         
         let mut format: i64 = 0;
         // Use bit shifts (1 << enum_value) - Make sure RSArrayFormat enum values are correct (0, 1, 2, ...)
@@ -674,7 +673,7 @@ impl ChunkController {
         format |= ARRAY_CUSTOM_FORMAT_RGBA8_UNORM << ARRAY_FORMAT_CUSTOM0_SHIFT;
         format |= ARRAY_CUSTOM_FORMAT_RGBA32F << ARRAY_FORMAT_CUSTOM1_SHIFT;
 
-        godot_print!("Final format mask: {}", format); // Debug print
+        // godot_print!("Final format mask: {}", format); // Debug print
     }
     
 
@@ -767,14 +766,14 @@ impl ChunkController {
     
                     if let Some(chunk_data) = chunk_data_option {
                         let expected_size = ((self.chunk_size + 1) * (self.chunk_size + 1)) as usize;
-                        godot_print!(
-                            "DEBUG ChunkData Check for {:?}: Expected Size: {}, Heightmap: {}, Biomes: {}, Weights: {}",
-                            pos,
-                            expected_size,
-                            chunk_data.heightmap.len(),
-                            chunk_data.biome_indices.len(),
-                            chunk_data.biome_blend_weights.len()
-                        );
+                        // godot_print!(
+                        //     "DEBUG ChunkData Check for {:?}: Expected Size: {}, Heightmap: {}, Biomes: {}, Weights: {}",
+                        //     pos,
+                        //     expected_size,
+                        //     chunk_data.heightmap.len(),
+                        //     chunk_data.biome_indices.len(),
+                        //     chunk_data.biome_blend_weights.len()
+                        // );
 
                         // --- FIX: Pass new fields to generate_mesh_geometry ---
                         // Ensure generate_mesh_geometry function signature is updated too!
