@@ -230,11 +230,10 @@ func _update_debug_labels():
 
 	# Get managers via bridge
 	var cm = terrain_bridge.get_chunk_manager()
-	var bm = terrain_bridge.get_biome_manager()
 
 	# Check if managers are valid
-	if not is_instance_valid(cm) or not is_instance_valid(bm): # Assuming BiomeManager is also required
-		print("TerrainDebugger:   ChunkManager or BiomeManager invalid via bridge, returning. CM valid: %s, BM valid: %s" % [is_instance_valid(cm), is_instance_valid(bm)]) # ADDED
+	if not is_instance_valid(cm): # Assuming BiomeManager is also required
+		print("TerrainDebugger:   ChunkManager or BiomeManager invalid via bridge, returning. CM valid: %s" % [is_instance_valid(cm)]) 
 		# Set error text
 		if is_instance_valid(lbl_player_world_pos): lbl_player_world_pos.text = "World Pos: ERR (No CM/BM)"
 		if is_instance_valid(lbl_chunk_state): lbl_chunk_state.text = "Chunk State: ERR (No CM/BM)"
@@ -275,12 +274,8 @@ func _update_debug_labels():
 		var biome_text = "Biome: N/A"
 		if terrain_data.has("primary_biome_id") and terrain_data["primary_biome_id"] != null:
 			var biome_id = terrain_data["primary_biome_id"]
-			if is_instance_valid(bm) and bm.has_method("get_biome_name"):
-				var biome_name = bm.get_biome_name(biome_id)
-				biome_text = "Biome: %s (%d)" % [biome_name, biome_id]
-			else:
-				biome_text = "Biome: ID %d (No BM)" % biome_id
-		lbl_biome.text = biome_text
+			biome_text = "Biome: ID %d" % biome_id
+			lbl_biome.text = biome_text
 
 
 
