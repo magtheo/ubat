@@ -1,0 +1,6 @@
+# Project-specific ignore patterns for LLM Context Builder
+# One pattern (relative path from root) per line.
+.godot
+.roo
+addons/ubat/target
+user:
