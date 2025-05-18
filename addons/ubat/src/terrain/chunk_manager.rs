@@ -207,7 +207,7 @@ impl INode3D for ChunkManager {
                 }
                 Err(TryRecvError::Empty) => {
                     if result_count > 0 {
-                        godot_print!("ChunkManager process: Processed {} results this frame", result_count);
+                        // godot_print!("ChunkManager process: Processed {} results this frame", result_count);
                     }
                     break;
                 }
