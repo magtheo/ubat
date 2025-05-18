@@ -403,31 +403,47 @@ impl SectionManager {
     /// Generate Voronoi points for all sections.
     fn generate_voronoi_points(&mut self) {
         if self.sections.is_empty() {
+            godot_print!("SectionManager::generate_voronoi_points - No sections defined, cannot generate points.");
+            self.voronoi_points.clear();
+            self.spatial_grid = None;
             return;
         }
         
         self.voronoi_points.clear();
         
+        // Define the overall bounds for Voronoi point generation and the spatial grid.
+        // Points are generated per section, but the grid covers the whole world.
         let world_bounds = Rect2::new(
-            -self.world_width / 2.0,
-            0.0,
+            -self.world_width / 2.0, // Centered around X=0
+            0.0,                     // Starts at Z=0
             self.world_width,
             self.world_length
         );
         
+        godot_print!(
+            "SectionManager::generate_voronoi_points - World Bounds for grid: X: {:.1}, Z: {:.1}, W: {:.1}, H: {:.1}",
+            world_bounds.x, world_bounds.z, world_bounds.width, world_bounds.height
+        );
+
         // Generate points for each section
         for section in &self.sections {
+            // Define the specific bounds for *this* section's point generation
             let section_bounds = Rect2::new(
-                world_bounds.x,
+                world_bounds.x,             // Use the same X start as world_bounds
                 section.start_position,
-                world_bounds.width,
-                section.end_position - section.start_position
+                world_bounds.width,         // Use the full world width for points in this section
+                section.end_position - section.start_position // Length of this section
             );
             
+            // godot_print!( // Optional: Log individual section bounds
+            //     "  Generating points for Section ID {}: Bounds X: {:.1}, Z: {:.1}, W: {:.1}, H: {:.1}",
+            //     section.id, section_bounds.x, section_bounds.z, section_bounds.width, section_bounds.height
+            // );
+
             let section_points = generate_voronoi_points_for_section(
                 section,
                 section_bounds,
-                self.world_seed
+                self.world_seed // Use the manager's world seed
             );
             
             self.voronoi_points.extend(section_points);
@@ -435,19 +451,37 @@ impl SectionManager {
         
         // Build the spatial grid for efficient queries
         if !self.voronoi_points.is_empty() {
-            let cell_size = 100.0; // Reasonable cell size for spatial queries
+            // --- START OF MODIFICATION: Make cell_size adaptive ---
+            // Aim for the 3x3 grid cell search to cover roughly the blend_distance radius.
+            // A 3x3 grid search (1 cell neighbor in each direction) covers a square region
+            // of 3*cell_size width/height. The diagonal of this is sqrt(2) * 3 * cell_size.
+            // We want this search area to be generous enough for biome_blend_distance.
+            // A simpler heuristic: ensure one cell is not drastically larger than the blend distance.
+            // Let's make cell_size roughly half to a third of the blend_distance,
+            // clamped to reasonable min/max values.
+            // Example: if blend_distance = 150, cell_size could be 75. A 3x3 search covers 225x225.
+            let calculated_cell_size = (self.biome_blend_distance / 2.0).max(50.0).min(self.world_width / 10.0); // Ensure at least 10 cells across world width
+            
+            godot_print!(
+                "SectionManager: Biome Blend Distance: {:.1}. Using adaptive cell_size for SpatialGrid: {:.1}",
+                self.biome_blend_distance,
+                calculated_cell_size
+            );
+
             self.spatial_grid = Some(SpatialGrid::new(
-                world_bounds,
+                world_bounds, // Grid covers the entire world_bounds
                 &self.voronoi_points,
-                cell_size
+                calculated_cell_size // Use the adaptive cell_size
             ));
             
-            godot_print!("SectionManager: Generated {} Voronoi points across all sections", 
+            godot_print!("SectionManager: Generated {} Voronoi points across all sections and built SpatialGrid.", 
                         self.voronoi_points.len());
         } else {
-            godot_warn!("SectionManager: No Voronoi points were generated");
+            godot_warn!("SectionManager: No Voronoi points were generated. SpatialGrid will not be built.");
+            self.spatial_grid = None;
         }
     }
+
     
     /// Check if the manager is fully initialized.
     #[func]
