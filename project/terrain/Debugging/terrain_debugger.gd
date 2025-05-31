@@ -282,7 +282,7 @@ func _update_debug_labels():
 func _on_player_position_updated(world_pos: Vector3):
 	#print("TerrainDebugger: player position updated: ", world_pos)
 	if not is_instance_valid(terrain_bridge): return # Need bridge
-	print("Player pos is updated")
+	print("Player pos is updated: ", world_pos)
 
 	_current_player_pos = world_pos
 	var cc = terrain_bridge.get_chunk_controller() # Use bridge getter
