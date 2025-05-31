@@ -264,6 +264,7 @@ impl WorldStateManager {
     fn add_entity(&mut self, entity: Arc<dyn WorldEntity>) {
         let mut entities = self.entities.write().unwrap();
         entities.insert(entity.get_id(), entity);
+        godot_print!("Adding entities: {}", entities);
         
         // Increment world version to track changes
         self.current_version += 1;
