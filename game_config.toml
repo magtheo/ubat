@@ -32,6 +32,7 @@ blend_noise_strength = 0.25 # NEW: Controls intensity of noise for blending (0.0
 "blend" = "res://project/terrain/noise/blendNoise.tres"
 "biome_blend" = "res://project/terrain/noise/blendNoise.tres"
 "section" = "res://project/terrain/noise/sectionNoise.tres"
+"section_biome_blend" = "res://project/terrain/noise/section_blending/biome_blend_section.tres"
 
 # [custom_settings] # If needed
 # my_custom_value = "example"
@@ -42,54 +43,49 @@ id = 1
 length = 200.0
 transition_zone = 50.0
 possible_biomes = [1, 2]
-point_density = 0.0002
-# boundary_noise_key = "perlin_medium"
+
 
 [[sections]]
 id = 2
 length = 200.0
 transition_zone = 50.0
-possible_biomes = [2, 3, 4]
-point_density = 0.0003
-# boundary_noise_key = "perlin_medium"
+possible_biomes = [3, 4]
 
 [[sections]]
 id = 3
 length = 200.0
 transition_zone = 50.0
 possible_biomes = [4, 5]
-point_density = 0.0002
-# boundary_noise_key = "perlin_rough"
 
 # Biome definitions
 [[biomes]]
 id = 1
-name = "Coral Reef"
+name = "Coral"
 primary_noise_key = "1"
 texture_params = { roughness = 0.7, metallic = 0.1 }
 
 [[biomes]]
 id = 2
-name = "Sandy Beach"
+name = "Sand"
 primary_noise_key = "2"
 texture_params = { roughness = 0.9, metallic = 0.0 }
 
 [[biomes]]
 id = 3
-name = "Rocky Outcrop"
+name = "Rock"
 primary_noise_key = "3"
 texture_params = { roughness = 0.6, metallic = 0.2 }
 
 [[biomes]]
 id = 4
-name = "Kelp Forest"
+name = "Kelp"
 primary_noise_key = "4"
 texture_params = { roughness = 0.5, metallic = 0.1 }
 secondary_noise_keys = ["kelp_detail_noise"]
 
 [[biomes]]
 id = 5
-name = "Volcanic Vents"
+name = "Volcanic"
 primary_noise_key = "5"
 texture_params = { roughness = 0.6, metallic = 0.3 }
 secondary_noise_keys = ["heat_noise"]
