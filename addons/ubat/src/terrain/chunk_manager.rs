@@ -180,7 +180,7 @@ impl INode3D for ChunkManager {
                     self.is_thread_safe_data_ready = true; // Set flag only on success
                 } else {
                     // Optional: Log that managers are present but data update failed
-                    // eprintln!("ChunkManager process: Managers linked, but ThreadSafeSectionData update still results in None.");
+                    eprintln!("ChunkManager process: Managers linked, but ThreadSafeSectionData update still results in None.");
                 }
             } // Else: Managers not linked yet, will try again next frame
         }
