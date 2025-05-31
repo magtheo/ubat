@@ -215,7 +215,7 @@ impl ConfigurationService {
         world_manager_guard.initialize()
              .map_err(|e| format!("World initialization failed: {}", e))?;
 
-
+        godot_print!("World initialized");
         Ok(())
     }
 
