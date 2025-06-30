@@ -17,8 +17,8 @@ pub struct SectionTomlConfig {
     /// List of biome IDs that can appear in this section
     pub possible_biomes: Vec<u8>,
     
-    /// Density of Voronoi points to generate (points per unit area)
-    pub point_density: f32,
+    /// Key for the noise function used for blending biomes within this section
+    pub blend_noise_key: String,
     
     /// Optional noise key for boundary perturbation
     #[serde(default)]
@@ -53,7 +53,7 @@ impl Default for SectionTomlConfig {
             length: 1000.0,
             transition_zone: 100.0,
             possible_biomes: vec![0], // Default biome
-            point_density: 0.0001,
+            blend_noise_key: "default_blend_noise".to_string(),
             boundary_noise_key: None,
         }
     }
