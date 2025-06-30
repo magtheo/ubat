@@ -97,7 +97,7 @@ impl WorldStateManager {
 
     
     pub fn initialize(&mut self) -> Result<(), String> {
-        println!("WorldStateManager: Initializing world state");
+        godot_print!("WorldStateManager: Initializing world state");
         
         // If we're not in a Godot context, just initialize world structures
         // without visual representation
@@ -108,7 +108,7 @@ impl WorldStateManager {
         // Don't auto-create terrain components - rely on them being passed in
         // via initialize_terrain()
         
-        println!("WorldStateManager: Basic initialization complete");
+        godot_print!("WorldStateManager: Basic initialization complete");
         self.initialized = true;
         Ok(())
     }
@@ -135,7 +135,7 @@ impl WorldStateManager {
         section_manager: Gd<SectionManager>, 
         chunk_manager: Gd<ChunkManager>) -> Result<(), String> {
         
-        println!("WorldStateManager: Initializing terrain with provided components");
+        godot_print!("WorldStateManager: Initializing terrain with provided components");
         
         // Store the managers directly instead of using TerrainWorldIntegration
         self.section_manager = Some(section_manager.clone());
