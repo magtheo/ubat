@@ -12,16 +12,16 @@ max_players = 64
 connection_timeout_ms = 5000
 
 [terrain]
-max_threads = 7 # Example: Default based on detection or a sensible value
+max_threads = 7                # Example: Default based on detection or a sensible value
 chunk_size = 32
 blend_distance = 75.0
 use_parallel_processing = true
 chunk_cache_size = 600
 chunks_per_frame = 4
-render_distance = 4 # Moved from terrain_initializer
+render_distance = 4            # Moved from terrain_initializer
 amplification = 4.0
 mesh_updates_per_frame = 4
-blend_noise_strength = 0.25 # NEW: Controls intensity of noise for blending (0.0 to ~0.5 is a good range)
+blend_noise_strength = 0.25    # NEW: Controls intensity of noise for blending (0.0 to ~0.5 is a good range)
 
 [terrain.noise_paths]
 "1" = "res://project/terrain/noise/corralNoise.tres"
@@ -32,6 +32,9 @@ blend_noise_strength = 0.25 # NEW: Controls intensity of noise for blending (0.0
 "blend" = "res://project/terrain/noise/blendNoise.tres"
 "biome_blend" = "res://project/terrain/noise/blendNoise.tres"
 "section" = "res://project/terrain/noise/sectionNoise.tres"
+"section1_blend_noise" = "res://project/terrain/noise/section1_blend_noise.tres"
+"section2_blend_noise" = "res://project/terrain/noise/section2_blend_noise.tres"
+"section3_blend_noise" = "res://project/terrain/noise/section3_blend_noise.tres"
 
 # [custom_settings] # If needed
 # my_custom_value = "example"
@@ -42,7 +45,7 @@ id = 1
 length = 200.0
 transition_zone = 50.0
 possible_biomes = [1, 2]
-point_density = 0.0002
+blend_noise_key = "section1_blend_noise"
 # boundary_noise_key = "perlin_medium"
 
 [[sections]]
@@ -50,7 +53,7 @@ id = 2
 length = 200.0
 transition_zone = 50.0
 possible_biomes = [2, 3, 4]
-point_density = 0.0003
+blend_noise_key = "section2_blend_noise"
 # boundary_noise_key = "perlin_medium"
 
 [[sections]]
@@ -58,7 +61,7 @@ id = 3
 length = 200.0
 transition_zone = 50.0
 possible_biomes = [4, 5]
-point_density = 0.0002
+blend_noise_key = "section3_blend_noise"
 # boundary_noise_key = "perlin_rough"
 
 # Biome definitions
