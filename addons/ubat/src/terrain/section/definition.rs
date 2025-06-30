@@ -23,8 +23,8 @@ pub struct SectionDefinition {
     /// List of biome IDs that can appear in this section
     pub possible_biomes: Vec<u8>,
     
-    /// Density of Voronoi points (points per unit area)
-    pub point_density: f32,
+    /// Optional noise function for blending biomes within this section
+    pub blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
     
     /// Optional noise function for boundary perturbation
     pub boundary_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
@@ -49,39 +49,6 @@ pub struct BiomeDefinition {
     pub secondary_noise_fns: Vec<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
 }
 
-/// Represents a point in the Voronoi diagram with an assigned biome ID.
-#[derive(Clone)]
-pub struct VoronoiPoint {
-    /// World position of the point (x, z)
-    pub position: (f32, f32),
-    
-    /// The biome ID assigned to this point
-    pub biome_id: u8,
-    
-    /// The section ID this point belongs to
-    pub section_id: u8,
-}
-
-/// Simple 2D rectangle for defining section areas.
-#[derive(Clone, Copy, Debug)]
-pub struct Rect2 {
-    pub x: f32,
-    pub z: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
-impl Rect2 {
-    pub fn new(x: f32, z: f32, width: f32, height: f32) -> Self {
-        Self { x, z, width, height }
-    }
-    
-    pub fn contains(&self, x: f32, z: f32) -> bool {
-        x >= self.x && x < (self.x + self.width) && 
-        z >= self.z && z < (self.z + self.height)
-    }
-}
-
 impl SectionDefinition {
     pub fn new(
         id: u8,
@@ -89,7 +56,7 @@ impl SectionDefinition {
         length: f32,
         transition_zone: f32,
         possible_biomes: Vec<u8>,
-        point_density: f32,
+        blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
         boundary_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
     ) -> Self {
         let end_position = start_position + length;
@@ -102,7 +69,7 @@ impl SectionDefinition {
             transition_start,
             transition_end: end_position,
             possible_biomes,
-            point_density,
+            blend_noise_fn,
             boundary_noise_fn,
         }
     }
@@ -127,7 +94,7 @@ impl Clone for SectionDefinition {
             transition_start: self.transition_start,
             transition_end: self.transition_end,
             possible_biomes: self.possible_biomes.clone(),
-            point_density: self.point_density,
+            blend_noise_fn: self.blend_noise_fn.clone(),
             boundary_noise_fn: self.boundary_noise_fn.clone(),
         }
     }
@@ -155,7 +122,7 @@ impl std::fmt::Debug for SectionDefinition {
             .field("transition_start", &self.transition_start)
             .field("transition_end", &self.transition_end)
             .field("possible_biomes", &self.possible_biomes)
-            .field("point_density", &self.point_density)
+            .field("has_blend_noise", &self.blend_noise_fn.is_some())
             .field("has_boundary_noise", &self.boundary_noise_fn.is_some())
             .finish()
     }
@@ -170,17 +137,6 @@ impl std::fmt::Debug for BiomeDefinition {
             .field("has_primary_noise", &true) // We can't easily debug the noise function
             .field("texture_params", &self.texture_params)
             .field("secondary_noise_count", &self.secondary_noise_fns.len())
-            .finish()
-    }
-}
-
-// For VoronoiPoint - already has Clone, add Debug derivation
-impl std::fmt::Debug for VoronoiPoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VoronoiPoint")
-            .field("position", &self.position)
-            .field("biome_id", &self.biome_id)
-            .field("section_id", &self.section_id)
             .finish()
     }
 }
