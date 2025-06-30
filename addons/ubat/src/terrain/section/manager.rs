@@ -5,8 +5,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use super::sectionConfig::{SectionTomlConfig, BiomeTomlConfig};
-use crate::terrain::section::definition::{SectionDefinition, BiomeDefinition, VoronoiPoint, Rect2};
-use crate::terrain::section::distribution::{generate_voronoi_points_for_section, SpatialGrid};
+use crate::terrain::section::definition::{SectionDefinition, BiomeDefinition};
 use crate::terrain::section::sectionConfig;
 use crate::terrain::section::thread_safe_data::ThreadSafeSectionData;
 use crate::terrain::noise::noise_manager::NoiseManager;
@@ -22,8 +21,6 @@ pub struct SectionManager {
 
     sections: Vec<SectionDefinition>,
     biomes: Vec<BiomeDefinition>,
-    voronoi_points: Vec<VoronoiPoint>,
-    spatial_grid: Option<SpatialGrid>,
     
     world_length: f32,
     world_width: f32,
@@ -41,11 +38,8 @@ impl INode for SectionManager {
             base,
             sections: Vec::new(),
             biomes: Vec::new(),
-            voronoi_points: Vec::new(),
-            spatial_grid: None,
             
             world_length: 1000.0, // Placeholder/Default - Set by set_world_dimensions
-
             world_width: 10000.0, // Placeholder/Default - Set by set_world_dimensions
             world_seed: 0,
             
@@ -77,17 +71,9 @@ impl SectionManager {
         let mut sections_config: Vec<SectionTomlConfig> = Vec::new();
         let mut biomes_config: Vec<BiomeTomlConfig> = Vec::new();
 
-        godot_print!("SectionManager::initialize - About to generate Voronoi points.");
-        godot_print!("  Effective self.world_width = {}", self.world_width);
-        godot_print!("  Effective self.world_length = {}", self.world_length); // This should be sum of TOML section lengths
-        godot_print!("  Effective self.world_seed = {}", self.world_seed);
-        godot_print!("  Effective self.biome_blend_distance = {}", self.biome_blend_distance);
-
         // <<< ADDED >>> Reset state at the beginning
         self.sections.clear();
         self.biomes.clear();
-        self.voronoi_points.clear();
-        self.spatial_grid = None;
         self.initialized = false;
         self.world_seed = world_seed;
 
@@ -117,9 +103,9 @@ impl SectionManager {
                             let boundary_noise_key = section_dict.get("boundary_noise_key")
                                 .and_then(|v| v.try_to::<String>().ok());
 
-                            let point_density = section_dict.get("point_density")
-                                .and_then(|v| v.try_to::<f32>().ok())
-                                .unwrap_or(0.01);
+                            let blend_noise_key = section_dict.get("blend_noise_key")
+                                .and_then(|v| v.try_to::<String>().ok())
+                                .unwrap_or_default();
 
                             // *** CORRECTED TYPE: Parse possible_biomes elements as u8 ***
                             let mut possible_biomes: Vec<u8> = Vec::new(); // Expect Vec<u8>
@@ -142,7 +128,7 @@ impl SectionManager {
 
                             // Create SectionTomlConfig (ensure its definition uses u8 for id and Vec<u8> for possible_biomes)
                             sections_config.push(SectionTomlConfig {
-                                id, length, transition_zone, boundary_noise_key, possible_biomes, point_density,
+                                id, length, transition_zone, boundary_noise_key, possible_biomes, blend_noise_key,
                             });
 
                         } else {
@@ -259,8 +245,6 @@ impl SectionManager {
         self.world_seed = world_seed;
         self.sections.clear();
         self.biomes.clear();
-        self.voronoi_points.clear();
-        self.spatial_grid = None;
 
         // --- Process Biomes into Definitions ---
         let nm_bind = noise_manager.bind();
@@ -301,7 +285,6 @@ impl SectionManager {
 
         // --- Process Sections into Definitions ---
         let mut current_position = 0.0;
-        let mut total_length = 0.0;
         let mut total_length_from_toml = 0.0;
 
         for section_config in &sections_config { // Iterate over ref first to get total length
@@ -331,13 +314,15 @@ impl SectionManager {
         for section_config_item in &sections_config { // Iterate over ref
             let boundary_noise_fn = section_config_item.boundary_noise_key.as_deref()
                 .and_then(|key| nm_bind.get_noise_function(key));
+            
+            let blend_noise_fn = nm_bind.get_noise_function(&section_config_item.blend_noise_key);
 
             let scaled_length = section_config_item.length * length_scale_factor;
             let scaled_transition = (section_config_item.transition_zone * length_scale_factor).min(scaled_length * 0.99).max(0.0);
 
             let section_def = SectionDefinition::new(
                 section_config_item.id, current_position, scaled_length, scaled_transition,
-                section_config_item.possible_biomes.clone(), section_config_item.point_density, boundary_noise_fn,
+                section_config_item.possible_biomes.clone(), blend_noise_fn, boundary_noise_fn,
             );
             self.sections.push(section_def);
             current_position += scaled_length;
@@ -346,21 +331,13 @@ impl SectionManager {
         godot_print!("  Created {} SectionDefinitions. Final calculated end position of last section: {}", self.sections.len(), current_position);
 
 
-        // --- Set Blend Distance and Generate Points ---
+        // --- Set Blend Distance ---
         if let Ok(tc_guard) = TerrainConfigManager::get_config().read() {
             self.biome_blend_distance = tc_guard.blend_distance;
             godot_print!("  Set Biome Blend Distance from config: {}", self.biome_blend_distance);
         } else {
             godot_error!("  Failed to read TerrainConfig for blend_distance! Using default: {}", self.biome_blend_distance);
         }
-
-        godot_print!("SectionManager::initialize - FINAL CHECK Before Generating Voronoi Points:");
-        godot_print!("  World Width = {}", self.world_width);
-        godot_print!("  World Length = {}", self.world_length); // This is now the definitive length
-        godot_print!("  World Seed = {}", self.world_seed);
-        godot_print!("  Biome Blend Distance = {}", self.biome_blend_distance);
-
-        self.generate_voronoi_points();
 
         self.initialized = true;
         godot_print!("SectionManager: Initialization complete.");
@@ -399,89 +376,6 @@ impl SectionManager {
         
         true
     }
-    
-    /// Generate Voronoi points for all sections.
-    fn generate_voronoi_points(&mut self) {
-        if self.sections.is_empty() {
-            godot_print!("SectionManager::generate_voronoi_points - No sections defined, cannot generate points.");
-            self.voronoi_points.clear();
-            self.spatial_grid = None;
-            return;
-        }
-        
-        self.voronoi_points.clear();
-        
-        // Define the overall bounds for Voronoi point generation and the spatial grid.
-        // Points are generated per section, but the grid covers the whole world.
-        let world_bounds = Rect2::new(
-            -self.world_width / 2.0, // Centered around X=0
-            0.0,                     // Starts at Z=0
-            self.world_width,
-            self.world_length
-        );
-        
-        godot_print!(
-            "SectionManager::generate_voronoi_points - World Bounds for grid: X: {:.1}, Z: {:.1}, W: {:.1}, H: {:.1}",
-            world_bounds.x, world_bounds.z, world_bounds.width, world_bounds.height
-        );
-
-        // Generate points for each section
-        for section in &self.sections {
-            // Define the specific bounds for *this* section's point generation
-            let section_bounds = Rect2::new(
-                world_bounds.x,             // Use the same X start as world_bounds
-                section.start_position,
-                world_bounds.width,         // Use the full world width for points in this section
-                section.end_position - section.start_position // Length of this section
-            );
-            
-            // godot_print!( // Optional: Log individual section bounds
-            //     "  Generating points for Section ID {}: Bounds X: {:.1}, Z: {:.1}, W: {:.1}, H: {:.1}",
-            //     section.id, section_bounds.x, section_bounds.z, section_bounds.width, section_bounds.height
-            // );
-
-            let section_points = generate_voronoi_points_for_section(
-                section,
-                section_bounds,
-                self.world_seed // Use the manager's world seed
-            );
-            
-            self.voronoi_points.extend(section_points);
-        }
-        
-        // Build the spatial grid for efficient queries
-        if !self.voronoi_points.is_empty() {
-            // --- START OF MODIFICATION: Make cell_size adaptive ---
-            // Aim for the 3x3 grid cell search to cover roughly the blend_distance radius.
-            // A 3x3 grid search (1 cell neighbor in each direction) covers a square region
-            // of 3*cell_size width/height. The diagonal of this is sqrt(2) * 3 * cell_size.
-            // We want this search area to be generous enough for biome_blend_distance.
-            // A simpler heuristic: ensure one cell is not drastically larger than the blend distance.
-            // Let's make cell_size roughly half to a third of the blend_distance,
-            // clamped to reasonable min/max values.
-            // Example: if blend_distance = 150, cell_size could be 75. A 3x3 search covers 225x225.
-            let calculated_cell_size = (self.biome_blend_distance / 2.0).max(50.0).min(self.world_width / 10.0); // Ensure at least 10 cells across world width
-            
-            godot_print!(
-                "SectionManager: Biome Blend Distance: {:.1}. Using adaptive cell_size for SpatialGrid: {:.1}",
-                self.biome_blend_distance,
-                calculated_cell_size
-            );
-
-            self.spatial_grid = Some(SpatialGrid::new(
-                world_bounds, // Grid covers the entire world_bounds
-                &self.voronoi_points,
-                calculated_cell_size // Use the adaptive cell_size
-            ));
-            
-            godot_print!("SectionManager: Generated {} Voronoi points across all sections and built SpatialGrid.", 
-                        self.voronoi_points.len());
-        } else {
-            godot_warn!("SectionManager: No Voronoi points were generated. SpatialGrid will not be built.");
-            self.spatial_grid = None;
-        }
-    }
-
     
     /// Check if the manager is fully initialized.
     #[func]
@@ -526,20 +420,6 @@ impl SectionManager {
         true.to_variant()
     }
 
-    /// Get a reference to the Voronoi points list
-    #[func]
-    pub fn get_voronoi_points(&self) -> Variant {
-        // Similar approach
-        true.to_variant()
-    }
-
-    /// Get a reference to the spatial grid
-    #[func]
-    pub fn get_spatial_grid(&self) -> Variant {
-        // Similar approach
-        self.spatial_grid.is_some().to_variant()
-    }
-
     pub fn get_sections_internal(&self) -> &Vec<SectionDefinition> {
         &self.sections
     }
@@ -548,14 +428,6 @@ impl SectionManager {
         &self.biomes
     }
     
-    pub fn get_voronoi_points_internal(&self) -> &Vec<VoronoiPoint> {
-        &self.voronoi_points
-    }
-    
-    pub fn get_spatial_grid_internal(&self) -> Option<&SpatialGrid> {
-        self.spatial_grid.as_ref()
-    }    
-
     /// Get the world seed
     #[func]
     pub fn get_world_seed(&self) -> u64 {
@@ -566,10 +438,6 @@ impl SectionManager {
     #[func]
     pub fn set_seed(&mut self, seed: u32) {
         self.world_seed = seed as u64;
-        // If already initialized, regenerate Voronoi points
-        if self.initialized {
-            self.generate_voronoi_points();
-        }
     }
 
     /// Set the world dimensions (width and height)
@@ -613,12 +481,6 @@ impl SectionManager {
                     
                     current_pos += section_length;
                 }
-                
-                // If initialized, regenerate Voronoi points for the new dimensions
-                if self.initialized {
-                    godot_print!("DEBUG:   Calling generate_voronoi_points() due to dimension change.");
-                    self.generate_voronoi_points();
-                }
             } else {godot_print!("DEBUG:   World length ({}) did not change. No recalculation needed.", self.world_length);}
         }
     }
@@ -631,7 +493,6 @@ impl SectionManager {
         godot_print!("  World width: {}", self.world_width);
         godot_print!("  World length: {}", self.world_length);
         godot_print!("  Total sections: {}", self.sections.len());
-        godot_print!("  Total Voronoi points: {}", self.voronoi_points.len()); // Added point count
 
         if self.sections.is_empty() {
             godot_warn!("  No sections found!");
@@ -731,7 +592,7 @@ impl SectionManager {
     
     /// Debug function to get information about a specific position.
     #[func]
-    pub fn get_debug_info_at(&self, world_x: f32, world_z: f32) -> Dictionary {
+  pub fn get_debug_info_at(&self, world_x: f32, world_z: f32) -> Dictionary {
         let mut result = Dictionary::new();
         
         if !self.initialized {
@@ -744,37 +605,6 @@ impl SectionManager {
         // Get section info
         let section_info = self.get_section_at(world_z);
         result.insert("section_info", section_info);
-        
-        // Get nearby Voronoi points if available
-        if let Some(grid) = &self.spatial_grid {
-            if !self.voronoi_points.is_empty() {
-                let nearest_points = grid.find_k_nearest_points(
-                    world_x, 
-                    world_z, 
-                    &self.voronoi_points, 
-                    3, // Get 3 nearest points
-                    self.biome_blend_distance,
-                    None // No section filter
-                );
-                
-                let mut points_array = VariantArray::new();
-                
-                for (idx, distance) in nearest_points {
-                    let point = &self.voronoi_points[idx];
-                    let mut point_dict = Dictionary::new();
-                    
-                    point_dict.insert("biome_id", point.biome_id);
-                    point_dict.insert("section_id", point.section_id);
-                    point_dict.insert("position_x", point.position.0);
-                    point_dict.insert("position_z", point.position.1);
-                    point_dict.insert("distance", distance);
-                    
-                    points_array.push(&point_dict.to_variant());
-                }
-                
-                result.insert("nearest_points", points_array);
-            }
-        }
         
         result
     }
