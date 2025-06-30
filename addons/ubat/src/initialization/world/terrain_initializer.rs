@@ -139,7 +139,7 @@ impl TerrainInitializer {
                 "boundary_noise_key".to_variant(),
                 section.boundary_noise_key.clone().unwrap_or_default().to_variant(),
             );
-            dict.insert("point_density".to_variant(), section.point_density.to_variant());
+            
     
             let mut biomes_ids = VariantArray::new();
             for &b in &section.possible_biomes {
@@ -254,7 +254,7 @@ impl TerrainInitializer {
                     let sm_bind = section_mgr_gd.bind(); // Bind here
                     godot_print!("DEBUG:   World Length: {}", sm_bind.get_world_length());
                     godot_print!("DEBUG:   World Width: {}", sm_bind.get_world_width()); // Access internal field if pub or via getter
-                    godot_print!("DEBUG:   Voronoi Points Count: {}", sm_bind.get_voronoi_points_internal().len());
+                    godot_print!("DEBUG:   Sections Count: {}", sm_bind.get_sections_internal().len());
 
                     let sections = sm_bind.get_sections_internal(); // Get internal ref
                     if sections.is_empty() {
