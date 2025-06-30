@@ -3,16 +3,23 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::collections::HashMap;
 
-use crate::terrain::section::definition::{SectionDefinition, BiomeDefinition, VoronoiPoint};
-use crate::terrain::section::distribution::SpatialGrid;
+use crate::terrain::section::definition::{SectionDefinition, BiomeDefinition};
 use crate::terrain::section::manager::SectionManager;
 use crate::terrain::section::layout::calculate_section_weights;
 use crate::terrain::noise::noise_manager::NoiseManager;
 use crate::terrain::chunk_manager::ChunkResult;
 use noise::NoiseFn;
-use crate::terrain::terrain_config::TerrainConfigManager; // To get runtimeconfig
+use crate::terrain::terrain_config::TerrainConfigManager;
 
+use godot::prelude::*;
+use crate::godot_print;
 use std::fmt;
+
+/// A simple smoothstep function.
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 
 /// Thread-safe data container for section and biome information.
 /// This structure can be safely shared between threads for terrain generation.
@@ -20,234 +27,146 @@ use std::fmt;
 pub struct ThreadSafeSectionData {
     pub sections: Arc<Vec<SectionDefinition>>,
     pub biomes: Arc<Vec<BiomeDefinition>>,
-    pub points: Arc<Vec<VoronoiPoint>>,
-    pub grid: Option<Arc<SpatialGrid>>,
     
     pub world_length: f32,
     pub seed: u64,
     
-    pub biome_blend_noise_fn: Option<Arc<dyn NoiseFn<f64, 2> + Send + Sync>>,
-    pub biome_blend_distance: f32,
     pub section_blend_distance: f32,
     pub blend_noise_strength: f32,
 }
 
 impl ThreadSafeSectionData {
     /// Create a new ThreadSafeSectionData from a SectionManager.
-    pub fn from_section_manager(manager: &SectionManager, noise_manager: &NoiseManager) -> Self {
-        // Get blend noise if available
-        let biome_blend_noise = noise_manager.get_noise_function("biome_blend");
-        
-        let grid_arc = if let Some(grid) = manager.get_spatial_grid_internal() {
-            Some(Arc::new(grid.clone()))
-        } else {
-            None
-        };
+    pub fn from_section_manager(manager: &SectionManager, _noise_manager: &NoiseManager) -> Self {
         let blend_noise_strength = if let Ok(guard) = TerrainConfigManager::get_config().read() {
             guard.blend_noise_strength
         } else {
-            eprint!("Failed to read terrain config for blend_noise_strength. Using default 0.25");
+            godot_print!("Failed to read terrain config for blend_noise_strength. Using default 0.25");
             0.25f32 // Default value if lock fails
         };
         
         Self {
             sections: Arc::new(manager.get_sections_internal().clone()),
             biomes: Arc::new(manager.get_biomes_internal().clone()),
-            points: Arc::new(manager.get_voronoi_points_internal().clone()),
-            grid: grid_arc,
             
             world_length: manager.get_world_length(),
             seed: manager.get_world_seed(),
             
-            biome_blend_noise_fn: biome_blend_noise,
-            biome_blend_distance: manager.get_biome_blend_distance(),
             section_blend_distance: manager.get_section_blend_distance(),
             blend_noise_strength,
         }
     }    
     
     /// Get the sections and biomes that influence a position, along with their weights.
-    /// Implements REQ-BD-07 for blending across section boundaries and between Voronoi points.
+    /// This is the core logic for blending biomes based on section Z-position and intra-section noise.
     pub fn get_section_and_biome_weights(
         &self,
         world_x: f32,
         world_z: f32,
-        sender: &Sender<ChunkResult> // Keep sender for logging
+        _sender: &Sender<ChunkResult> // Keep sender for potential future logging
     ) -> Vec<(u8, f32)> {
 
-        // --- Basic Logging ---
-        let log_coord = format!("DEBUG get_weights (Falloff) at (X:{:.2}, Z:{:.2})", world_x, world_z);
-        let _ = sender.send(ChunkResult::LogMessage(log_coord));
-        // ---
-
-        // --- Boundary checks remain the same ---
-        if world_z < 0.0 && !self.sections.is_empty() { /* ... return first biome ... */ }
-        if world_z >= self.world_length && !self.sections.is_empty() { /* ... return last biome ... */ }
-        // ---
-
-        // Step 1: Calculate section weights (no change here)
-        let section_weights = calculate_section_weights(world_z, world_x, &self.sections);
-        let log_sec_weights = format!("  SectionWeights: {:?}", section_weights);
-        let _ = sender.send(ChunkResult::LogMessage(log_sec_weights));
-        if section_weights.is_empty() { return vec![(0, 1.0)]; }
-
-        // Step 2: Initialize final biome weights (using HashMap)
-        let mut final_biome_weights = HashMap::new();
-
-        // Step 3: Check grid/points availability (no change here)
-        if self.grid.is_none() || self.points.is_empty() {
-            let log_no_grid = format!("  WARNING: No grid or points available, using section fallback.");
-            let _ = sender.send(ChunkResult::LogMessage(log_no_grid));
-            // ... (existing fallback logic using first biome of section) ...
-            for (section_id, section_weight) in &section_weights {
-                if let Some(section) = self.sections.iter().find(|s| s.id == *section_id) {
-                    if let Some(&biome_id) = section.possible_biomes.first() {
-                        *final_biome_weights.entry(biome_id).or_insert(0.0) += section_weight;
-                    }
-                }
-            }
-            let mut result: Vec<(u8, f32)> = final_biome_weights.into_iter().collect();
-            result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            return result;
+        // Step 1: Calculate overall section weights based on Z-axis position.
+        // This determines the influence of entire sections (e.g., 70% Section A, 30% Section B).
+        let section_contributions = calculate_section_weights(world_z, world_x, &self.sections);
+        if section_contributions.is_empty() {
+            // Fallback: if no sections, return a default biome.
+            return vec![(0, 1.0)];
         }
 
-        // Step 4: For each weighted section, find *all* points within radius and calculate falloff weights
-        for (section_id, section_weight) in &section_weights {
-            if *section_weight < 0.01 { continue; } // Skip negligible sections
+        // Step 2: Initialize a HashMap to accumulate the final weights for each biome.
+        let mut final_biome_weights: HashMap<u8, f32> = HashMap::new();
 
-            let log_proc_sec = format!("  Processing SectionID: {}, Weight: {:.3}", section_id, section_weight);
-            let _ = sender.send(ChunkResult::LogMessage(log_proc_sec));
+        // Step 3: Iterate through each contributing section and distribute its weight among its possible biomes.
+        for (section_id, overall_section_weight) in section_contributions {
+            if overall_section_weight < 0.001 { continue; }
 
-            // We know grid is Some from check above
-            if let Some(grid) = &self.grid {
-                // --- MODIFICATION: Call new query function ---
-                let points_in_radius = grid.find_points_within_radius(
-                    world_x,
-                    world_z,
-                    &self.points,
-                    self.biome_blend_distance, // Use blend distance as radius
-                    Some(*section_id)          // Keep filtering by section
-                );
-                // ---
+            // Find the definition for the current section.
+            if let Some(section_def) = self.sections.iter().find(|s| s.id == section_id) {
+                let possible_biomes = &section_def.possible_biomes;
 
-                // Log points found
-                let points_details: Vec<(usize, u8, f32)> = points_in_radius.iter().map(|&(idx, dist)| {
-                    let biome_id = self.points.get(idx).map_or(255, |p| p.biome_id);
-                    (idx, biome_id, dist)
-                }).collect();
-                let log_near_pts = format!("    Points within radius {:.1} (Section {} Filter): {} points found: {:?}",
-                                           self.biome_blend_distance, section_id, points_details.len(), points_details);
-                let _ = sender.send(ChunkResult::LogMessage(log_near_pts));
+                if possible_biomes.is_empty() {
+                    continue; // Should not happen with valid config.
+                }
+                
+                // If there's a blend noise function and more than one biome, use noise to blend them.
+                if let (Some(blend_noise_fn), true) = (&section_def.blend_noise_fn, possible_biomes.len() > 1) {
+                    // Get the noise value for the current world position.
+                    let noise_val = blend_noise_fn.get([world_x as f64, world_z as f64]); // Range [-1, 1]
 
-                // --- NEW BLENDING LOGIC ---
-                if points_in_radius.is_empty() {
-                    // Fallback if no points found even within radius
-                    let log_fallback = format!("    FALLBACK: No points found within radius for section {}. Using default biome.", section_id);
-                    let _ = sender.send(ChunkResult::LogMessage(log_fallback));
-                    if let Some(section) = self.sections.iter().find(|s| s.id == *section_id) {
-                        if let Some(&biome_id) = section.possible_biomes.first() {
-                            *final_biome_weights.entry(biome_id).or_insert(0.0) += section_weight;
+                    // --- Interpretation Logic ---
+                    // This part determines how the noise value maps to biome weights.
+                    let num_possible = possible_biomes.len();
+                    let mut intra_section_biome_weights = vec![0.0f32; num_possible];
+                    
+                    // Example for 2 biomes: simple linear interpolation mapped from noise.
+                    if num_possible == 2 {
+                        let t = (noise_val * 0.5 + 0.5) as f32; // Map noise from [-1,1] to t in [0,1]
+                        // Use smoothstep for a nicer transition between the two biomes.
+                        // The range [0.4, 0.6] creates a blend zone. Outside this, it's pure biome.
+                        intra_section_biome_weights[0] = 1.0 - smoothstep(0.4, 0.6, t);
+                        intra_section_biome_weights[1] = smoothstep(0.4, 0.6, t);
+                    } 
+                    // Example for 3+ biomes: divide the noise range into segments.
+                    else {
+                        let segment_size = 2.0 / num_possible as f64; // Size of each noise segment
+                        
+                        for i in 0..num_possible {
+                            // The "center" of the noise range for this biome.
+                            let biome_center_noise_val = -1.0 + segment_size * (i as f64 + 0.5);
+                            // Calculate distance from current noise value to this biome's center.
+                            let dist_to_center = (noise_val - biome_center_noise_val).abs();
+                            // A simple triangular/linear falloff from the center.
+                            // Weight is 1.0 at the center, 0.0 at the edge of its segment.
+                            let raw_weight = (1.0 - dist_to_center / segment_size).max(0.0) as f32;
+                            intra_section_biome_weights[i] = raw_weight;
                         }
                     }
-                    continue; // Next section
-                }
 
-                // Calculate falloff weights for all found points
-                let mut falloff_contributions = Vec::new(); // Store (biome_id, falloff_weight)
-                let mut total_falloff_weight: f32 = 0.0;
-                let blend_dist_sq = self.biome_blend_distance * self.biome_blend_distance; // Avoid repeated calc
-
-                for &(idx, dist) in &points_in_radius {
-                    if idx >= self.points.len() { continue; } // Safety check
-
-                    let biome_id = self.points[idx].biome_id;
-                    let t = (dist / self.biome_blend_distance).clamp(0.0, 1.0); // Normalized distance
-
-                    // Smoothstep falloff: weight = 1 at dist=0, 0 at dist=blend_distance
-                    let falloff = 1.0 - (t * t * (3.0 - 2.0 * t));
-
-                    // --- Optional: Log individual falloff weights ---
-                    // let log_falloff = format!("      PointIdx:{}, Biome:{}, Dist:{:.2}, t:{:.2}, Falloff:{:.3}", idx, biome_id, dist, t, falloff);
-                    // let _ = sender.send(ChunkResult::LogMessage(log_falloff));
-                    // ---
-
-                    if falloff > 1e-4 { // Only consider non-negligible weights
-                        falloff_contributions.push((biome_id, falloff));
-                        total_falloff_weight += falloff;
+                    // Normalize the intra-section weights to sum to 1.
+                    let total_intra_weight: f32 = intra_section_biome_weights.iter().sum();
+                    if total_intra_weight > 0.01 {
+                        for i in 0..num_possible {
+                            let biome_id = possible_biomes[i];
+                            let normalized_intra_weight = intra_section_biome_weights[i] / total_intra_weight;
+                            // The final contribution is the section's overall weight multiplied by the biome's intra-section weight.
+                            *final_biome_weights.entry(biome_id).or_insert(0.0) += normalized_intra_weight * overall_section_weight;
+                        }
+                    } else {
+                        // Fallback if all weights are tiny, give full section weight to the first possible biome.
+                        *final_biome_weights.entry(possible_biomes[0]).or_insert(0.0) += overall_section_weight;
                     }
-                }
 
-                // Normalize falloff weights and apply section weight
-                if total_falloff_weight > 1e-6 {
-                    let log_total_falloff = format!("    Total falloff weight for section {}: {:.3}", section_id, total_falloff_weight);
-                    let _ = sender.send(ChunkResult::LogMessage(log_total_falloff));
-
-                    for (biome_id, falloff) in falloff_contributions {
-                        let intra_weight = falloff / total_falloff_weight; // Normalize
-                        let weighted_contribution = section_weight * intra_weight;
-
-                        let log_contribution = format!(
-                            "    Biome {} Contribution: {:.4} (SectionWeight {:.3} * NormFalloff {:.3} [Raw: {:.3}])",
-                             biome_id, weighted_contribution, section_weight, intra_weight, falloff
-                        );
-                        let _ = sender.send(ChunkResult::LogMessage(log_contribution));
-
-                       *final_biome_weights.entry(biome_id).or_insert(0.0) += weighted_contribution;
-                    }
                 } else {
-                    // Handle case where total falloff is zero (e.g., all points exactly at blend distance)
-                     let log_zero_falloff = format!("    WARNING: Total falloff weight is zero for section {}. Using closest point.", section_id);
-                     let _ = sender.send(ChunkResult::LogMessage(log_zero_falloff));
-                     // Fallback: use the single closest point found
-                     if let Some(&(closest_idx, _)) = points_in_radius.first() {
-                          if closest_idx < self.points.len() {
-                              let biome_id = self.points[closest_idx].biome_id;
-                              *final_biome_weights.entry(biome_id).or_insert(0.0) += section_weight; // Full section weight to closest
-                          }
-                     }
+                    // If no blend noise or only one biome, give the section's entire weight to the first possible biome.
+                    *final_biome_weights.entry(possible_biomes[0]).or_insert(0.0) += overall_section_weight;
                 }
-                // --- END NEW BLENDING LOGIC ---
             }
-            // Grid was None case handled before the loop
-        } // End loop over section_weights
-
-
-        // Step 5: Final Processing (Convert HashMap, Sort, Normalize if needed)
-        let mut result: Vec<(u8, f32)> = final_biome_weights
-            .into_iter()
-            .filter(|&(_, w)| w > 1e-4) // Filter negligible weights
-            .collect();
-
-        if result.is_empty() {
-             let log_empty_final = format!("  WARNING: All final biome weights were negligible. Defaulting to biome 0.");
-             let _ = sender.send(ChunkResult::LogMessage(log_empty_final));
-             return vec![(0, 1.0)];
         }
 
-        result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Step 4: Convert the HashMap to a Vec, sort by weight, and take the top N (e.g., 3).
+        let mut sorted_weights: Vec<(u8, f32)> = final_biome_weights.into_iter().collect();
+        sorted_weights.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Take the top 3 biomes for the shader.
+        sorted_weights.truncate(3);
 
-        // Optional: Final normalization if sum is still off (less likely now)
-        let sum: f32 = result.iter().map(|&(_, w)| w).sum();
-         if sum < 1e-6 {
-             let log_zero_sum = format!("  WARNING: Final weight sum is near zero ({:.4}). Defaulting to first biome.", sum);
-             let _ = sender.send(ChunkResult::LogMessage(log_zero_sum));
-             return vec![(result[0].0, 1.0)];
-         } else if (sum - 1.0).abs() > 0.01 {
-             let log_norm = format!("  Normalizing final weights (Sum: {:.3}). Original: {:?}", sum, result);
-             let _ = sender.send(ChunkResult::LogMessage(log_norm));
-             for entry in result.iter_mut() { entry.1 /= sum; }
-             let log_norm_res = format!("    Normalized Result: {:?}", result);
-             let _ = sender.send(ChunkResult::LogMessage(log_norm_res));
+        // Step 5: Re-normalize the weights of the top N biomes so they sum to 1.0.
+        // This is crucial for the shader to correctly blend textures.
+        let total_top_weight: f32 = sorted_weights.iter().map(|&(_, w)| w).sum();
+        if total_top_weight > 0.01 {
+            for (_, weight) in sorted_weights.iter_mut() {
+                *weight /= total_top_weight;
+            }
+        } else if !sorted_weights.is_empty() {
+            // If total weight is negligible but we have biomes, give the first one full weight.
+            sorted_weights[0].1 = 1.0;
+        } else {
+            // Absolute fallback if no biomes were found at all.
+            return vec![(0, 1.0)];
         }
 
-        result
-    } // --- End of get_section_and_biome_weights ---
-
-    
-    /// Get biome weights at a specific position (used by REQ-TG-01).
-    /// This is a convenience wrapper around get_section_and_biome_weights.
-    pub fn get_biome_id_and_weights(&self, world_x: f32, world_z: f32, sender: &Sender<ChunkResult>) -> Vec<(u8, f32)> {
-        self.get_section_and_biome_weights(world_x, world_z, sender)
+        sorted_weights
     }
     
     /// Get a biome definition by ID.
@@ -261,12 +180,8 @@ impl fmt::Debug for ThreadSafeSectionData {
         f.debug_struct("ThreadSafeSectionData")
             .field("sections_count", &self.sections.len())
             .field("biomes_count", &self.biomes.len())
-            .field("points_count", &self.points.len())
-            .field("has_grid", &self.grid.is_some())
             .field("world_length", &self.world_length)
             .field("seed", &self.seed)
-            .field("has_biome_blend_noise", &self.biome_blend_noise_fn.is_some())
-            .field("biome_blend_distance", &self.biome_blend_distance)
             .field("section_blend_distance", &self.section_blend_distance)
             .field("blend_noise_strength", &self.blend_noise_strength)
             .finish()
