@@ -85,7 +85,7 @@ pub struct ChunkManager {
 #[godot_api]
 impl INode3D for ChunkManager {
     fn init(base: Base<Node3D>) -> Self {
-        println!("ChunkManager: Initializing...");
+        godot_print!("ChunkManager: Initializing...");
         let (tx, rx) = channel(); // Create the channel
         let storage = Arc::new(ChunkStorage::new("user://terrain_data", tx.clone()));
         let compute_pool = get_or_init_global_pool(); // Use global pool
@@ -94,7 +94,7 @@ impl INode3D for ChunkManager {
         let chunk_size = match config_arc.read() { // Lock it
             Ok(guard) => guard.chunk_size, // Access field
             Err(_) => {
-                eprintln!("ChunkManager::init: Failed to read terrain config lock for chunk size. Using default 32.");
+                godot_error!("ChunkManager::init: Failed to read terrain config lock for chunk size. Using default 32.");
                 32 // Default if lock fails
             }
         };
@@ -120,7 +120,7 @@ impl INode3D for ChunkManager {
 
     fn ready(&mut self) {
         let start_time = std::time::Instant::now();
-        println!("ChunkManager: Ready. Linking SectionManager...");
+        godot_print!("ChunkManager: Ready. Linking SectionManager...");
         self.section_manager = None; // Ensure starts as None
 
         if let Some(parent) = self.base().get_parent() {
@@ -128,41 +128,41 @@ impl INode3D for ChunkManager {
             let section_manager_node = parent.get_node_as::<SectionManager>("SectionManager");
             if section_manager_node.is_instance_valid() {
                 if section_manager_node.bind().is_fully_initialized() {
-                    println!("ChunkManager: SectionManager is initialized.");
+                    godot_print!("ChunkManager: SectionManager is initialized.");
                     // Assign if ready (original simple assignment should work now)
                     self.section_manager = Some(section_manager_node.clone());
                 } else {
-                    eprintln!("ChunkManager: Found 'SectionManager', but it's not initialized yet.");
+                    godot_error!("ChunkManager: Found 'SectionManager', but it's not initialized yet.");
                     // section_manager remains None
                 }
             } else {
-                eprintln!("ChunkManager: Could not find node 'SectionManager' under parent.");
+                godot_error!("ChunkManager: Could not find node 'SectionManager' under parent.");
                 // section_manager remains None
             }
 
             // --- Link NoiseManager ---
             let noise_manager_node = parent.get_node_as::<NoiseManager>("NoiseManager");
             if noise_manager_node.is_instance_valid() {
-                println!("ChunkManager: Linking NoiseManager"); // Use println!
+                godot_print!("ChunkManager: Linking NoiseManager"); // Use println!
                 let nm_gd = noise_manager_node;
                 // Get the FUNCTION cache handle using the new NoiseManager getter
                 self.noise_functions_cache = Some(nm_gd.bind().get_function_cache_handle()); // <- Use new getter
                 self.noise_manager = Some(nm_gd); // Keep Gd if needed
             } else {
-                 eprintln!("ChunkManager: Could not find node 'NoiseManager'. Noise functions will be unavailable."); // Use eprintln!
+                 godot_error!("ChunkManager: Could not find node 'NoiseManager'. Noise functions will be unavailable."); // Use eprintln!
                  self.noise_functions_cache = None;
                  self.noise_manager = None; // Ensure this is None too
             }
 
         } else {
-            eprintln!("ChunkManager: Could not find parent node!");
+            godot_error!("ChunkManager: Could not find parent node!");
             // section_manager remains None
         }
 
         // Ensure chunk size matches latest config
         self.apply_config_updates();
 
-        println!("ChunkManager: Ready completed in {}ms", start_time.elapsed().as_millis());
+        godot_print!("ChunkManager: Ready completed in {}ms", start_time.elapsed().as_millis());
     }
 
     fn process(&mut self, _delta: f64) {
@@ -176,7 +176,7 @@ impl INode3D for ChunkManager {
 
                 // Check if the update was successful by reading the value
                 if self.thread_safe_section_data.read().unwrap().is_some() {
-                    println!("ChunkManager: ThreadSafeSectionData successfully initialized/updated in process."); // Use println!
+                    godot_print!("ChunkManager: ThreadSafeSectionData successfully initialized/updated in process."); // Use println!
                     self.is_thread_safe_data_ready = true; // Set flag only on success
                 } else {
                     // Optional: Log that managers are present but data update failed
@@ -261,7 +261,7 @@ impl ChunkManager {
     }
 
     fn queue_generation(&self, pos: ChunkPosition) {
-        println!("ChunkManager: Queuing generation task for {:?}", pos);
+        godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
         let storage_clone = Arc::clone(&self.storage);
         // --- Clone the Arc containing the Option<Arc<ThreadSafeSectionData>> ---
         let section_data_rwlock_arc = Arc::clone(&self.thread_safe_section_data);
@@ -271,11 +271,11 @@ impl ChunkManager {
         let amplification = match config_arc.read() {
             Ok(guard) => guard.amplification,
             Err(_) => {
-                eprintln!("ERROR: Failed to read terrain config lock in queue_generation. Using default amplification 1.0");
+                godot_error!("ERROR: Failed to read terrain config lock in queue_generation. Using default amplification 1.0");
                 1.0 // Default on error
             }
         };
-        println!("ChunkManager: Amplification = {}", amplification);
+        godot_print!("ChunkManager: Amplification = {}", amplification);
 
     
         let chunk_size = self.chunk_size;
@@ -285,7 +285,7 @@ impl ChunkManager {
         let noise_funcs_cache_handle = match &self.noise_functions_cache { // Use the correct field
             Some(cache_arc) => Arc::clone(cache_arc), // Clone the Arc handle
             None => {
-                eprintln!("ChunkManager: Cannot queue generation for {:?}, Noise function cache is not available.", pos);
+                godot_error!("ChunkManager: Cannot queue generation for {:?}, Noise function cache is not available.", pos);
                 let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, "Noise function cache unavailable".to_string()));
                 return;
             }
@@ -307,7 +307,7 @@ impl ChunkManager {
                 let err_msg = format!("SectionData unavailable for generation task at {:?} (ChunkManager's shared data is None)", pos);                // Send the original String
                 let _ = sender_clone.send(ChunkResult::GenerationFailed(pos, err_msg.clone())); // Clone err_msg here
                 // Log using the original still-owned string
-                eprintln!("{}", err_msg);
+                godot_error!("{}", err_msg);
                 return;
             }
             
@@ -338,7 +338,7 @@ impl ChunkManager {
                         cache_w.push(pos, data); // Push loaded data into LRU cache
                     },
                     Err(_) => {
-                        eprintln!("ChunkManager handle_chunk_result: Cache write lock poisoned updating cache for loaded {:?}", pos);
+                        godot_error!("ChunkManager handle_chunk_result: Cache write lock poisoned updating cache for loaded {:?}", pos);
                     }
                 }
     
@@ -351,13 +351,13 @@ impl ChunkManager {
                 let mut states = self.chunk_states.write().unwrap();
                 match states.get(&pos) {
                     Some(ChunkGenState::Loading) => {
-                        println!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
+                        godot_print!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
                         states.insert(pos, ChunkGenState::Generating);
                         drop(states); // Drop lock BEFORE queueing
                         self.queue_generation(pos);
                     },
                     other_state => {
-                        eprintln!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}",
+                        godot_error!("ChunkManager: Received LoadFailed for {:?} but state was not Loading: {:?}",
                                    pos, other_state);
                         states.insert(pos, ChunkGenState::Unknown); // Reset state
                     }
@@ -371,7 +371,7 @@ impl ChunkManager {
                        cache_w.push(pos, data); // Push generated data into LRU cache
                    },
                    Err(_) => {
-                       eprintln!("ChunkManager handle_chunk_result: Cache write lock poisoned updating cache for generated {:?}", pos);
+                       godot_error!("ChunkManager handle_chunk_result: Cache write lock poisoned updating cache for generated {:?}", pos);
                    }
                 }
    
@@ -381,7 +381,7 @@ impl ChunkManager {
                 states.insert(pos, ChunkGenState::Ready(Instant::now()));
             }
             ChunkResult::GenerationFailed(pos, err) => {
-                eprintln!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
+                godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
                 let mut states = self.chunk_states.write().unwrap();
                 states.insert(pos, ChunkGenState::Unknown); // Reset state
             }
@@ -397,23 +397,18 @@ impl ChunkManager {
     fn generate_and_save_chunk(
         pos: ChunkPosition,
         storage: Arc<ChunkStorage>,
-        section_data: Arc<ThreadSafeSectionData>, // Receives Arc<ThreadSafeSectionData>
-        noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
+        section_data: Arc<ThreadSafeSectionData>,
+        _noise_functions_cache_handle: Arc<RwLock<HashMap<String, Arc<dyn NoiseFn<f64, 2> + Send + Sync>>>>,
         chunk_size: u32,
         sender: Sender<ChunkResult>,
-        amplification: f64, // Passed from caller (queue_generation)
+        amplification: f64,
     ) {
         let grid_width = chunk_size + 1;
         let vertex_count = (grid_width * grid_width) as usize;
 
         let mut heightmap = vec![0.0f32; vertex_count];
-        let mut biome_indices_data = vec![[0u8; 3]; vertex_count]; // Top 3 biome IDs for texturing
-        let mut biome_weights_data = vec![[0.0f32; 3]; vertex_count]; // Blend weights for top 3
-
-        let noise_funcs_reader = noise_functions_cache_handle.read().unwrap();
-        
-        // Get blend_noise_strength from section_data (it now holds it)
-        let blend_noise_strength = section_data.blend_noise_strength;
+        let mut biome_indices_data = vec![[0u8; 3]; vertex_count];
+        let mut biome_weights_data = vec![[0.0f32; 3]; vertex_count];
 
         for iz in 0..grid_width {
             for ix in 0..grid_width {
@@ -421,130 +416,46 @@ impl ChunkManager {
                 let world_x = pos.x as f32 * chunk_size as f32 + ix as f32;
                 let world_z = pos.z as f32 * chunk_size as f32 + iz as f32;
 
-                // 1. Get initial biome influences (already considers sections and Voronoi falloff)
-                // These influences are effectively [(biome_id, pre_noise_modulated_weight)]
-                let initial_influences = section_data.get_biome_id_and_weights(world_x, world_z, &sender);
+                // 1. Get the final, normalized biome influences for this vertex.
+                // This single call now encapsulates section blending and intra-section noise blending.
+                let final_biome_influences = section_data.get_section_and_biome_weights(world_x, world_z, &sender);
 
-                if initial_influences.is_empty() {
-                    let _ = sender.send(ChunkResult::LogMessage(format!("generate_and_save_chunk: No initial influences at ({:.1}, {:.1}), chunk {:?}. Defaulting.", world_x, world_z, pos)));
+                if final_biome_influences.is_empty() {
+                    // Fallback if the function returns nothing.
                     heightmap[current_vertex_idx] = 0.0;
-                    biome_indices_data[current_vertex_idx] = [0, 0, 0]; // Default biome 0
+                    biome_indices_data[current_vertex_idx] = [0, 0, 0];
                     biome_weights_data[current_vertex_idx] = [1.0, 0.0, 0.0];
                     continue;
                 }
 
-                // 2. Create `effective_influences` by modulating with biome_blend_noise
-                let mut effective_influences = Vec::with_capacity(initial_influences.len());
-                let mut total_effective_weight_for_modulation = 0.0;
-
-                for (biome_id, original_weight) in &initial_influences {
-                    if *original_weight < 1e-5 { continue; } // Skip truly negligible original weights
-
-                    let mut current_effective_weight = *original_weight;
-
-                    if let Some(blend_noise_fn) = &section_data.biome_blend_noise_fn {
-                        if blend_noise_strength > 1e-5 { // Only apply if strength is meaningful
-                            let noise_val = blend_noise_fn.get([world_x as f64, world_z as f64]) as f32; // -1 to 1
-                            // Modulate: increase or decrease weight based on noise
-                            // The (1.0 + noise_val * strength) factor can push weight > original_weight or < original_weight
-                            // It's important original_weights sum to 1 (or are normalized later)
-                            current_effective_weight *= (1.0 + noise_val * blend_noise_strength);
-                            current_effective_weight = current_effective_weight.max(0.0); // Ensure non-negative
-                        }
-                    }
-                    if current_effective_weight > 1e-5 { // Check after modulation
-                        effective_influences.push((*biome_id, current_effective_weight));
-                        total_effective_weight_for_modulation += current_effective_weight;
-                    }
-                }
-                
-                // Normalize these `effective_influences` so their weights sum to 1.0
-                if total_effective_weight_for_modulation > 1e-5 {
-                    for (_, weight) in effective_influences.iter_mut() {
-                        *weight /= total_effective_weight_for_modulation;
-                    }
-                } else if !initial_influences.is_empty() {
-                    // Fallback: if noise made all effective weights zero, use the strongest initial influence
-                    effective_influences.clear();
-                    // Sort initial_influences to get the strongest if not already sorted
-                    // Assuming get_biome_id_and_weights already returns sorted or we sort it.
-                    // For safety, let's just pick the first one if initial_influences was already sorted.
-                    // If not, this might not be the "strongest". A proper sort would be needed here.
-                    // Let's assume initial_influences[0] is the strongest for now.
-                    if let Some(strongest_initial) = initial_influences.get(0) {
-                        effective_influences.push(*strongest_initial);
-                         // if total_effective_weight_for_modulation is 0, and we have a strongest_initial,
-                         // its effective_weight must be 1.0 for that single entry.
-                        if let Some(entry) = effective_influences.get_mut(0) {
-                            entry.1 = 1.0;
-                        }
-                    } else {
-                        // Ultra fallback if initial_influences became empty after filter
-                        effective_influences.push((0, 1.0)); // Default to biome 0
-                    }
-                } else { // initial_influences was empty, so effective_influences is also empty
-                    effective_influences.push((0, 1.0)); // Default to biome 0
-                }
-
-
-                // 3. Height Calculation using `effective_influences`
+                // 2. Calculate the final height as a weighted sum of contributing biomes.
                 let mut final_height_accumulator = 0.0;
-                // let mut summed_weights_for_height = 0.0; // Not strictly needed if effective_influences sum to 1
+                for (biome_id, biome_weight) in &final_biome_influences {
+                    if *biome_weight < 0.001 { continue; }
 
-                for (biome_id, effective_weight) in &effective_influences {
-                    if *effective_weight < 1e-5 { continue; }
-                    
-                    // Fetch biome-specific noise for height
-                    if let Some(noise_fn_arc) = noise_funcs_reader.get(&format!("{}", biome_id)) {
-                        let height_val = noise_fn_arc.get([world_x as f64, world_z as f64]);
-                        final_height_accumulator += (height_val * amplification) as f32 * effective_weight;
-                        // summed_weights_for_height += effective_weight; // if not pre-normalized
+                    // Get the biome's definition to access its primary noise function.
+                    if let Some(biome_def) = section_data.get_biome_definition(*biome_id) {
+                        let height_val = biome_def.primary_noise_fn.get([world_x as f64, world_z as f64]);
+                        final_height_accumulator += (height_val * amplification) as f32 * biome_weight;
                     } else {
-                         // Log if noise not found but biome has weight
-                         let _ = sender.send(ChunkResult::LogMessage(format!("generate_and_save_chunk: Height noise for biome {} not found at ({:.1}, {:.1}). Skipping its height contribution.", biome_id, world_x, world_z)));
+                        let _ = sender.send(ChunkResult::LogMessage(format!("Error: BiomeDef not found for ID {} during height blend", biome_id)));
                     }
                 }
-                heightmap[current_vertex_idx] = final_height_accumulator; // Directly assign as effective_weights sum to 1
+                heightmap[current_vertex_idx] = final_height_accumulator;
 
-
-                // 4. Texture Data Preparation using (sorted) `effective_influences`
-                // Sort `effective_influences` by weight, descending, to pick top N
-                effective_influences.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-                let top_n = 3;
-                let mut temp_ids_for_shader = [0u8; 3];
-                let mut temp_weights_for_shader = [0.0f32; 3];
-                let mut sum_top_n_weights_for_shader: f32 = 0.0;
-
-                for i in 0..top_n {
-                    if i < effective_influences.len() && effective_influences[i].1 > 1e-5 {
-                        temp_ids_for_shader[i] = effective_influences[i].0;
-                        temp_weights_for_shader[i] = effective_influences[i].1;
-                        sum_top_n_weights_for_shader += effective_influences[i].1;
+                // 3. Populate shader data directly from the (already sorted and normalized) influences.
+                for i in 0..3 { // Assuming shader uses top 3
+                    if i < final_biome_influences.len() {
+                        biome_indices_data[current_vertex_idx][i] = final_biome_influences[i].0;
+                        biome_weights_data[current_vertex_idx][i] = final_biome_influences[i].1;
                     } else {
-                        temp_ids_for_shader[i] = 0; // Pad with default biome ID
-                        temp_weights_for_shader[i] = 0.0;
+                        // Pad with a default/null biome if there are fewer than 3 influences.
+                        biome_indices_data[current_vertex_idx][i] = 0;
+                        biome_weights_data[current_vertex_idx][i] = 0.0;
                     }
                 }
-
-                // Normalize the top N weights specifically for the shader (so these 3 sum to 1)
-                if sum_top_n_weights_for_shader > 1e-5 {
-                    for i in 0..top_n {
-                        biome_weights_data[current_vertex_idx][i] = temp_weights_for_shader[i] / sum_top_n_weights_for_shader;
-                    }
-                } else if !effective_influences.is_empty() && effective_influences[0].1 > 1e-5 {
-                    // Fallback: if sum is tiny but there was a dominant biome, give it full weight
-                    biome_weights_data[current_vertex_idx][0] = 1.0;
-                    for i in 1..top_n { biome_weights_data[current_vertex_idx][i] = 0.0; }
-                } else { // No significant influences at all
-                    biome_weights_data[current_vertex_idx][0] = 1.0; // Default to biome 0
-                    for i in 1..top_n { biome_weights_data[current_vertex_idx][i] = 0.0; }
-                }
-                biome_indices_data[current_vertex_idx] = temp_ids_for_shader;
             }
         }
-
-        drop(noise_funcs_reader);
 
         let chunk_data = ChunkData {
             position: pos,
@@ -602,7 +513,7 @@ impl ChunkManager {
         
         let player_chunk_x = (player_x / self.chunk_size as f32).floor() as i32;
         let player_chunk_z = (player_z / self.chunk_size as f32).floor() as i32;
-        println!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
+        godot_print!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
         
         let mut required_chunks = HashSet::new();
         for x in (player_chunk_x - self.render_distance)..=(player_chunk_x + self.render_distance) {
@@ -673,7 +584,7 @@ impl ChunkManager {
         match self.storage.get_data_from_cache(pos) {
             Some(chunk_data) => PackedFloat32Array::from(&chunk_data.heightmap[..]),
             None => {
-                eprintln!("CRITICAL: Chunk {:?} state is Ready, but data not found in storage cache!", pos);
+                godot_error!("CRITICAL: Chunk {:?} state is Ready, but data not found in storage cache!", pos);
                 PackedFloat32Array::new()
             }
         }
@@ -696,7 +607,7 @@ impl ChunkManager {
                 PackedInt32Array::from(&primary_biomes_i32[..])
             },
             None => {
-                eprintln!("CRITICAL: Chunk {:?} state is Ready, but section data not found in storage cache!", pos);
+                godot_error!("CRITICAL: Chunk {:?} state is Ready, but section data not found in storage cache!", pos);
                 PackedInt32Array::new()
             }
         }
@@ -787,12 +698,12 @@ impl ChunkManager {
 
     #[func]
     pub fn shutdown(&mut self) {
-        eprintln!("ChunkManager: Initiating explicit shutdown sequence...");
+        godot_error!("ChunkManager: Initiating explicit shutdown sequence...");
         // If we have unique ownership of the storage Arc, we can call shutdown
         if let Some(storage_mut) = Arc::get_mut(&mut self.storage) {
             storage_mut.shutdown();
         } else {
-            eprintln!("ChunkManager: Cannot get exclusive access to ChunkStorage for explicit shutdown");
+            godot_error!("ChunkManager: Cannot get exclusive access to ChunkStorage for explicit shutdown");
         }
     }
 
@@ -801,7 +712,7 @@ impl ChunkManager {
         let new_distance = distance.max(1).min(32); // Clamp
         if new_distance != self.render_distance{
             self.render_distance = new_distance;
-            println!("ChunkManager: Render distance set to {}", self.render_distance);
+            godot_print!("ChunkManager: Render distance set to {}", self.render_distance);
             // Trigger an unload check immediately? Optional.
         }
     }
@@ -813,7 +724,7 @@ impl ChunkManager {
 
     #[func]
     pub fn set_section_manager(&mut self, section_manager: Gd<SectionManager>) {
-        println!("ChunkManager: SectionManager reference set.");
+        godot_print!("ChunkManager: SectionManager reference set.");
         self.section_manager = Some(section_manager);
         self.update_thread_safe_section_data(); // Update data immediately
     }
@@ -825,7 +736,7 @@ impl ChunkManager {
             let section_mgr_bind = section_mgr_gd.bind();
             
             if section_mgr_bind.is_fully_initialized() {
-                println!("ChunkManager: Updating thread-safe section data cache using SectionManager and NoiseManager.");
+                godot_print!("ChunkManager: Updating thread-safe section data cache using SectionManager and NoiseManager.");
                 
                 let mut current_data_guard = self.thread_safe_section_data.write().unwrap();
                 
@@ -837,10 +748,10 @@ impl ChunkManager {
                 
                 *current_data_guard = Some(Arc::new(new_data));
             } else {
-                eprintln!("ChunkManager: Attempted to update section data, but SectionManager is not ready.");
+                godot_error!("ChunkManager: Attempted to update section data, but SectionManager is not ready.");
             }
         } else {
-            eprintln!("ChunkManager: Cannot update section data, SectionManager or NoiseManager reference missing.");
+            godot_error!("ChunkManager: Cannot update section data, SectionManager or NoiseManager reference missing.");
         }
     }
 
@@ -852,26 +763,26 @@ impl ChunkManager {
         let old_chunk_size = self.chunk_size;
         self.chunk_size = guard.chunk_size; // Access field
         // REMOVED: self.storage.update_cache_limit();
-        println!("ChunkManager: Applied config updates (chunk_size: {})", self.chunk_size);
+        godot_print!("ChunkManager: Applied config updates (chunk_size: {})", self.chunk_size);
         if old_chunk_size != self.chunk_size {
-            eprintln!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
+            godot_error!("ChunkManager: Chunk size changed! Clearing all chunk states and storage cache. Chunks will regenerate.");
             self.chunk_states.write().unwrap().clear();
             self.storage.clear_cache(); // Make sure clear_cache exists or remove if LRU handles it
         }
         } else {
-            eprintln!("ChunkManager::apply_config_updates: Failed to read terrain config lock.");
+            godot_error!("ChunkManager::apply_config_updates: Failed to read terrain config lock.");
         }
     }
 }
 
 impl Drop for ChunkManager {
     fn drop(&mut self) {
-        println!("ChunkManager: Dropping. Shutting down ChunkStorage IO thread...");
+        godot_print!("ChunkManager: Dropping. Shutting down ChunkStorage IO thread...");
         // Since storage is an Arc, we can only call shutdown if we have unique ownership
         if let Some(storage_mut) = Arc::get_mut(&mut self.storage) {
             storage_mut.shutdown();
         } else {
-            eprintln!("ChunkManager::drop: Cannot get mutable access to ChunkStorage for shutdown (still shared). IO thread may not stop cleanly.");
+            godot_error!("ChunkManager::drop: Cannot get mutable access to ChunkStorage for shutdown (still shared). IO thread may not stop cleanly.");
         }
     }
 }
