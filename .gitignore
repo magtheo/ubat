@@ -3,7 +3,7 @@
 # Godot-specific files
 .import/
 *.import
-*.godot
+#*.godot
 .editor_settings-*
 .editor_settings
 **/*.import
