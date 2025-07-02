@@ -1,18 +1,18 @@
 // src/section/thread_safe_data.rs
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
-use std::collections::HashMap;
 
-use crate::terrain::section::definition::{SectionDefinition, BiomeDefinition};
-use crate::terrain::section::manager::SectionManager;
-use crate::terrain::section::layout::calculate_section_weights;
-use crate::terrain::noise::noise_manager::NoiseManager;
 use crate::terrain::chunk_manager::ChunkResult;
-use noise::NoiseFn;
+use crate::terrain::noise::noise_manager::NoiseManager;
+use crate::terrain::section::definition::{BiomeDefinition, SectionDefinition};
+use crate::terrain::section::layout::calculate_section_weights;
+use crate::terrain::section::manager::SectionManager;
 use crate::terrain::terrain_config::TerrainConfigManager;
+use noise::NoiseFn;
 
-use godot::prelude::*;
 use crate::godot_print;
+use godot::prelude::*;
 use std::fmt;
 
 /// A simple smoothstep function.
@@ -27,10 +27,10 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 pub struct ThreadSafeSectionData {
     pub sections: Arc<Vec<SectionDefinition>>,
     pub biomes: Arc<Vec<BiomeDefinition>>,
-    
+
     pub world_length: f32,
     pub seed: u64,
-    
+
     pub section_blend_distance: f32,
     pub blend_noise_strength: f32,
 }
@@ -41,31 +41,32 @@ impl ThreadSafeSectionData {
         let blend_noise_strength = if let Ok(guard) = TerrainConfigManager::get_config().read() {
             guard.blend_noise_strength
         } else {
-            godot_print!("Failed to read terrain config for blend_noise_strength. Using default 0.25");
+            godot_print!(
+                "Failed to read terrain config for blend_noise_strength. Using default 0.25"
+            );
             0.25f32 // Default value if lock fails
         };
-        
+
         Self {
             sections: Arc::new(manager.get_sections_internal().clone()),
             biomes: Arc::new(manager.get_biomes_internal().clone()),
-            
+
             world_length: manager.get_world_length(),
             seed: manager.get_world_seed(),
-            
+
             section_blend_distance: manager.get_section_blend_distance(),
             blend_noise_strength,
         }
-    }    
-    
+    }
+
     /// Get the sections and biomes that influence a position, along with their weights.
     /// This is the core logic for blending biomes based on section Z-position and intra-section noise.
     pub fn get_section_and_biome_weights(
         &self,
         world_x: f32,
         world_z: f32,
-        _sender: &Sender<ChunkResult> // Keep sender for potential future logging
+        _sender: &Sender<ChunkResult>, // Keep sender for potential future logging
     ) -> Vec<(u8, f32)> {
-
         // Step 1: Calculate overall section weights based on Z-axis position.
         // This determines the influence of entire sections (e.g., 70% Section A, 30% Section B).
         let section_contributions = calculate_section_weights(world_z, world_x, &self.sections);
@@ -79,7 +80,9 @@ impl ThreadSafeSectionData {
 
         // Step 3: Iterate through each contributing section and distribute its weight among its possible biomes.
         for (section_id, overall_section_weight) in section_contributions {
-            if overall_section_weight < 0.001 { continue; }
+            if overall_section_weight < 0.001 {
+                continue;
+            }
 
             // Find the definition for the current section.
             if let Some(section_def) = self.sections.iter().find(|s| s.id == section_id) {
@@ -88,9 +91,11 @@ impl ThreadSafeSectionData {
                 if possible_biomes.is_empty() {
                     continue; // Should not happen with valid config.
                 }
-                
+
                 // If there's a blend noise function and more than one biome, use noise to blend them.
-                if let (Some(blend_noise_fn), true) = (&section_def.blend_noise_fn, possible_biomes.len() > 1) {
+                if let (Some(blend_noise_fn), true) =
+                    (&section_def.blend_noise_fn, possible_biomes.len() > 1)
+                {
                     // Get the noise value for the current world position.
                     let noise_val = blend_noise_fn.get([world_x as f64, world_z as f64]); // Range [-1, 1]
 
@@ -98,27 +103,38 @@ impl ThreadSafeSectionData {
                     // This part determines how the noise value maps to biome weights.
                     let num_possible = possible_biomes.len();
                     let mut intra_section_biome_weights = vec![0.0f32; num_possible];
-                    
+
                     // Example for 2 biomes: simple linear interpolation mapped from noise.
                     if num_possible == 2 {
-                        let t = (noise_val * 0.5 + 0.5) as f32; // Map noise from [-1,1] to t in [0,1]
-                        // Use smoothstep for a nicer transition between the two biomes.
-                        // The range [0.4, 0.6] creates a blend zone. Outside this, it's pure biome.
-                        intra_section_biome_weights[0] = 1.0 - smoothstep(0.4, 0.6, t);
-                        intra_section_biome_weights[1] = smoothstep(0.4, 0.6, t);
-                    } 
+                        let t = (noise_val * 0.5 + 0.5) as f32; // Maps [-1,1] to [0,1]
+
+                        // FIXED: Use wider range for more blending
+                        intra_section_biome_weights[0] = 1.0 - smoothstep(0.2, 0.8, t); // 60% blend zone
+                        intra_section_biome_weights[1] = smoothstep(0.2, 0.8, t);
+
+                        // OR for even more mixing:
+                        // intra_section_biome_weights[0] = 1.0 - smoothstep(0.1, 0.9, t); // 80% blend zone
+                        // intra_section_biome_weights[1] = smoothstep(0.1, 0.9, t);
+                    }
                     // Example for 3+ biomes: divide the noise range into segments.
                     else {
-                        let segment_size = 2.0 / num_possible as f64; // Size of each noise segment
-                        
+                        // FIXED: Use overlapping influence zones
+                        let segment_size = 2.0 / num_possible as f64;
+                        let overlap_factor = 1.5; // Allow 50% overlap between biome zones
+
                         for i in 0..num_possible {
-                            // The "center" of the noise range for this biome.
                             let biome_center_noise_val = -1.0 + segment_size * (i as f64 + 0.5);
-                            // Calculate distance from current noise value to this biome's center.
                             let dist_to_center = (noise_val - biome_center_noise_val).abs();
-                            // A simple triangular/linear falloff from the center.
-                            // Weight is 1.0 at the center, 0.0 at the edge of its segment.
-                            let raw_weight = (1.0 - dist_to_center / segment_size).max(0.0) as f32;
+
+                            // Use wider influence with overlap
+                            let influence_radius = segment_size * overlap_factor;
+                            let raw_weight =
+                                (1.0 - dist_to_center / influence_radius).max(0.0) as f32;
+
+                            // Optional: Use smoother falloff
+                            // let normalized_dist = (dist_to_center / influence_radius).clamp(0.0, 1.0);
+                            // let raw_weight = (1.0 - normalized_dist * normalized_dist) as f32; // Quadratic falloff
+
                             intra_section_biome_weights[i] = raw_weight;
                         }
                     }
@@ -128,18 +144,21 @@ impl ThreadSafeSectionData {
                     if total_intra_weight > 0.01 {
                         for i in 0..num_possible {
                             let biome_id = possible_biomes[i];
-                            let normalized_intra_weight = intra_section_biome_weights[i] / total_intra_weight;
+                            let normalized_intra_weight =
+                                intra_section_biome_weights[i] / total_intra_weight;
                             // The final contribution is the section's overall weight multiplied by the biome's intra-section weight.
-                            *final_biome_weights.entry(biome_id).or_insert(0.0) += normalized_intra_weight * overall_section_weight;
+                            *final_biome_weights.entry(biome_id).or_insert(0.0) +=
+                                normalized_intra_weight * overall_section_weight;
                         }
                     } else {
                         // Fallback if all weights are tiny, give full section weight to the first possible biome.
-                        *final_biome_weights.entry(possible_biomes[0]).or_insert(0.0) += overall_section_weight;
+                        *final_biome_weights.entry(possible_biomes[0]).or_insert(0.0) +=
+                            overall_section_weight;
                     }
-
                 } else {
                     // If no blend noise or only one biome, give the section's entire weight to the first possible biome.
-                    *final_biome_weights.entry(possible_biomes[0]).or_insert(0.0) += overall_section_weight;
+                    *final_biome_weights.entry(possible_biomes[0]).or_insert(0.0) +=
+                        overall_section_weight;
                 }
             }
         }
@@ -147,7 +166,7 @@ impl ThreadSafeSectionData {
         // Step 4: Convert the HashMap to a Vec, sort by weight, and take the top N (e.g., 3).
         let mut sorted_weights: Vec<(u8, f32)> = final_biome_weights.into_iter().collect();
         sorted_weights.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         // Take the top 3 biomes for the shader.
         sorted_weights.truncate(3);
 
@@ -168,7 +187,7 @@ impl ThreadSafeSectionData {
 
         sorted_weights
     }
-    
+
     /// Get a biome definition by ID.
     pub fn get_biome_definition(&self, biome_id: u8) -> Option<&BiomeDefinition> {
         self.biomes.iter().find(|b| b.id == biome_id)

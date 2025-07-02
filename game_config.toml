@@ -32,9 +32,9 @@ blend_noise_strength = 0.25    # NEW: Controls intensity of noise for blending (
 "blend" = "res://project/terrain/noise/blendNoise.tres"
 "biome_blend" = "res://project/terrain/noise/blendNoise.tres"
 "section" = "res://project/terrain/noise/sectionNoise.tres"
-"section1_blend_noise" = "res://project/terrain/noise/section1_blend_noise.tres"
-"section2_blend_noise" = "res://project/terrain/noise/section2_blend_noise.tres"
-"section3_blend_noise" = "res://project/terrain/noise/section3_blend_noise.tres"
+"section1_blend_noise" = "res://project/terrain/noise/blendNoise/section1_blend_noise.tres"
+"section2_blend_noise" = "res://project/terrain/noise/blendNoise/section2_blend_noise.tres"
+"section3_blend_noise" = "res://project/terrain/noise/blendNoise/section3_blend_noise.tres"
 
 # [custom_settings] # If needed
 # my_custom_value = "example"
