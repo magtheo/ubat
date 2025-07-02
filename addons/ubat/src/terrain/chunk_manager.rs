@@ -193,7 +193,7 @@ impl INode3D for ChunkManager {
                     result_count += 1;
                     match &result {
                         ChunkResult::LoadFailed(pos) => {
-                            godot_print!("ChunkManager: Received LoadFailed for {:?}, will queue generation", pos);
+                            // godot_print!("ChunkManager: Received LoadFailed for {:?}, will queue generation", pos);
                         },
                         ChunkResult::Loaded(pos, _) => {
                             // godot_print!("ChunkManager: Received Loaded result for {:?}", pos);
@@ -261,7 +261,7 @@ impl ChunkManager {
     }
 
     fn queue_generation(&self, pos: ChunkPosition) {
-        godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
+        // godot_print!("ChunkManager: Queuing generation task for {:?}", pos);
         let storage_clone = Arc::clone(&self.storage);
         // --- Clone the Arc containing the Option<Arc<ThreadSafeSectionData>> ---
         let section_data_rwlock_arc = Arc::clone(&self.thread_safe_section_data);
@@ -275,7 +275,7 @@ impl ChunkManager {
                 1.0 // Default on error
             }
         };
-        godot_print!("ChunkManager: Amplification = {}", amplification);
+        // godot_print!("ChunkManager: Amplification = {}", amplification);
 
     
         let chunk_size = self.chunk_size;
@@ -351,7 +351,7 @@ impl ChunkManager {
                 let mut states = self.chunk_states.write().unwrap();
                 match states.get(&pos) {
                     Some(ChunkGenState::Loading) => {
-                        godot_print!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
+                        // godot_print!("ChunkManager: LoadFailed for {:?} - state is correctly Loading, changing to Generating", pos);
                         states.insert(pos, ChunkGenState::Generating);
                         drop(states); // Drop lock BEFORE queueing
                         self.queue_generation(pos);
@@ -513,7 +513,7 @@ impl ChunkManager {
         
         let player_chunk_x = (player_x / self.chunk_size as f32).floor() as i32;
         let player_chunk_z = (player_z / self.chunk_size as f32).floor() as i32;
-        godot_print!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
+        // godot_print!("ChunkManager: update at: {:?}, {:?}", player_chunk_x, player_chunk_z);
         
         let mut required_chunks = HashSet::new();
         for x in (player_chunk_x - self.render_distance)..=(player_chunk_x + self.render_distance) {
