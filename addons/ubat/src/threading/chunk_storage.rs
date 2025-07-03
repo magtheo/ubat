@@ -37,10 +37,7 @@ pub struct ChunkData {
     pub heightmap: Vec<f32>,
     pub biome_indices: Vec<[u8; 3]>, // Store top 3 biome IDs
     pub biome_blend_weights: Vec<[f32; 3]>, // Store weights for top 3 (summing to 1.0)
-
-    // pub biome_ids: Vec<u8>, // not used
-    // pub mesh_geometry: Option<MeshGeometry>,
-    // Add other data as needed
+    pub mesh_geometry: Option<MeshGeometry>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

@@ -1,15 +1,25 @@
 use chrono::format;
-use godot::prelude::*;
 use godot::global::Error;
+use godot::prelude::*;
 
+use godot::classes::mesh::{ArrayCustomFormat, ArrayFormat, ArrayType, PrimitiveType};
+use godot::classes::surface_tool::CustomFormat;
 use godot::classes::{
     // REMOVE this or keep commented out: mesh::PrimitiveType,
     // rendering_seMesrver::PrimitiveType, // TRY THIS PATH for the enum
     // REMOVE mesh::ArrayFormat, // Don't import the enum itself
-    ArrayMesh, MeshInstance3D, SurfaceTool, Material, ShaderMaterial, StandardMaterial3D, RenderingServer, ResourceLoader, Mesh, World3D, Node
+    ArrayMesh,
+    Material,
+    Mesh,
+    MeshInstance3D,
+    Node,
+    RenderingServer,
+    ResourceLoader,
+    ShaderMaterial,
+    StandardMaterial3D,
+    SurfaceTool,
+    World3D,
 };
-use godot::classes::mesh::{PrimitiveType, ArrayFormat, ArrayCustomFormat, ArrayType};
-use godot::classes::surface_tool::CustomFormat;
 
 use godot::classes::rendering_server::ArrayFormat as RSArrayFormat;
 
@@ -17,16 +27,16 @@ use godot::builtin::PackedColorArray;
 use std::convert::TryInto;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
 // Use ChunkManager and its types
 use crate::terrain::chunk_manager::{ChunkManager, ChunkPosition};
 // Use BiomeManager if needed for materials etc.
 // Use TerrainConfig to get chunk size if needed
-use crate::terrain::terrain_config::{TerrainConfigManager, TerrainConfig};
-use crate::terrain::generation_utils::{generate_mesh_geometry, get_clamped_height};
-use std::collections::VecDeque;
+use crate::terrain::generation_utils::get_clamped_height;
+use crate::terrain::terrain_config::{TerrainConfig, TerrainConfigManager};
 use crate::threading::chunk_storage::MeshGeometry;
-
+use std::collections::VecDeque;
 
 // Define constants for debug modes for clarity
 const DEBUG_MODE_NORMAL: i32 = 0;
@@ -35,20 +45,20 @@ const DEBUG_MODE_BIOME_ID: i32 = 2;
 // Add more constants if you add more modes
 
 const ARRAY_CUSTOM_FORMAT_RGBA8_UNORM: i64 = 1; // WAS: ArrayCustomFormat::RGBA8_UNORM.ord() as i64;
-const ARRAY_CUSTOM_FORMAT_RGBA32F: i64 = 6;   // WAS: ArrayCustomFormat::RGBA_FLOAT.ord() as i64;
+const ARRAY_CUSTOM_FORMAT_RGBA32F: i64 = 6; // WAS: ArrayCustomFormat::RGBA_FLOAT.ord() as i64;
 
 const ARRAY_FORMAT_CUSTOM_BASE_SHIFT: i64 = 16;
 const ARRAY_FORMAT_CUSTOM_BITS: i64 = 3;
 
-const ARRAY_FORMAT_CUSTOM0_SHIFT: i64 = ARRAY_FORMAT_CUSTOM_BASE_SHIFT + ARRAY_FORMAT_CUSTOM_BITS * 0; // 16
-const ARRAY_FORMAT_CUSTOM1_SHIFT: i64 = ARRAY_FORMAT_CUSTOM_BASE_SHIFT + ARRAY_FORMAT_CUSTOM_BITS * 1; // 19
+const ARRAY_FORMAT_CUSTOM0_SHIFT: i64 =
+    ARRAY_FORMAT_CUSTOM_BASE_SHIFT + ARRAY_FORMAT_CUSTOM_BITS * 0; // 16
+const ARRAY_FORMAT_CUSTOM1_SHIFT: i64 =
+    ARRAY_FORMAT_CUSTOM_BASE_SHIFT + ARRAY_FORMAT_CUSTOM_BITS * 1; // 19
 
 // const ARRAY_CUSTOM_FORMAT_RGBA8_UNORM: i64 = 0; // Placeholder - Find actual value
 // const ARRAY_CUSTOM_FORMAT_RGBA32F: i64 = 7; // Placeholder - Find actual value
 // const ARRAY_FORMAT_CUSTOM0_SHIFT: i64 = 13;   // Placeholder - Find actual value (RS::ARRAY_FORMAT_CUSTOM_BASE_SHIFT + 0)
 // const ARRAY_FORMAT_CUSTOM1_SHIFT: i64 = 16;   // Placeholder - Find actual value (RS::ARRAY_FORMAT_CUSTOM_BASE_SHIFT + 1)
-
-
 
 #[derive(Clone)] // Need Clone if we store MeshGeometry directly
 enum ChunkAction {
@@ -78,19 +88,19 @@ pub struct ChunkController {
     // default_material: Option<Gd<Material>>,
 
     // Debugging
-    debug_mode: i32, // 0: Normal, 1: Height Vis, 2: Biome ID Vis, etc.
+    debug_mode: i32,           // 0: Normal, 1: Height Vis, 2: Biome ID Vis, etc.
     needs_visual_update: bool, // Flag to force mesh recreation
 
     mesh_creation_queue: VecDeque<ChunkPosition>, // Queue positions needing meshes
-    mesh_removal_queue: VecDeque<ChunkPosition>, // Queue positions for mesh removal
-    mesh_updates_per_frame: usize, // Store the configured limit
-
+    mesh_removal_queue: VecDeque<ChunkPosition>,  // Queue positions for mesh removal
+    mesh_updates_per_frame: usize,
+    last_process_duration_ms: u64,
 }
 
 #[godot_api]
 impl INode3D for ChunkController {
     fn init(base: Base<Node3D>) -> Self {
-        ChunkController {
+        Self {
             base,
             chunk_manager: None,
             // biome_manager: None,
@@ -104,11 +114,10 @@ impl INode3D for ChunkController {
 
             mesh_creation_queue: VecDeque::new(),
             mesh_removal_queue: VecDeque::new(),
-            mesh_updates_per_frame: 4, // Initial default, overridden in ready
-            
+            mesh_updates_per_frame: 4,
+            last_process_duration_ms: 0,
             debug_mode: 0,
             needs_visual_update: false,
-
         }
     }
 
@@ -134,15 +143,23 @@ impl INode3D for ChunkController {
 
             // Get chunk size directly from config manager for consistency
             let config_arc = TerrainConfigManager::get_config(); // Get static ref
-            if let Ok(guard) = config_arc.read() { // Lock it
+            if let Ok(guard) = config_arc.read() {
+                // Lock it
                 self.chunk_size = guard.chunk_size; // Access field
                 self.mesh_updates_per_frame = guard.mesh_updates_per_frame;
+                self.visualization_enabled = guard.debug_visualization_enabled; // Set visualization_enabled from config
             } else {
-                godot_error!("ChunkController: Failed to read terrain config lock for chunk size or mesh_updates_per_frame");
+                godot_error!(
+                    "ChunkController: Failed to read terrain config lock for chunk size or mesh_updates_per_frame"
+                );
                 // Keep default self.chunk_size
             }
 
-            godot_print!("ChunkController: Initial render distance: {}, chunk size: {}", self.render_distance, self.chunk_size);
+            godot_print!(
+                "ChunkController: Initial render distance: {}, chunk size: {}",
+                self.render_distance,
+                self.chunk_size
+            );
         } else {
             godot_error!("ChunkController: Cannot get initial settings, ChunkManager not found!");
         }
@@ -157,13 +174,19 @@ impl INode3D for ChunkController {
                         godot_print!("ChunkController: Loaded biome material from {}", path);
                     }
                     Err(_) => {
-                        godot_error!("ChunkController: Failed to cast resource at {} to Material.", path);
+                        godot_error!(
+                            "ChunkController: Failed to cast resource at {} to Material.",
+                            path
+                        );
                         self.biome_material = None; // Ensure it's None on error
                     }
                 }
             }
             None => {
-                godot_error!("ChunkController: Failed to load biome material resource at {}. Check path.", path);
+                godot_error!(
+                    "ChunkController: Failed to load biome material resource at {}. Check path.",
+                    path
+                );
                 self.biome_material = None; // Ensure it's None on error
             }
         }
@@ -171,7 +194,9 @@ impl INode3D for ChunkController {
     }
 
     fn process(&mut self, _delta: f64) {
-        if self.chunk_manager.is_none() { return; } // Need ChunkManager
+        if self.chunk_manager.is_none() {
+            return;
+        } // Need ChunkManager
 
         if self.needs_update {
             if let Some(ref chunk_mgr) = self.chunk_manager {
@@ -179,7 +204,7 @@ impl INode3D for ChunkController {
                 chunk_mgr.bind().update(
                     self.player_position.x,
                     self.player_position.y, // Pass Y if needed
-                    self.player_position.z
+                    self.player_position.z,
                 );
             }
             self.needs_update = false; // Reset flag
@@ -221,7 +246,10 @@ impl ChunkController {
             godot_print!("ChunkController: Successfully connected 'player_chunk_changed' signal.");
             true
         } else {
-            godot_error!("ChunkController: Failed to connect player signal, error code: {:?}", result);
+            godot_error!(
+                "ChunkController: Failed to connect player signal, error code: {:?}",
+                result
+            );
             false
         }
     }
@@ -230,7 +258,11 @@ impl ChunkController {
     #[func]
     fn on_player_chunk_changed(&mut self, chunk_x_var: Variant, chunk_z_var: Variant) {
         // First try to convert directly to i32
-        godot_print!("ChunkController Rust: on_player_chunk_changed CALLED with variants: {:?}, {:?}", chunk_x_var, chunk_z_var);
+        godot_print!(
+            "ChunkController Rust: on_player_chunk_changed CALLED with variants: {:?}, {:?}",
+            chunk_x_var,
+            chunk_z_var
+        );
         let chunk_x = match chunk_x_var.try_to::<i32>() {
             Ok(x) => x,
             Err(_) => {
@@ -244,7 +276,7 @@ impl ChunkController {
                 }
             }
         };
-        
+
         // Same for z coordinate
         let chunk_z = match chunk_z_var.try_to::<i32>() {
             Ok(z) => z,
@@ -258,14 +290,14 @@ impl ChunkController {
                 }
             }
         };
-    
+
         // Calculate the *center* world position of the player's new chunk for update trigger
         let new_position = Vector3::new(
             (chunk_x as f32 + 0.5) * self.chunk_size as f32, // Center X
             self.player_position.y, // Keep current Y? Or query ground height?
-            (chunk_z as f32 + 0.5) * self.chunk_size as f32  // Center Z
+            (chunk_z as f32 + 0.5) * self.chunk_size as f32, // Center Z
         );
-    
+
         self.update_player_position(new_position); // Trigger update logic
     }
 
@@ -296,12 +328,19 @@ impl ChunkController {
             self.render_distance = new_distance;
             // Update ChunkManager's render distance
             if let Some(chunk_mgr) = &mut self.chunk_manager {
-                chunk_mgr.bind_mut().set_render_distance(self.render_distance);
+                chunk_mgr
+                    .bind_mut()
+                    .set_render_distance(self.render_distance);
             } else {
-                 godot_warn!("ChunkController: ChunkManager not found when setting render distance.");
+                godot_warn!(
+                    "ChunkController: ChunkManager not found when setting render distance."
+                );
             }
             self.needs_update = true; // Force update to load/unload based on new distance
-            godot_print!("ChunkController: Render distance set to {}", self.render_distance);
+            godot_print!(
+                "ChunkController: Render distance set to {}",
+                self.render_distance
+            );
         }
     }
 
@@ -351,7 +390,9 @@ impl ChunkController {
 
     // Update the visual representation of chunks
     fn update_visualization(&mut self) {
-        if self.chunk_manager.is_none() { return; }
+        if self.chunk_manager.is_none() {
+            return;
+        }
 
         let player_chunk_x = (self.player_position.x / self.chunk_size as f32).floor() as i32;
         let player_chunk_z = (self.player_position.z / self.chunk_size as f32).floor() as i32;
@@ -361,7 +402,8 @@ impl ChunkController {
         let mut current_visible_keys = HashSet::new();
 
         // --- Phase 1: Determine Action ---
-        { // Scope for chunk_manager_bind read lock
+        {
+            // Scope for chunk_manager_bind read lock
             let chunk_manager_bind = self.chunk_manager.as_ref().unwrap().bind();
 
             // Identify chunks needing creation
@@ -377,8 +419,8 @@ impl ChunkController {
                         // Need to create mesh, enqueue position if not already queued
                         // Simple check: avoids adding duplicates in the same frame
                         if !self.mesh_creation_queue.contains(&pos) {
-                             // godot_print!("ChunkController: Enqueuing {:?} for mesh creation.", pos); // Debug log
-                             self.mesh_creation_queue.push_back(pos);
+                            // godot_print!("ChunkController: Enqueuing {:?} for mesh creation.", pos); // Debug log
+                            self.mesh_creation_queue.push_back(pos);
                         }
                     }
                     // Note: We don't need to handle the case where it's ready and mesh exists here,
@@ -387,17 +429,21 @@ impl ChunkController {
             }
 
             // Identify meshes needing removal
-            let existing_mesh_keys: Vec<ChunkPosition> = self.chunk_meshes.keys().cloned().collect();
+            let existing_mesh_keys: Vec<ChunkPosition> =
+                self.chunk_meshes.keys().cloned().collect();
             for pos in existing_mesh_keys {
                 if !current_visible_keys.contains(&pos) {
                     // Mesh exists but is out of range, enqueue for removal if not already queued
-                     if !self.mesh_removal_queue.contains(&pos) {
-                          // godot_print!("ChunkController: Enqueuing {:?} for mesh removal.", pos); // Debug log
-                          self.mesh_removal_queue.push_back(pos);
-                     }
+                    if !self.mesh_removal_queue.contains(&pos) {
+                        // godot_print!("ChunkController: Enqueuing {:?} for mesh removal.", pos); // Debug log
+                        self.mesh_removal_queue.push_back(pos);
+                    }
                 }
             }
         } // chunk_manager_bind lock released
+
+        // Sort the creation queue by distance to player for priority processing
+        self.sort_creation_queue_by_distance();
 
         // --- Phase 2: Execute Actions (Will be modified in Phase 2 of plan) ---
         // For now, keep immediate execution to test Phase 1 works
@@ -405,7 +451,7 @@ impl ChunkController {
             match action {
                 ChunkAction::CreateMesh(pos, geometry) => {
                     if !self.chunk_meshes.contains_key(&pos) {
-                         self.apply_mesh_data_to_instance(pos, &geometry);
+                        self.apply_mesh_data_to_instance(pos, &geometry);
                     }
                 }
                 ChunkAction::RemoveMesh(pos) => {
@@ -420,6 +466,21 @@ impl ChunkController {
         }
     }
 
+    fn sort_creation_queue_by_distance(&mut self) {
+        let player_chunk_x = (self.player_position.x / self.chunk_size as f32).floor() as i32;
+        let player_chunk_z = (self.player_position.z / self.chunk_size as f32).floor() as i32;
+
+        // Convert VecDeque to Vec for sorting, then back to VecDeque
+        let mut temp_vec: Vec<ChunkPosition> = self.mesh_creation_queue.drain(..).collect();
+
+        temp_vec.sort_by(|a, b| {
+            let dist_a_sq = (a.x - player_chunk_x).pow(2) + (a.z - player_chunk_z).pow(2);
+            let dist_b_sq = (b.x - player_chunk_x).pow(2) + (b.z - player_chunk_z).pow(2);
+            dist_a_sq.cmp(&dist_b_sq)
+        });
+
+        self.mesh_creation_queue = temp_vec.into();
+    }
 
     #[func]
     pub fn set_debug_visualization_mode(&mut self, mode: i32) {
@@ -428,25 +489,25 @@ impl ChunkController {
             self.debug_mode = mode.max(0); // Ensure non-negative
             // Force existing meshes to be updated/recreated
             self.needs_visual_update = true;
-         }
+        }
     }
 
     // Helper to force regeneration (can be called internally or exposed)
     // This is a simple approach: remove all, let update recreate
     fn force_regenerate_visuals(&mut self) {
-         godot_print!("ChunkController: Forcing visual regeneration...");
-         // Clear queues to avoid processing outdated requests
-         self.mesh_creation_queue.clear();
-         self.mesh_removal_queue.clear();
+        godot_print!("ChunkController: Forcing visual regeneration...");
+        // Clear queues to avoid processing outdated requests
+        self.mesh_creation_queue.clear();
+        self.mesh_removal_queue.clear();
 
-         // Remove existing meshes immediately
-         for (_, mut mesh_instance) in self.chunk_meshes.drain() {
-             if mesh_instance.is_instance_valid() {
-                 mesh_instance.queue_free();
-             }
-         }
-         // Mark for update so update_visualization runs next frame
-         self.needs_update = true;
+        // Remove existing meshes immediately
+        for (_, mut mesh_instance) in self.chunk_meshes.drain() {
+            if mesh_instance.is_instance_valid() {
+                mesh_instance.queue_free();
+            }
+        }
+        // Mark for update so update_visualization runs next frame
+        self.needs_update = true;
     }
 
     #[func]
@@ -457,6 +518,11 @@ impl ChunkController {
         )
     }
 
+    #[func]
+    pub fn get_last_mesh_processing_duration(&self) -> u64 {
+        self.last_process_duration_ms
+    }
+
     /// Creates or updates the visual MeshInstance3D by directly creating PackedArrays
     /// and using `mesh.add_surface_from_arrays`.
     /// NOTE: This bypasses SurfaceTool and requires the shader to manually unpack
@@ -465,9 +531,14 @@ impl ChunkController {
     fn apply_mesh_data_to_instance(&mut self, pos: ChunkPosition, geometry: &MeshGeometry) {
         // --- Basic Geometry Validation ---
         if geometry.vertices.is_empty() || geometry.indices.is_empty() {
-            godot_warn!("Apply Mesh: Empty vertices or indices for chunk {:?}, skipping.", pos);
+            godot_warn!(
+                "Apply Mesh: Empty vertices or indices for chunk {:?}, skipping.",
+                pos
+            );
             if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                if mesh_instance.is_instance_valid() { mesh_instance.queue_free(); }
+                if mesh_instance.is_instance_valid() {
+                    mesh_instance.queue_free();
+                }
             }
             return;
         }
@@ -479,14 +550,23 @@ impl ChunkController {
         if geometry.normals.len() != vertex_count ||
             geometry.uvs.len() != vertex_count ||
             geometry.custom0_biome_ids.len() != vertex_count || // Expects [u8; 4] per vertex
-            geometry.custom1_biome_weights.len() != vertex_count // Expects [f32; 3] or similar per vertex
+            geometry.custom1_biome_weights.len() != vertex_count
+        // Expects [f32; 3] or similar per vertex
         {
             godot_error!(
                 "Apply Mesh: Attribute length mismatch for chunk {:?}. Vertices: {}, Indices: {}, Normals: {}, UVs: {}, Custom0: {}, Custom1: {}",
-                pos, vertex_count, index_count, geometry.normals.len(), geometry.uvs.len(), geometry.custom0_biome_ids.len(), geometry.custom1_biome_weights.len()
+                pos,
+                vertex_count,
+                index_count,
+                geometry.normals.len(),
+                geometry.uvs.len(),
+                geometry.custom0_biome_ids.len(),
+                geometry.custom1_biome_weights.len()
             );
             if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                if mesh_instance.is_instance_valid() { mesh_instance.queue_free(); }
+                if mesh_instance.is_instance_valid() {
+                    mesh_instance.queue_free();
+                }
             }
             return;
         }
@@ -496,36 +576,37 @@ impl ChunkController {
         // (Keep your existing logic for getting/creating MeshInstance3D)
         let mut is_new_instance = false;
         let mesh_instance_entry = self.chunk_meshes.entry(pos);
-        let mut mesh_instance = mesh_instance_entry.or_insert_with(|| {
-            is_new_instance = true;
-            let mut inst = MeshInstance3D::new_alloc();
-            inst.set_name(&GString::from(format!("ChunkMesh_{},{}", pos.x, pos.z)));
-            inst
-        }).clone();
+        let mut mesh_instance = mesh_instance_entry
+            .or_insert_with(|| {
+                is_new_instance = true;
+                let mut inst = MeshInstance3D::new_alloc();
+                inst.set_name(&GString::from(format!("ChunkMesh_{},{}", pos.x, pos.z)));
+                inst
+            })
+            .clone();
 
         // --- 2. Prepare Interleaved Vertex Data Buffer ---
         let mut mesh_resource = ArrayMesh::new_gd();
         let mut surface_tool = SurfaceTool::new_gd();
-        
+
         surface_tool.begin(PrimitiveType::TRIANGLES);
-        
+
         // Set custom format attributes
-        surface_tool.set_custom_format(0, CustomFormat::RGBA8_UNORM);  // For biome IDs
-        surface_tool.set_custom_format(1, CustomFormat::RGBA_FLOAT);   // For biome weights
-        
+        surface_tool.set_custom_format(0, CustomFormat::RGBA8_UNORM); // For biome IDs
+        surface_tool.set_custom_format(1, CustomFormat::RGBA_FLOAT); // For biome weights
+
         // Add vertex data one by one
         for i in 0..vertex_count {
-
             // Inside your vertex loop, add this near the beginning:
             // if i < 5 || i % 500 == 0 {  // Only log a few samples
             //     godot_print!(
             //         "Vertex {}: Position: [{:.1}, {:.1}, {:.1}], Biome IDs: [{}, {}, {}], Weights: [{:.2}, {:.2}, {:.2}]",
             //         i,
-            //         geometry.vertices[i][0], 
-            //         geometry.vertices[i][1], 
+            //         geometry.vertices[i][0],
+            //         geometry.vertices[i][1],
             //         geometry.vertices[i][2],
             //         geometry.custom0_biome_ids[i][0],
-            //         geometry.custom0_biome_ids[i][1], 
+            //         geometry.custom0_biome_ids[i][1],
             //         geometry.custom0_biome_ids[i][2],
             //         geometry.custom1_biome_weights[i][0],
             //         geometry.custom1_biome_weights[i][1],
@@ -535,19 +616,19 @@ impl ChunkController {
 
             // Position
             let position = Vector3::new(
-                geometry.vertices[i][0], 
-                geometry.vertices[i][1], 
-                geometry.vertices[i][2]
+                geometry.vertices[i][0],
+                geometry.vertices[i][1],
+                geometry.vertices[i][2],
             );
-            
+
             // Normal
             let normal = Vector3::new(
-                geometry.normals[i][0], 
-                geometry.normals[i][1], 
-                geometry.normals[i][2]
+                geometry.normals[i][0],
+                geometry.normals[i][1],
+                geometry.normals[i][2],
             );
             surface_tool.set_normal(normal);
-            
+
             // Color (for debug mode)
             let height = geometry.vertices[i][1];
             let vertex_color = match self.debug_mode {
@@ -558,47 +639,47 @@ impl ChunkController {
                         0.8,
                         (0.5 + (normalized_height * 0.5)) as f64,
                     )
-                },
+                }
                 DEBUG_MODE_BIOME_ID => {
                     let biome_id = geometry.custom0_biome_ids[i][0] as f32;
                     let hue = (biome_id / 20.0) % 1.0;
                     Color::from_hsv(hue as f64, 0.8, 0.8)
-                },
-                _ => Color::WHITE
+                }
+                _ => Color::WHITE,
             };
             surface_tool.set_color(vertex_color);
-            
+
             // UV
             let uv = Vector2::new(geometry.uvs[i][0], geometry.uvs[i][1]);
             surface_tool.set_uv(uv);
-            
+
             // Custom0 - Biome IDs
             let custom0 = Color::from_rgba8(
                 geometry.custom0_biome_ids[i][0],
                 geometry.custom0_biome_ids[i][1],
                 geometry.custom0_biome_ids[i][2],
-                geometry.custom0_biome_ids[i][3]
+                geometry.custom0_biome_ids[i][3],
             );
             surface_tool.set_custom(0, custom0);
-            
+
             // Custom1 - Biome weights
             let custom1 = Color::from_rgba(
                 geometry.custom1_biome_weights[i][0],
-                geometry.custom1_biome_weights[i][1], 
+                geometry.custom1_biome_weights[i][1],
                 geometry.custom1_biome_weights[i][2],
-                0.0 // Padding
+                0.0, // Padding
             );
             surface_tool.set_custom(1, custom1);
-            
+
             // Add this vertex
             surface_tool.add_vertex(position);
         }
-        
+
         // Add indices (triangles)
         for idx in &geometry.indices {
             surface_tool.add_index(*idx);
         }
-        
+
         // Commit to mesh
         let committed_mesh = surface_tool.commit().expect("Failed to commit mesh");
 
@@ -613,8 +694,12 @@ impl ChunkController {
         // simple_material.set_albedo(Color::from_rgb(0.2, 0.8, 0.3)); // Green
         // mesh_instance.set_surface_override_material(0, &simple_material.upcast::<Material>());
 
-        // Apply material and shader parameters  
-        Self::apply_material_and_shader_param(&mut mesh_instance, &self.biome_material, is_debug_render);
+        // Apply material and shader parameters
+        Self::apply_material_and_shader_param(
+            &mut mesh_instance,
+            &self.biome_material,
+            is_debug_render,
+        );
 
         let world_pos = Vector3::new(
             pos.x as f32 * self.chunk_size as f32,
@@ -629,9 +714,10 @@ impl ChunkController {
 
         // Add to scene if new
         if is_new_instance {
-            self.base_mut().add_child(&mesh_instance.clone().upcast::<Node>());
+            self.base_mut()
+                .add_child(&mesh_instance.clone().upcast::<Node>());
         }
-    
+
         // --- 4. Define Correct Vertex Format Bitmask ---
         // godot_print!("Vertex Ord: {}", RSArrayFormat::VERTEX.ord());
         // godot_print!("Color Ord: {}", RSArrayFormat::COLOR.ord());
@@ -645,7 +731,7 @@ impl ChunkController {
         // godot_print!("Custom Format RGBA32F: {}", ARRAY_CUSTOM_FORMAT_RGBA32F);
         // godot_print!("Custom Shift 1: {}", ARRAY_FORMAT_CUSTOM1_SHIFT);
         // godot_print!("--- End Debugging Shift Values ---");
-        
+
         let mut format: i64 = 0;
         // Use bit shifts (1 << enum_value) - Make sure RSArrayFormat enum values are correct (0, 1, 2, ...)
         // format |= RSArrayFormat::VERTEX.ord() as i64;
@@ -661,12 +747,12 @@ impl ChunkController {
         // --- DO NOT ADD INDEX FLAG HERE --- format |= 1 << RSArrayFormat::INDEX.ord(); // Bit 12
 
         // --- "CORRECT" new ---
-        format |=  RSArrayFormat::VERTEX.ord() as i64;    // Bit 0 -> Flag 1
-        format |= RSArrayFormat::NORMAL.ord() as i64;    // Bit 1 -> Flag 2
-        format |= RSArrayFormat::COLOR.ord() as i64;     // Bit 3 -> Flag 8
-        format |= RSArrayFormat::TEX_UV.ord() as i64;    // Bit 4 -> Flag 16
-        format |= RSArrayFormat::CUSTOM0.ord() as i64;   // Bit 6 -> Flag 64
-        format |= RSArrayFormat::CUSTOM1.ord() as i64;   // Bit 7 -> Flag 128
+        format |= RSArrayFormat::VERTEX.ord() as i64; // Bit 0 -> Flag 1
+        format |= RSArrayFormat::NORMAL.ord() as i64; // Bit 1 -> Flag 2
+        format |= RSArrayFormat::COLOR.ord() as i64; // Bit 3 -> Flag 8
+        format |= RSArrayFormat::TEX_UV.ord() as i64; // Bit 4 -> Flag 16
+        format |= RSArrayFormat::CUSTOM0.ord() as i64; // Bit 6 -> Flag 64
+        format |= RSArrayFormat::CUSTOM1.ord() as i64; // Bit 7 -> Flag 128
         // Add other flags like TANGENT, UV2 if needed using the same pattern
 
         // --- Custom format specifiers (These shifts look correct) ---
@@ -675,7 +761,6 @@ impl ChunkController {
 
         // godot_print!("Final format mask: {}", format); // Debug print
     }
-    
 
     /// Helper function to apply material and potentially set shader parameters.
     /// Adapted from the older provided code for robustness. Moved inside impl block.
@@ -688,9 +773,7 @@ impl ChunkController {
         if let Some(base_mat_gd) = base_material {
             if let Ok(base_shader_mat) = base_mat_gd.clone().try_cast::<ShaderMaterial>() {
                 if let Some(duplicated_res) = base_shader_mat.duplicate() {
-                    if let Ok(mut unique_shader_mat) =
-                        duplicated_res.try_cast::<ShaderMaterial>()
-                    {
+                    if let Ok(mut unique_shader_mat) = duplicated_res.try_cast::<ShaderMaterial>() {
                         unique_shader_mat
                             .set_shader_parameter("u_debug_mode", &is_debug.to_variant());
                         material_to_set = Some(unique_shader_mat.upcast::<Material>());
@@ -719,28 +802,43 @@ impl ChunkController {
             if let Some(pos) = self.mesh_removal_queue.pop_front() {
                 // Ensure it wasn't added back to visible set or creation queue since enqueued
                 // (More robust check might be needed if rapid back-and-forth is possible)
-                if !self.mesh_creation_queue.contains(&pos) { // Basic check
-                if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
-                    if mesh_instance.is_instance_valid() {
-                        // godot_print!("ChunkController ProcessQueue: Removing mesh for {:?}", pos); // Debug log
-                        mesh_instance.queue_free();
+                if !self.mesh_creation_queue.contains(&pos) {
+                    // Basic check
+                    if let Some(mut mesh_instance) = self.chunk_meshes.remove(&pos) {
+                        if mesh_instance.is_instance_valid() {
+                            // godot_print!("ChunkController ProcessQueue: Removing mesh for {:?}", pos); // Debug log
+                            mesh_instance.queue_free();
+                        }
                     }
-                }
                 } else {
                     // It was re-queued for creation, so don't remove
                     // godot_print!("ChunkController ProcessQueue: Skipping removal for {:?}, re-queued for creation.", pos); // Debug log
                 }
-
             } else {
                 break; // Queue empty
             }
         }
 
         // Process creations
+        let config_arc: &'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config();
+        let mesh_creation_time_budget_ms = match config_arc.read() {
+            Ok(guard) => guard.mesh_creation_time_budget_ms,
+            Err(_) => {
+                godot_error!(
+                    "ChunkController: Failed to read terrain config lock for mesh_creation_time_budget_ms. Using default 5."
+                );
+                5 // Default if lock fails
+            }
+        };
+        let start_time = std::time::Instant::now();
+
         let mut processed_creations = 0; // Keep track of how many we actually process
-        while processed_creations < self.mesh_updates_per_frame {
+        while processed_creations < self.mesh_updates_per_frame
+            && start_time.elapsed().as_millis() < (mesh_creation_time_budget_ms as u128)
+        {
             // Get the position first, we need it even if we skip
-            if let Some(pos) = self.mesh_creation_queue.front().cloned() { // Clone position to check
+            if let Some(pos) = self.mesh_creation_queue.front().cloned() {
+                // Clone position to check
                 // --- Get ChunkManager Gd and Bind *inside* loop iteration ---
                 let needs_processing: bool = if let Some(manager_gd) = &self.chunk_manager {
                     // Use bind() more efficiently by collecting all needed data at once
@@ -754,60 +852,43 @@ impl ChunkController {
 
                 if needs_processing {
                     self.mesh_creation_queue.pop_front();
-    
-                    let chunk_data_option = if let Some(manager_gd) = &self.chunk_manager {
-                        // *** NOTE: This line has the ERROR in your log ***
-                        // Original erroneous line might be here or where get_cached_chunk_data is called
-                        // We fix the generate_mesh_geometry call below
+
+                    let chunk_data_and_mesh_option = if let Some(manager_gd) = &self.chunk_manager {
                         manager_gd.bind().get_cached_chunk_data(pos.x, pos.z)
                     } else {
                         None
                     };
-    
-                    if let Some(chunk_data) = chunk_data_option {
-                        let expected_size = ((self.chunk_size + 1) * (self.chunk_size + 1)) as usize;
-                        // godot_print!(
-                        //     "DEBUG ChunkData Check for {:?}: Expected Size: {}, Heightmap: {}, Biomes: {}, Weights: {}",
-                        //     pos,
-                        //     expected_size,
-                        //     chunk_data.heightmap.len(),
-                        //     chunk_data.biome_indices.len(),
-                        //     chunk_data.biome_blend_weights.len()
-                        // );
 
-                        // --- FIX: Pass new fields to generate_mesh_geometry ---
-                        // Ensure generate_mesh_geometry function signature is updated too!
-                        let geometry = generate_mesh_geometry(
-                            &chunk_data.heightmap,
-                            self.chunk_size, // Assuming chunk_size is available here
-                            &chunk_data.biome_indices,     // Pass indices
-                            &chunk_data.biome_blend_weights // Pass weights
-                        );
-    
-                        if !geometry.vertices.is_empty() {
-                            // Now we can call the function requiring &mut self
-                            self.apply_mesh_data_to_instance(pos, &geometry);
+                    if let Some((_chunk_data, mesh_geometry)) = chunk_data_and_mesh_option {
+                        if !mesh_geometry.vertices.is_empty() {
+                            self.apply_mesh_data_to_instance(pos, &mesh_geometry);
                             processed_creations += 1;
                         } else {
-                            godot_warn!("ChunkController ProcessQueue: Generated empty mesh for {:?}, skipping.", pos);
-                            processed_creations += 1; // Still count as processed
+                            godot_warn!(
+                                "ChunkController ProcessQueue: Received empty mesh geometry for {:?}, skipping.",
+                                pos
+                            );
+                            processed_creations += 1;
                         }
                     } else {
-                        godot_warn!("ChunkController ProcessQueue: Failed to get cached data for Ready chunk {:?}. Discarding.", pos);
-                        processed_creations += 1; // Still count as processed
+                        godot_warn!(
+                            "ChunkController ProcessQueue: Failed to get cached data (or mesh) for Ready chunk {:?}. Discarding.",
+                            pos
+                        );
+                        processed_creations += 1;
                     }
                 } else {
-                     // Condition not met (not ready, mesh exists, removing, no manager)
-                     // Remove from queue to avoid infinite loop if condition persists
-                     self.mesh_creation_queue.pop_front();
-                     // godot_print!("ChunkController ProcessQueue: Skipping creation for {:?}, condition no longer met.", pos);
-                     // Don't increment processed_creations, allow loop to try next if budget allows
-                     continue; // Check next item without decrementing budget implicitly
+                    // Condition not met (not ready, mesh exists, removing, no manager)
+                    // Remove from queue to avoid infinite loop if condition persists
+                    self.mesh_creation_queue.pop_front();
+                    // godot_print!("ChunkController ProcessQueue: Skipping creation for {:?}, condition no longer met.", pos);
+                    // Don't increment processed_creations, allow loop to try next if budget allows
+                    continue; // Check next item without decrementing budget implicitly
                 }
             } else {
                 break; // Queue empty
             }
         } // end while
-    } // end process_mesh_queues    
+        self.last_process_duration_ms = start_time.elapsed().as_millis() as u64;
+    }
 }
-

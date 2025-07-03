@@ -23,12 +23,15 @@ pub struct TerrainInitialConfigData { // Represents the data loaded from TOML [t
     pub use_parallel_processing: bool,
     pub chunk_cache_size: usize,
     pub chunks_per_frame: usize,
+    pub result_processing_limit_per_frame: usize,
+    pub mesh_creation_time_budget_ms: u64,
     pub render_distance: i32,
     pub amplification: f64,
     #[serde(default)]
     pub noise_paths: HashMap<String, String>,
     pub mesh_updates_per_frame: usize,
     pub blend_noise_strength: f32,
+    pub debug_visualization_enabled: bool,
 }
 
 
@@ -44,11 +47,14 @@ impl Default for TerrainInitialConfigData {
             use_parallel_processing: true,
             chunk_cache_size: 400,
             chunks_per_frame: 4,
+            result_processing_limit_per_frame: 10, // Default value
+            mesh_creation_time_budget_ms: 5, // Default value
             render_distance: 4,
             amplification: 1.0, 
             noise_paths: HashMap::new(), // Default to empty
             mesh_updates_per_frame: 4,
             blend_noise_strength: 0.25,
+            debug_visualization_enabled: false,
         }
     }
 }

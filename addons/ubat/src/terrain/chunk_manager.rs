@@ -33,14 +33,15 @@ enum ChunkGenState {
     Unknown,
     Loading,    // Queued for loading from storage
     Generating, // Queued for generation
-    Ready(Instant), // Data is available (either loaded or generated)
+    DataReady(Instant), // Heightmap and biome data is available
+    MeshReady(Instant), // Mesh geometry is also available
 }
 
 #[derive(Debug, Clone)] // Make sure ChunkData also derives Clone
 pub enum ChunkResult {
     Loaded(ChunkPosition, ChunkData),
     LoadFailed(ChunkPosition),
-    Generated(ChunkPosition, ChunkData),
+    Generated(ChunkPosition, ChunkData, MeshGeometry),
     GenerationFailed(ChunkPosition, String),
     LogMessage(String), // Added LogMessage variant
 
@@ -186,8 +187,19 @@ impl INode3D for ChunkManager {
         }
         
         // Process results received from background tasks
+        let config_arc: &'static Arc<RwLock<TerrainConfig>> = TerrainConfigManager::get_config();
+        let result_processing_limit = match config_arc.read() {
+            Ok(guard) => guard.result_processing_limit_per_frame,
+            Err(_) => {
+                godot_error!("ChunkManager: Failed to read terrain config lock for result_processing_limit_per_frame. Using default 10.");
+                10 // Default if lock fails
+            }
+        };
+
         let mut result_count = 0;
         loop {
+            if result_count >= result_processing_limit { break; }
+
             match self.result_receiver.try_recv() {
                 Ok(result) => {
                     result_count += 1;
@@ -198,7 +210,7 @@ impl INode3D for ChunkManager {
                         ChunkResult::Loaded(pos, _) => {
                             // godot_print!("ChunkManager: Received Loaded result for {:?}", pos);
                         },
-                        ChunkResult::Generated(pos, _) => {
+                        ChunkResult::Generated(pos, _, _) => {
                             // godot_print!("ChunkManager: Received Generated result for {:?}", pos);
                         },
                         _ => {}
@@ -233,7 +245,7 @@ impl ChunkManager {
         // Fast path check (read lock) - unchanged
         let current_state = self.chunk_states.read().unwrap().get(&pos).cloned();
         match current_state {
-            Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
+            Some(ChunkGenState::DataReady(_)) | Some(ChunkGenState::MeshReady(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
             _ => {}
         }
    
@@ -241,7 +253,7 @@ impl ChunkManager {
         let mut states = self.chunk_states.write().unwrap();
         // Double-check state - unchanged
         match states.get(&pos) {
-            Some(ChunkGenState::Ready(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
+            Some(ChunkGenState::DataReady(_)) | Some(ChunkGenState::MeshReady(_)) | Some(ChunkGenState::Loading) | Some(ChunkGenState::Generating) => return,
             _ => {
                 // Set state to Loading
                 // godot_print!("ChunkManager::ensure_chunk_is_ready: Setting state Loading for {:?}", pos);
@@ -344,8 +356,8 @@ impl ChunkManager {
     
                 // Update state AFTER caching attempt
                 let mut states = self.chunk_states.write().unwrap();
-                // godot_print!("ChunkManager: Setting state Ready for loaded chunk {:?}", pos);
-                states.insert(pos, ChunkGenState::Ready(Instant::now()));
+                // godot_print!("ChunkManager: Setting state DataReady for loaded chunk {:?}", pos);
+                states.insert(pos, ChunkGenState::DataReady(Instant::now()));
             }    
             ChunkResult::LoadFailed(pos) => {
                 let mut states = self.chunk_states.write().unwrap();
@@ -363,7 +375,7 @@ impl ChunkManager {
                     }
                 }
             }
-            ChunkResult::Generated(pos, data) => { // data is owned here
+            ChunkResult::Generated(pos, data, _mesh_geometry) => { // data is owned here
                 // --- Update storage cache immediately ---
                 match self.storage.cache.write() { // Access the cache field directly
                    Ok(mut cache_w) => {
@@ -377,8 +389,8 @@ impl ChunkManager {
    
                 // Update state AFTER caching attempt
                 let mut states = self.chunk_states.write().unwrap();
-                // godot_print!("ChunkManager: Received Generated for {:?}, setting Ready.", pos);
-                states.insert(pos, ChunkGenState::Ready(Instant::now()));
+                // godot_print!("ChunkManager: Received Generated for {:?}, setting MeshReady.", pos);
+                states.insert(pos, ChunkGenState::MeshReady(Instant::now()));
             }
             ChunkResult::GenerationFailed(pos, err) => {
                 godot_error!("ChunkManager: Received GenerationFailed for {:?}: {}", pos, err);
@@ -457,15 +469,23 @@ impl ChunkManager {
             }
         }
 
+        let mesh_geometry = generate_mesh_geometry(
+            &heightmap,
+            chunk_size,
+            &biome_indices_data,
+            &biome_weights_data,
+        );
+
         let chunk_data = ChunkData {
             position: pos,
             heightmap,
             biome_indices: biome_indices_data,
             biome_blend_weights: biome_weights_data,
+            mesh_geometry: Some(mesh_geometry.clone()), // Store mesh geometry in ChunkData
         };
 
         storage.queue_save_chunk(chunk_data.clone());
-        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data)) {
+        if let Err(e) = sender.send(ChunkResult::Generated(pos, chunk_data, mesh_geometry)) {
            let _ = sender.send(ChunkResult::LogMessage(format!("ChunkManager Worker: Failed to send Generated result for {:?}: {}", pos, e)));
         }
     }
@@ -490,21 +510,21 @@ impl ChunkManager {
     /// Attempts to retrieve ChunkData (including height, biomes, and potentially mesh)
     /// directly from the underlying storage cache.
     /// Returns None if the chunk is not ready or not found in the cache.
-    pub fn get_cached_chunk_data(&self, position_x: i32, position_z: i32) -> Option<ChunkData> {
+    pub fn get_cached_chunk_data(&self, position_x: i32, position_z: i32) -> Option<(ChunkData, MeshGeometry)> {
         let pos = ChunkPosition { x: position_x, z: position_z };
-        // Check readiness state first (optional, but good practice)
-        // Note: This read lock is brief
         let is_ready = matches!(
             self.chunk_states.read().unwrap().get(&pos),
-            Some(ChunkGenState::Ready(_))
+            Some(ChunkGenState::MeshReady(_))
         );
 
         if is_ready {
-            // Access storage cache directly
-             self.storage.get_data_from_cache(pos)
-        } else {
-            None // Not ready, so definitely not in cache in a usable state
+            if let Some(chunk_data) = self.storage.get_data_from_cache(pos) {
+                if let Some(mesh_geometry) = chunk_data.mesh_geometry.clone() {
+                    return Some((chunk_data, mesh_geometry));
+                }
+            }
         }
+        None
     }
 
     // Called by ChunkController to update based on player position
@@ -540,7 +560,7 @@ impl ChunkManager {
                 // Check if outside required set
                 if !required_chunks.contains(&pos) {
                 // Check if ready and inactive for a while, or just unknown/not busy
-                    if let ChunkGenState::Ready(ready_time) = state {
+                    if let ChunkGenState::MeshReady(ready_time) = state {
                     if ready_time.elapsed() > UNLOAD_CHECK_INTERVAL * 2 { // Example longer timeout
                             chunks_to_remove.push(pos);
                         }
@@ -568,7 +588,7 @@ impl ChunkManager {
         let pos = ChunkPosition { x: position_x, z: position_z };
         matches!(
             self.chunk_states.read().unwrap().get(&pos),
-            Some(ChunkGenState::Ready(_))
+            Some(ChunkGenState::MeshReady(_))
         )
     }
 
@@ -601,13 +621,14 @@ impl ChunkManager {
         // Use the new direct cache access method in ChunkStorage
         match self.storage.get_data_from_cache(pos) {
             Some(chunk_data) => {
+                // FIXED: Return biome data instead of heightmap data
                 let primary_biomes_i32: Vec<i32> = chunk_data.biome_indices.iter()
                     .map(|ids| ids[0] as i32) // Take the first ID (index 0)
                     .collect();
                 PackedInt32Array::from(&primary_biomes_i32[..])
             },
             None => {
-                godot_error!("CRITICAL: Chunk {:?} state is Ready, but section data not found in storage cache!", pos);
+                godot_error!("CRITICAL: Chunk {:?} state is Ready, but data not found in storage cache!", pos);
                 PackedInt32Array::new()
             }
         }
@@ -621,7 +642,8 @@ impl ChunkManager {
             Some(ChunkGenState::Unknown) => 0,
             Some(ChunkGenState::Loading) => 1,
             Some(ChunkGenState::Generating) => 2,
-            Some(ChunkGenState::Ready(_)) => 3,
+            Some(ChunkGenState::DataReady(_)) => 3,
+            Some(ChunkGenState::MeshReady(_)) => 4,
             None => -1, // Not tracked
         }
     }
@@ -646,7 +668,7 @@ impl ChunkManager {
         dict.insert("chunk_state", self.get_chunk_state_at(chunk_x, chunk_z).to_variant());
 
         // Try to get height and section from cache if ready
-        if let Some(data) = self.get_cached_chunk_data(chunk_x, chunk_z) {
+        if let Some((data, _mesh_geometry)) = self.get_cached_chunk_data(chunk_x, chunk_z) {
             // Calculate exact index within the chunk's heightmap/biomemap
             let local_x = (world_x - (chunk_x as f32 * self.chunk_size as f32)).floor() as u32;
             let local_z = (world_z - (chunk_z as f32 * self.chunk_size as f32)).floor() as u32;
