@@ -104,7 +104,7 @@ text = "WorldWidth"
 
 [node name="WorldWidthInput" type="SpinBox" parent="StandaloneOptions/ConfigConteiner/WorldWidthContener"]
 layout_mode = 2
-min_value = 1000.0
+min_value = 100.0
 max_value = 50000.0
 step = 100.0
 value = 10000.0
@@ -114,11 +114,11 @@ layout_mode = 2
 
 [node name="WorldHeight" type="Label" parent="StandaloneOptions/ConfigConteiner/WorldHeightContener"]
 layout_mode = 2
-text = "WorldWidth"
+text = "WorldHeight"
 
 [node name="WorldHeightInput" type="SpinBox" parent="StandaloneOptions/ConfigConteiner/WorldHeightContener"]
 layout_mode = 2
-min_value = 1000.0
+min_value = 100.0
 max_value = 50000.0
 step = 100.0
 value = 1000.0
